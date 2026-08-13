@@ -37,12 +37,12 @@ export async function POST(request: Request) {
     );
 
     const result = streamText({
-      model: customModelProvider.getModel(chatModel),
-      system: CREATE_THREAD_TITLE_PROMPT,
+      model: await customModelProvider.getModel(chatModel),
+      instructions: CREATE_THREAD_TITLE_PROMPT,
       experimental_transform: smoothStream({ chunking: "word" }),
       prompt: message,
       abortSignal: request.signal,
-      onFinish: (ctx) => {
+      onEnd: (ctx) => {
         chatRepository
           .upsertThread({
             id: threadId,

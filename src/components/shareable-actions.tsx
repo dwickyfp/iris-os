@@ -7,6 +7,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Trash2,
+  Archive,
   Loader2,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -31,6 +32,16 @@ const VISIBILITY_ICONS = {
 } as const;
 
 const VISIBILITY_CONFIG = {
+  skill: {
+    private: {
+      label: "Private",
+      description: "Only you can view and use this skill.",
+    },
+    readonly: {
+      label: "Read only",
+      description: "Other users can view and bookmark this skill.",
+    },
+  },
   agent: {
     private: {
       label: "Agent.private",
@@ -69,7 +80,7 @@ const VISIBILITY_CONFIG = {
 } as const;
 
 interface ShareableActionsProps {
-  type: "agent" | "workflow" | "mcp";
+  type: "agent" | "workflow" | "mcp" | "skill";
   visibility?: Visibility;
   isOwner: boolean;
   canChangeVisibility?: boolean;
@@ -111,6 +122,7 @@ export function ShareableActions({
   );
 
   const VisibilityIcon = visibility ? VISIBILITY_ICONS[visibility] : null;
+  const DestructiveIcon = type === "skill" ? Archive : Trash2;
 
   const visibilityItems = Object.entries(VISIBILITY_CONFIG[type]).map(
     ([value, config]) => {
@@ -171,9 +183,15 @@ export function ShareableActions({
                   >
                     {visibilityItem.icon}
                     <div className="flex flex-col px-4 gap-1">
-                      <p>{t(visibilityItem.label)}</p>
+                      <p>
+                        {type === "skill"
+                          ? visibilityItem.label
+                          : t(visibilityItem.label)}
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        {t(visibilityItem.description)}
+                        {type === "skill"
+                          ? visibilityItem.description
+                          : t(visibilityItem.description)}
                       </p>
                     </div>
                   </DropdownMenuItem>
@@ -188,7 +206,11 @@ export function ShareableActions({
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                {t(VISIBILITY_CONFIG[type][visibility!].label)}
+                {type === "skill"
+                  ? VISIBILITY_CONFIG.skill[
+                      visibility as keyof typeof VISIBILITY_CONFIG.skill
+                    ].label
+                  : t(VISIBILITY_CONFIG[type][visibility!].label)}
               </TooltipContent>
             </Tooltip>
           )}
@@ -269,11 +291,13 @@ export function ShareableActions({
               {isDeleteLoading ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Trash2 className="size-4" />
+                <DestructiveIcon className="size-4" />
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{t("Common.delete")}</TooltipContent>
+          <TooltipContent>
+            {type === "skill" ? "Archive" : t("Common.delete")}
+          </TooltipContent>
         </Tooltip>
       )}
     </div>

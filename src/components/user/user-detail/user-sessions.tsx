@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "ui/table";
-import { format } from "date-fns";
+import { formatAppDateTime } from "lib/date-time";
 import { getTranslations } from "next-intl/server";
 
 interface UserSessionsProps {
@@ -56,12 +56,8 @@ export async function UserSessions({
             <TableBody>
               {sessions.map((session) => (
                 <TableRow key={session.id}>
-                  <TableCell>
-                    {format(new Date(session.createdAt), "PPp")}
-                  </TableCell>
-                  <TableCell>
-                    {format(new Date(session.expiresAt), "PPp")}
-                  </TableCell>
+                  <TableCell>{formatAppDateTime(session.createdAt)}</TableCell>
+                  <TableCell>{formatAppDateTime(session.expiresAt)}</TableCell>
                   <TableCell className="font-mono text-xs">
                     {session.ipAddress || tCommon("unknown")}
                   </TableCell>

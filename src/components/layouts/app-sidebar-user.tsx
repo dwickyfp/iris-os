@@ -1,46 +1,47 @@
 "use client";
 
+import { appStore } from "@/app/store";
+import { useThemeStyle } from "@/hooks/use-theme-style";
+import { getLocaleAction } from "@/i18n/get-locale";
+import { BasicUser } from "app-types/user";
+import { authClient } from "auth/client";
+import { BASE_THEMES, COOKIE_KEY_LOCALE, SUPPORTED_LOCALES } from "lib/const";
+import { getUserAvatar } from "lib/user/utils";
+import { getIsUserAdmin } from "lib/user/utils";
+import { capitalizeFirstLetter, cn, fetcher } from "lib/utils";
 import {
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-  DropdownMenu,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuPortal,
-  DropdownMenuSubContent,
-  DropdownMenuCheckboxItem,
-} from "ui/dropdown-menu";
-import { AvatarFallback, AvatarImage, Avatar } from "ui/avatar";
-import { SidebarMenuButton, SidebarMenuItem, SidebarMenu } from "ui/sidebar";
-import {
+  ChevronRight,
   ChevronsUpDown,
   Command,
-  LogOutIcon,
-  Settings2,
-  Palette,
   Languages,
-  Sun,
+  LogOutIcon,
   MoonStar,
-  ChevronRight,
+  Palette,
   Settings,
+  Settings2,
+  Sun,
 } from "lucide-react";
-import { useTheme } from "next-themes";
-import { appStore } from "@/app/store";
-import { BASE_THEMES, COOKIE_KEY_LOCALE, SUPPORTED_LOCALES } from "lib/const";
-import { capitalizeFirstLetter, cn, fetcher } from "lib/utils";
-import { authClient } from "auth/client";
 import { useTranslations } from "next-intl";
-import useSWR from "swr";
-import { getLocaleAction } from "@/i18n/get-locale";
+import { useTheme } from "next-themes";
 import { Suspense, useCallback } from "react";
-import { GithubIcon } from "ui/github-icon";
+import useSWR from "swr";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { DiscordIcon } from "ui/discord-icon";
-import { useThemeStyle } from "@/hooks/use-theme-style";
-import { BasicUser } from "app-types/user";
-import { getUserAvatar } from "lib/user/utils";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "ui/dropdown-menu";
+import { GithubIcon } from "ui/github-icon";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "ui/sidebar";
 import { Skeleton } from "ui/skeleton";
 
 export function AppSidebarUserInner(props: {
@@ -140,7 +141,7 @@ export function AppSidebarUserInner(props: {
             <DropdownMenuItem
               onClick={() => {
                 window.open(
-                  "https://github.com/cgoinglove/better-chatbot/issues/new",
+                  "https://github.com/dwickyfp/iris-os/issues/new",
                   "_blank",
                 );
               }}
@@ -166,6 +167,17 @@ export function AppSidebarUserInner(props: {
               <Settings className="size-4 text-foreground" />
               <span>{t("userSettings")}</span>
             </DropdownMenuItem>
+            {getIsUserAdmin(user) && (
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  window.location.href = "/admin/models";
+                }}
+              >
+                <Settings2 className="size-4 text-foreground" />
+                <span>Model Settings</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="cursor-pointer">
               <LogOutIcon className="size-4 text-foreground" />

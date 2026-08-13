@@ -1,10 +1,10 @@
-import { agentRepository } from "lib/db/repository";
+import { AgentCreateSchema, AgentQuerySchema } from "app-types/agent";
 import { getSession } from "auth/server";
-import { z } from "zod";
+import { canCreateAgent } from "lib/auth/permissions";
 import { serverCache } from "lib/cache";
 import { CacheKeys } from "lib/cache/cache-keys";
-import { AgentCreateSchema, AgentQuerySchema } from "app-types/agent";
-import { canCreateAgent } from "lib/auth/permissions";
+import { agentRepository } from "lib/db/repository";
+import { z } from "zod";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -75,7 +75,7 @@ export async function POST(request: Request): Promise<Response> {
       ...data,
       userId: session.user.id,
     });
-    serverCache.delete(CacheKeys.agentInstructions(agent.id));
+    serverCache.delete(CacheKeys.agentInstructions(agent.id, session.user.id));
 
     return Response.json(agent);
   } catch (error) {

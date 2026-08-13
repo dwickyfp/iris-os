@@ -37,7 +37,7 @@ function hasPermission(
     | "update"
     | "view"
     | "share",
-  resource: "agent" | "workflow" | "mcp",
+  resource: "agent" | "workflow" | "mcp" | "skill",
 ): boolean {
   const roleObject = getRolePermissions(userRoleString);
 
@@ -74,6 +74,18 @@ export function canEditAgent(userRoleString?: string | null): boolean {
  */
 export function canDeleteAgent(userRoleString?: string | null): boolean {
   return hasPermission(userRoleString, "delete", "agent");
+}
+
+export function canCreateSkill(userRoleString?: string | null): boolean {
+  return hasPermission(userRoleString, "create", "skill");
+}
+
+export function canEditSkill(userRoleString?: string | null): boolean {
+  return hasPermission(userRoleString, "update", "skill");
+}
+
+export function canDeleteSkill(userRoleString?: string | null): boolean {
+  return hasPermission(userRoleString, "delete", "skill");
 }
 
 /**
@@ -132,7 +144,7 @@ export function canDeleteMCP(userRoleString?: string | null): boolean {
  */
 export function canUseResource(
   userRoleString?: string | null,
-  resourceType: "agent" | "workflow" | "mcp" = "agent",
+  resourceType: "agent" | "workflow" | "mcp" | "skill" = "agent",
 ): boolean {
   return hasPermission(userRoleString, "use", resourceType);
 }
@@ -142,7 +154,7 @@ export function canUseResource(
  */
 export function canViewResource(
   userRoleString?: string | null,
-  resourceType: "agent" | "workflow" | "mcp" = "agent",
+  resourceType: "agent" | "workflow" | "mcp" | "skill" = "agent",
 ): boolean {
   return hasPermission(userRoleString, "view", resourceType);
 }

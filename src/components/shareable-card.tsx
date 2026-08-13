@@ -10,14 +10,16 @@ import {
 } from "ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { useTranslations } from "next-intl";
-import { format } from "date-fns";
+import { formatAppDate } from "lib/date-time";
 import { cn } from "lib/utils";
 import { ShareableActions, type Visibility } from "./shareable-actions";
 import { WorkflowSummary } from "app-types/workflow";
 import { AgentSummary } from "app-types/agent";
 import { MCPServerInfo } from "app-types/mcp";
+import type { SkillSummary } from "app-types/skill";
 import { MCPIcon } from "ui/mcp-icon";
 import Link from "next/link";
+import { FileCode2 } from "lucide-react";
 
 export interface ShareableIcon {
   value?: string;
@@ -26,8 +28,8 @@ export interface ShareableIcon {
   };
 }
 interface ShareableCardProps {
-  type: "agent" | "workflow" | "mcp";
-  item: AgentSummary | WorkflowSummary | MCPServerInfo;
+  type: "agent" | "workflow" | "mcp" | "skill";
+  item: AgentSummary | WorkflowSummary | MCPServerInfo | SkillSummary;
   isOwner?: boolean;
   href: string;
   onBookmarkToggle?: (itemId: string, isBookmarked: boolean) => void;
@@ -75,6 +77,8 @@ export function ShareableCard({
             >
               {type === "mcp" ? (
                 <MCPIcon className="fill-white size-6" />
+              ) : type === "skill" ? (
+                <FileCode2 className="size-6" />
               ) : (
                 <Avatar className="size-6">
                   <AvatarImage src={item.icon?.value} />
@@ -92,7 +96,7 @@ export function ShareableCard({
               </span>
               <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
                 <time className="shrink-0">
-                  {format(item.updatedAt || new Date(), "MMM d, yyyy")}
+                  {formatAppDate(item.updatedAt || new Date())}
                 </time>
                 {type === "workflow" && !isPublished && (
                   <span className="px-2 rounded-sm bg-secondary text-foreground shrink-0">

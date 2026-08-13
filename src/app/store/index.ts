@@ -7,6 +7,7 @@ import { WorkflowSummary } from "app-types/workflow";
 import { AppDefaultToolkit } from "lib/ai/tools";
 import { AgentSummary } from "app-types/agent";
 import { ArchiveWithItemCount } from "app-types/archive";
+import { UIMessage } from "ai";
 
 export interface UploadedFile {
   id: string;
@@ -27,10 +28,15 @@ export interface AppState {
   agentList: AgentSummary[];
   workflowToolList: WorkflowSummary[];
   currentThreadId: ChatThread["id"] | null;
+  activeChatSessionId: string | null;
   toolChoice: "auto" | "none" | "manual";
   allowedMcpServers?: Record<string, AllowedMCPServer>;
   allowedAppDefaultToolkit?: AppDefaultToolkit[];
   generatingTitleThreadIds: string[];
+  /** Sessions mounted by the persistent chat host. Kept out of persistence. */
+  chatSessions: Record<string, { initialMessages: UIMessage[] }>;
+  /** Thread IDs that currently have an AI response in flight. */
+  runningThreadIds: string[];
   archiveList: ArchiveWithItemCount[];
   threadMentions: {
     [threadId: string]: ChatMention[];
@@ -75,6 +81,8 @@ const initialState: AppState = {
   threadList: [],
   archiveList: [],
   generatingTitleThreadIds: [],
+  chatSessions: {},
+  runningThreadIds: [],
   threadMentions: {},
   threadFiles: {},
   threadImageToolModel: {},
@@ -82,6 +90,7 @@ const initialState: AppState = {
   agentList: [],
   workflowToolList: [],
   currentThreadId: null,
+  activeChatSessionId: null,
   toolChoice: "auto",
   allowedMcpServers: undefined,
   openUserSettings: false,

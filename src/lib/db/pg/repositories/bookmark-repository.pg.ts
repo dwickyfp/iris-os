@@ -1,30 +1,32 @@
 import { and, eq } from "drizzle-orm";
 import { pgDb as db } from "../db.pg";
-import { BookmarkTable, AgentTable } from "../schema.pg";
+import { BookmarkTable, AgentTable, SkillTable } from "../schema.pg";
+
+type BookmarkItemType = "agent" | "workflow" | "skill";
 
 export interface BookmarkRepository {
   createBookmark(
     userId: string,
     itemId: string,
-    itemType: "agent" | "workflow",
+    itemType: BookmarkItemType,
   ): Promise<void>;
 
   removeBookmark(
     userId: string,
     itemId: string,
-    itemType: "agent" | "workflow",
+    itemType: BookmarkItemType,
   ): Promise<void>;
 
   toggleBookmark(
     userId: string,
     itemId: string,
-    itemType: "agent" | "workflow",
+    itemType: BookmarkItemType,
     isCurrentlyBookmarked: boolean,
   ): Promise<boolean>;
 
   checkItemAccess(
     itemId: string,
-    itemType: "agent" | "workflow",
+    itemType: BookmarkItemType,
     userId: string,
   ): Promise<boolean>;
 }
@@ -78,6 +80,21 @@ export const pgBookmarkRepository: BookmarkRepository = {
         agent[0].visibility === "public" ||
         agent[0].visibility === "readonly" ||
         agent[0].userId === userId
+      );
+    }
+
+    if (itemType === "skill") {
+      const [skill] = await db
+        .select({
+          userId: SkillTable.userId,
+          visibility: SkillTable.visibility,
+        })
+        .from(SkillTable)
+        .where(eq(SkillTable.id, itemId))
+        .limit(1);
+
+      return (
+        !!skill && (skill.userId === userId || skill.visibility === "readonly")
       );
     }
 

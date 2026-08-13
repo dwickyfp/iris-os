@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useActionState } from "react";
-import { format } from "date-fns";
+import { formatInAppTimeZone } from "lib/date-time";
 import { Card, CardContent } from "ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "ui/avatar";
 import { Label } from "ui/label";
@@ -199,7 +199,7 @@ export function UserInfoCard({
               {tCommon("joined")}
             </Label>
             <p className="text-sm font-medium" data-testid="user-created-at">
-              {format(new Date(user.createdAt), "PPP")}
+              {formatInAppTimeZone(user.createdAt, { dateStyle: "long" })}
             </p>
           </div>
 
@@ -208,7 +208,7 @@ export function UserInfoCard({
               {tCommon("lastUpdated")}
             </Label>
             <p className="text-sm font-medium" data-testid="user-updated-at">
-              {format(new Date(user.updatedAt), "PPP")}
+              {formatInAppTimeZone(user.updatedAt, { dateStyle: "long" })}
             </p>
           </div>
         </div>

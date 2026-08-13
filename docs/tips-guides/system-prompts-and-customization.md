@@ -1,6 +1,6 @@
 # 🎯 System Prompts & Chat Customization Guide
 
-> Transform your chatbot experience with powerful system prompt customization. The better-chatbot uses a sophisticated multi-layered prompt system that adapts to your preferences, project context, and MCP tool usage — making every conversation more personalized and effective.
+> Transform your AI workspace with powerful system prompt customization. Iris OS uses a sophisticated multi-layered prompt system that adapts to your preferences, project context, and MCP tool usage — making every conversation more personalized and effective.
 
 The system intelligently combines multiple prompt layers to create the perfect context for each chat, ensuring the assistant understands exactly how to help you.
 
@@ -80,7 +80,7 @@ Include performance impact warnings for large queries
 
 The chatbot combines four distinct prompt layers to create the perfect context:
 
-1. **Base System Prompt** - Core better-chatbot behavior
+1. **Base System Prompt** - Core Iris OS behavior
 2. **User Preferences** - Your personal settings and communication style  
 3. **Project Instructions** - Context from the current project (if applicable)
 4. **MCP Customizations** - Tool-specific instructions (only when tools are used)
@@ -103,4 +103,4 @@ This layered approach ensures:
 
 **Project Synergy:** Combine personal preferences with project-specific instructions for domain expertise (e.g., "React developer" + "E-commerce project context").
 
-> 💡 **Result:** Every conversation becomes more productive because the assistant already understands your context, preferences, and workflow — no need to repeat yourself! 
+> 💡 **Result:** Every conversation becomes more productive because the assistant already understands your context, preferences, and workflow — no need to repeat yourself!

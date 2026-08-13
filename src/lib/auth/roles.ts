@@ -9,6 +9,7 @@ const permissions = {
   // Add our app-specific resources
   workflow: [...Object.values(PERMISSION_TYPES)],
   agent: [...Object.values(PERMISSION_TYPES)],
+  skill: [...Object.values(PERMISSION_TYPES)],
   mcp: [...Object.values(PERMISSION_TYPES)],
   chat: [...Object.values(PERMISSION_TYPES)],
   temporaryChat: [...Object.values(PERMISSION_TYPES)],
@@ -25,6 +26,7 @@ export const user = ac.newRole({
   // Restricted app permissions
   workflow: ["view", "use", "list"],
   agent: ["view", "use", "list"],
+  skill: ["view", "use", "list"],
   mcp: ["view", "use", "list"],
   chat: [...Object.values(PERMISSION_TYPES)],
   temporaryChat: [...Object.values(PERMISSION_TYPES)],
@@ -38,6 +40,7 @@ export const editor = ac.newRole({
   // Full app permissions
   workflow: [...Object.values(PERMISSION_TYPES)],
   agent: [...Object.values(PERMISSION_TYPES)],
+  skill: [...Object.values(PERMISSION_TYPES)],
   mcp: ["create", "view", "update", "delete", "use", "list"],
   chat: [...Object.values(PERMISSION_TYPES)],
   temporaryChat: [...Object.values(PERMISSION_TYPES)],
@@ -51,6 +54,7 @@ export const admin = ac.newRole({
   // Full app permissions
   workflow: [...Object.values(PERMISSION_TYPES)],
   agent: [...Object.values(PERMISSION_TYPES)],
+  skill: [...Object.values(PERMISSION_TYPES)],
   mcp: [...Object.values(PERMISSION_TYPES)],
   chat: [...Object.values(PERMISSION_TYPES)],
   temporaryChat: [...Object.values(PERMISSION_TYPES)],

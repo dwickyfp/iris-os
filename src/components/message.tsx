@@ -29,6 +29,7 @@ interface Props {
   sendMessage?: UseChatHelpers<UIMessage>["sendMessage"];
   className?: string;
   addToolResult?: UseChatHelpers<UIMessage>["addToolResult"];
+  addToolApprovalResponse?: UseChatHelpers<UIMessage>["addToolApprovalResponse"];
   messageIndex?: number;
   status?: UseChatHelpers<UIMessage>["status"];
   readonly?: boolean;
@@ -45,6 +46,7 @@ const PurePreviewMessage = ({
   className,
   setMessages,
   addToolResult,
+  addToolApprovalResponse,
   messageIndex,
   sendMessage,
 }: Props) => {
@@ -121,7 +123,7 @@ const PurePreviewMessage = ({
               );
             }
 
-            if (isToolUIPart(part)) {
+            if (isToolUIPart(part) && part.type !== "dynamic-tool") {
               const isLast = isLastMessage && isLastPart;
               const isManualToolInvocation =
                 (message.metadata as ChatMetadata)?.toolChoice == "manual" &&
@@ -141,6 +143,7 @@ const PurePreviewMessage = ({
                     (isLastMessage ? isLastPart && !isLoading : isLastPart)
                   }
                   addToolResult={addToolResult}
+                  addToolApprovalResponse={addToolApprovalResponse}
                   key={key}
                   part={part}
                   setMessages={setMessages}

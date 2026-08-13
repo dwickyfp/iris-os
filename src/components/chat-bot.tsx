@@ -14,6 +14,7 @@ import { useShallow } from "zustand/shallow";
 import {
   DefaultChatTransport,
   isToolUIPart,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
   TextUIPart,
   UIMessage,
@@ -56,6 +57,10 @@ type Props = {
   selectedChatModel?: string;
 };
 
+type ChatSessionProps = Props & {
+  isActive: boolean;
+};
+
 const LightRays = dynamic(() => import("ui/light-rays"), {
   ssr: false,
 });
@@ -70,7 +75,33 @@ const firstTimeStorage = getStorageManager("IS_FIRST");
 const isFirstTime = firstTimeStorage.get() ?? true;
 firstTimeStorage.set(false);
 
+/** Registers the server-provided session with the persistent client-side host. */
 export default function ChatBot({ threadId, initialMessages }: Props) {
+  const appStoreMutate = appStore((state) => state.mutate);
+
+  useEffect(() => {
+    appStoreMutate((state) => {
+      if (state.chatSessions[threadId]) {
+        return { activeChatSessionId: threadId };
+      }
+      return {
+        activeChatSessionId: threadId,
+        chatSessions: {
+          ...state.chatSessions,
+          [threadId]: { initialMessages },
+        },
+      };
+    });
+  }, [appStoreMutate, initialMessages, threadId]);
+
+  return null;
+}
+
+export function ChatSession({
+  threadId,
+  initialMessages,
+  isActive,
+}: ChatSessionProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { uploadFiles } = useThreadFileUploader(threadId);
@@ -150,12 +181,15 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
     status,
     setMessages,
     addToolResult: _addToolResult,
+    addToolApprovalResponse,
     error,
     sendMessage,
     stop,
   } = useChat({
     id: threadId,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    sendAutomaticallyWhen: (options) =>
+      lastAssistantMessageIsCompleteWithApprovalResponses(options) ||
+      lastAssistantMessageIsCompleteWithToolCalls(options),
     transport: new DefaultChatTransport({
       prepareSendMessagesRequest: ({ messages, body, id }) => {
         if (window.location.pathname !== `/chat/${threadId}`) {
@@ -251,6 +285,27 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
     [status],
   );
 
+  useEffect(() => {
+    appStoreMutate((state) => {
+      const isRunning = state.runningThreadIds.includes(threadId);
+      if (isLoading === isRunning) return state;
+
+      return {
+        runningThreadIds: isLoading
+          ? [...state.runningThreadIds, threadId]
+          : state.runningThreadIds.filter((id) => id !== threadId),
+      };
+    });
+
+    return () => {
+      appStoreMutate((state) => ({
+        runningThreadIds: state.runningThreadIds.filter(
+          (id) => id !== threadId,
+        ),
+      }));
+    };
+  }, [appStoreMutate, isLoading, threadId]);
+
   const emptyMessage = useMemo(
     () => messages.length === 0 && !error,
     [messages.length, error],
@@ -345,11 +400,14 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
   }, []);
 
   useEffect(() => {
+    if (!isActive) return;
     appStoreMutate({ currentThreadId: threadId });
     return () => {
-      appStoreMutate({ currentThreadId: null });
+      appStoreMutate((state) =>
+        state.currentThreadId === threadId ? { currentThreadId: null } : state,
+      );
     };
-  }, [threadId]);
+  }, [appStoreMutate, isActive, threadId]);
 
   useEffect(() => {
     if (pendingThreadMention && threadId) {
@@ -372,6 +430,7 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
   }, [isInitialThreadEntry]);
 
   useEffect(() => {
+    if (!isActive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       const messages = latestRef.current.messages;
       if (messages.length === 0) return;
@@ -395,7 +454,7 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     if (mounted) {
@@ -446,6 +505,7 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
                     message={message}
                     status={status}
                     addToolResult={addToolResult}
+                    addToolApprovalResponse={addToolApprovalResponse}
                     isLoading={isLoading || isPendingToolCall}
                     isLastMessage={isLastMessage}
                     setMessages={setMessages}

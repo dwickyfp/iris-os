@@ -1,6 +1,25 @@
 import { IS_VERCEL_ENV } from "lib/const";
 
 export async function register() {
+  if (
+    process.env.NEXT_RUNTIME === "nodejs" &&
+    process.env.AI_SDK_OTEL_ENABLED !== "false"
+  ) {
+    const [{ OpenTelemetry }, { registerTelemetry }] = await Promise.all([
+      import("@ai-sdk/otel"),
+      import("ai"),
+    ]);
+    registerTelemetry(
+      new OpenTelemetry({
+        enrichSpan: ({ spanType, operationId, callId }) => ({
+          "iris-os.span_type": spanType,
+          "iris-os.operation_id": operationId,
+          "iris-os.call_id": callId,
+        }),
+      }),
+    );
+  }
+
   if (process.env.NEXT_RUNTIME === "nodejs") {
     // Enable proxy support for undici (used by AI SDK) via HTTP_PROXY/HTTPS_PROXY env vars
     const proxyUrl =

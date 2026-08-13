@@ -593,7 +593,7 @@ function ConversationView({
                         ))}
                     </p>
                   );
-                } else if (isToolUIPart(part)) {
+                } else if (isToolUIPart(part) && part.type !== "dynamic-tool") {
                   return (
                     <ToolMessagePart
                       key={index}

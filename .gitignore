@@ -15,6 +15,7 @@
 /tests/.auth
 test-results/
 playwright-report/
+/benchmark-results/
 .env.test
 
 # next.js
@@ -60,3 +61,6 @@ local-data
 openai-compatible.config.ts
 certificates
 public/uploads
+
+# local benchmark output
+/artifacts/

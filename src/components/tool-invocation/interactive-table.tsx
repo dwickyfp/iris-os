@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { JsonViewPopup } from "../json-view-popup";
 import { Checkbox } from "ui/checkbox";
+import { APP_TIME_ZONE } from "lib/date-time";
 
 // Column configuration interface
 interface Column {
@@ -112,7 +113,9 @@ export function InteractiveTable(props: InteractiveTableProps) {
         return value ? "Yes" : "No";
       case "date":
         try {
-          return new Date(value).toLocaleDateString();
+          return new Date(value).toLocaleDateString(undefined, {
+            timeZone: APP_TIME_ZONE,
+          });
         } catch {
           return value;
         }

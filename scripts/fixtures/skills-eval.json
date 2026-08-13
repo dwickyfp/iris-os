@@ -1,0 +1,65 @@
+{
+  "skills": [
+    {
+      "id": "release-brief",
+      "name": "Release Brief",
+      "description": "Formats deployment and release notes into a concise operational brief.",
+      "body": "For release or deployment summaries, use the exact heading 'Release brief'. State the version and deployment status. Include one bullet beginning 'Risk:' and one beginning 'Next:'. Do not invent facts that are absent from the request.",
+      "files": []
+    },
+    {
+      "id": "incident-update",
+      "name": "Incident Update",
+      "description": "Produces factual status updates for active service incidents.",
+      "body": "For incident updates, start with the exact heading 'Incident update'. Include the affected service, current status, and the next update time. Never describe an unresolved incident as resolved.",
+      "files": []
+    }
+  ],
+  "cases": [
+    {
+      "id": "activate-release",
+      "kind": "activation",
+      "prompt": "Which assigned skill would help prepare deployment release notes for version 2.4? Briefly answer after checking any relevant skill.",
+      "expectedSkillIds": ["release-brief"]
+    },
+    {
+      "id": "avoid-irrelevant-skill",
+      "kind": "activation",
+      "prompt": "What is 17 multiplied by 6? Do not use a skill unless one is relevant.",
+      "expectedSkillIds": []
+    },
+    {
+      "id": "answer-release",
+      "kind": "answer",
+      "prompt": "Prepare release notes from only these facts: version 2.4; deployment is complete; risk is elevated latency in the first five minutes; next action is monitor dashboards for one hour.",
+      "expectedSkillIds": ["release-brief"],
+      "answer": {
+        "requiredAny": [
+          ["Release brief"],
+          ["2.4"],
+          ["deployment is complete", "deployment: complete", "complete"],
+          ["Risk:"],
+          ["Next:"]
+        ],
+        "forbidden": ["rollback completed", "version 2.5"]
+      },
+      "judgeRubric": "The answer must faithfully follow the loaded Release Brief skill, use only supplied facts, and be operationally clear."
+    },
+    {
+      "id": "answer-incident",
+      "kind": "answer",
+      "prompt": "Write an incident update from only these facts: checkout-api is affected; status is investigating; next update is 14:30 UTC.",
+      "expectedSkillIds": ["incident-update"],
+      "answer": {
+        "requiredAny": [
+          ["Incident update"],
+          ["checkout-api"],
+          ["investigating"],
+          ["14:30 UTC", "14:30"]
+        ],
+        "forbidden": ["resolved", "resolution complete"]
+      },
+      "judgeRubric": "The answer must follow the loaded Incident Update skill, preserve the unresolved investigating status, and avoid invented facts."
+    }
+  ]
+}

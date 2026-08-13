@@ -21,8 +21,10 @@ import { WriteIcon } from "ui/write-icon";
 import {
   FolderOpenIcon,
   FolderSearchIcon,
+  BookOpenIcon,
   PlusIcon,
   Waypoints,
+  BrainIcon,
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Skeleton } from "ui/skeleton";
@@ -80,6 +82,18 @@ export function AppSidebarMenus({ user }: { user?: BasicUser }) {
         <SidebarMenu>
           <Tooltip>
             <SidebarMenuItem>
+              <Link href="/memory" onClick={() => setOpenMobile(false)}>
+                <SidebarMenuButton className="font-semibold">
+                  <BrainIcon className="size-4" />
+                  Memory
+                </SidebarMenuButton>
+              </Link>
+            </SidebarMenuItem>
+          </Tooltip>
+        </SidebarMenu>
+        <SidebarMenu>
+          <Tooltip>
+            <SidebarMenuItem>
               <Link href="/mcp">
                 <SidebarMenuButton className="font-semibold">
                   <MCPIcon className="size-4 fill-accent-foreground" />
@@ -96,6 +110,18 @@ export function AppSidebarMenus({ user }: { user?: BasicUser }) {
                 <SidebarMenuButton className="font-semibold">
                   <Waypoints className="size-4" />
                   {t("Layout.workflow")}
+                </SidebarMenuButton>
+              </Link>
+            </SidebarMenuItem>
+          </Tooltip>
+        </SidebarMenu>
+        <SidebarMenu>
+          <Tooltip>
+            <SidebarMenuItem>
+              <Link href="/skills" onClick={() => setOpenMobile(false)}>
+                <SidebarMenuButton className="font-semibold">
+                  <BookOpenIcon className="size-4" />
+                  Skills
                 </SidebarMenuButton>
               </Link>
             </SidebarMenuItem>

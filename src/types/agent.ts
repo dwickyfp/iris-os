@@ -12,6 +12,7 @@ export const AgentInstructionsSchema = z.object({
   role: z.string().optional(),
   systemPrompt: z.string().optional(),
   mentions: z.array(ChatMentionSchema).optional(),
+  reasoningMode: z.enum(["auto", "low", "medium", "high"]).optional(),
 });
 
 export const AgentCreateSchema = z

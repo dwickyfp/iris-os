@@ -5,7 +5,7 @@ import {
 import { PreviewMessage } from "../message";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { formatDate } from "date-fns";
+import { formatAppDate } from "lib/date-time";
 
 import Particles from "ui/particles";
 import Comments from "./comments";
@@ -32,7 +32,7 @@ export default function ChatPreview({
             {thread.title}
           </h1>
           <div className="text-xs text-muted-foreground flex items-center gap-2">
-            {formatDate(thread.exportedAt, "MMM d, yyyy")}
+            {formatAppDate(thread.exportedAt)}
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex items-center gap-2 text-xs">

@@ -135,6 +135,7 @@ export function manualToolExecuteByLastMessage(
           toolCallId: part.toolCallId,
           abortSignal: abortSignal ?? new AbortController().signal,
           messages: [],
+          context: {},
         });
       } else if (VercelAIMcpToolTag.isMaybe(tool)) {
         return mcpClientsManager.toolCall(
@@ -147,6 +148,7 @@ export function manualToolExecuteByLastMessage(
         toolCallId: part.toolCallId,
         abortSignal: abortSignal ?? new AbortController().signal,
         messages: [],
+        context: {},
       });
     })
     .ifFail((error) => ({
@@ -359,7 +361,7 @@ export const workflowToVercelAITool = ({
         })
         .unwrap();
     },
-  }) as VercelAIWorkflowTool;
+  } as any) as VercelAIWorkflowTool;
 
   tool._workflowId = id;
   tool._originToolName = name;

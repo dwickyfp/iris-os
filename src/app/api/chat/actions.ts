@@ -56,7 +56,7 @@ export async function generateTitleFromUserMessageAction({
 
   const { text: title } = await generateText({
     model,
-    system: CREATE_THREAD_TITLE_PROMPT,
+    instructions: CREATE_THREAD_TITLE_PROMPT,
     prompt,
   });
 
@@ -119,7 +119,7 @@ export async function generateExampleToolSchemaAction(options: {
   toolInfo: MCPToolInfo;
   prompt?: string;
 }) {
-  const model = customModelProvider.getModel(options.model);
+  const model = await customModelProvider.getModel(options.model);
 
   const schema = jsonSchema(
     toAny({
@@ -204,8 +204,8 @@ export async function generateObjectAction({
   schema: JSONSchema7 | ObjectJsonSchema7;
 }) {
   const result = await generateObject({
-    model: customModelProvider.getModel(model),
-    system: prompt.system,
+    model: await customModelProvider.getModel(model),
+    instructions: prompt.system,
     prompt: prompt.user || "",
     schema: jsonSchemaToZod(schema),
   });
@@ -217,7 +217,7 @@ export async function rememberAgentAction(
   userId: string,
 ) {
   if (!agent) return undefined;
-  const key = CacheKeys.agentInstructions(agent);
+  const key = CacheKeys.agentInstructions(agent, userId);
   let cachedAgent = await serverCache.get<Agent | null>(key);
   if (!cachedAgent) {
     cachedAgent = await agentRepository.selectAgentById(agent, userId);

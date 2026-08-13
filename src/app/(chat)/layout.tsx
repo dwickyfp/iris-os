@@ -1,19 +1,18 @@
-import { SidebarProvider } from "ui/sidebar";
-import { AppSidebar } from "@/components/layouts/app-sidebar";
 import { AppHeader } from "@/components/layouts/app-header";
+import { AppSidebar } from "@/components/layouts/app-sidebar";
 import { cookies } from "next/headers";
+import { SidebarProvider } from "ui/sidebar";
 
-import { getSession } from "lib/auth/server";
-import { COOKIE_KEY_SIDEBAR_STATE } from "lib/const";
 import { AppPopupProvider } from "@/components/layouts/app-popup-provider";
-import { SWRConfigProvider } from "./swr-config";
 import { UserDetailContent } from "@/components/user/user-detail/user-detail-content";
 import { UserDetailContentSkeleton } from "@/components/user/user-detail/user-detail-content-skeleton";
+import { getSession } from "lib/auth/server";
+import { COOKIE_KEY_SIDEBAR_STATE } from "lib/const";
+import { SWRConfigProvider } from "./swr-config";
+import { ChatSessionHost } from "@/components/chat-session-host";
 
-import { Suspense } from "react";
 import { redirect } from "next/navigation";
-export const experimental_ppr = true;
-
+import { Suspense } from "react";
 export default async function ChatLayout({
   children,
 }: { children: React.ReactNode }) {
@@ -35,9 +34,12 @@ export default async function ChatLayout({
           }
         />
         <AppSidebar user={session.user} />
-        <main className="relative bg-background  w-full flex flex-col h-screen">
+        <main className="relative flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <AppHeader />
-          <div className="flex-1 overflow-y-auto">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ChatSessionHost />
+            {children}
+          </div>
         </main>
       </SWRConfigProvider>
     </SidebarProvider>

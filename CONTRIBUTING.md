@@ -1,6 +1,6 @@
-# Contributing to better-chatbot
+# Contributing to Iris OS
 
-Thank you for your interest in contributing to better-chatbot! We welcome contributions from the community and truly appreciate your effort to improve the project.
+Thank you for your interest in contributing to Iris OS! We welcome contributions from the community and truly appreciate your effort to improve the project.
 
 ---
 
@@ -41,8 +41,8 @@ This helps us:
 2. **Clone your fork** locally:
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/better-chatbot.git
-   cd better-chatbot
+   git clone https://github.com/YOUR_USERNAME/iris-os.git
+   cd iris-os
    ```
 
 3. **Create a new branch** for your changes:
@@ -193,5 +193,5 @@ When submitting **Issues** or **Pull Requests**:
 
 ## Thank You
 
-We sincerely appreciate your contribution to better-chatbot.
+We sincerely appreciate your contribution to Iris OS.
 Let’s build a powerful, well tested and lightweight AI experience together! 🚀

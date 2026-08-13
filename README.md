@@ -1,87 +1,106 @@
-**Keinsaas Navigator** - A better open-source AI chatbot for individuals and teams.
+# Iris OS
 
-> Originally created by [Choi Sung Keun](https://github.com/cgoinglove).
+**The open operating system for AI agents, tools, and workflows.**
 
-<img width="1184" height="576" alt="thumbnail" loading="lazy" src="https://github.com/user-attachments/assets/d6ba80ff-a62a-4920-b266-85c4a89d6076" />
+Iris OS is an open-source AI workspace where models can reason, agents can
+specialize, tools can act, and workflows can coordinate the work. It provides
+one interface for conversations, automation, voice, code execution, content
+generation, and Model Context Protocol (MCP) integrations.
 
 [![MCP Supported](https://img.shields.io/badge/MCP-Supported-00c853)](https://modelcontextprotocol.io/introduction)
 [![Local First](https://img.shields.io/badge/Local-First-blue)](https://localfirstweb.dev/)
-[![Discord](https://img.shields.io/discord/1374047276074537103?label=Discord&logo=discord&color=5865F2)](https://discord.gg/gCRu69Upnp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-[![Deploy with Vercel](https://vercel.com/button)](<https://vercel.com/new/clone?repository-url=https://github.com/cgoinglove/better-chatbot&env=BETTER_AUTH_SECRET&env=OPENAI_API_KEY&env=GOOGLE_GENERATIVE_AI_API_KEY&env=ANTHROPIC_API_KEY&envDescription=BETTER_AUTH_SECRET+is+required+(enter+any+secret+value).+At+least+one+LLM+provider+API+key+(OpenAI,+Claude,+or+Google)+is+required,+but+you+can+add+all+of+them.+See+the+link+below+for+details.&envLink=https://github.com/cgoinglove/better-chatbot/blob/main/.env.example&demo-title=better-chatbot&demo-description=An+Open-Source+Chatbot+Template+Built+With+Next.js+and+the+AI+SDK+by+Vercel.&products=[{"type":"integration","protocol":"storage","productSlug":"neon","integrationSlug":"neon"},{"type":"integration","protocol":"storage","productSlug":"upstash-kv","integrationSlug":"upstash"},{"type":"blob"}]>)
+[![Deploy with Vercel](https://vercel.com/button)](<https://vercel.com/new/clone?repository-url=https://github.com/dwickyfp/iris-os&env=BETTER_AUTH_SECRET&env=OPENAI_API_KEY&env=GOOGLE_GENERATIVE_AI_API_KEY&env=ANTHROPIC_API_KEY&envDescription=BETTER_AUTH_SECRET+is+required+(enter+any+secret+value).+At+least+one+LLM+provider+API+key+(OpenAI,+Claude,+or+Google)+is+required,+but+you+can+add+all+of+them.+See+the+link+below+for+details.&envLink=https://github.com/dwickyfp/iris-os/blob/main/.env.example&demo-title=Iris+OS&demo-description=The+open+operating+system+for+AI+agents,+tools,+and+workflows.&products=[{"type":"integration","protocol":"storage","productSlug":"neon","integrationSlug":"neon"},{"type":"integration","protocol":"storage","productSlug":"upstash-kv","integrationSlug":"upstash"},{"type":"blob"}]>)
 
-🚀 **[Live Demo](https://app.keinsaas.com/)** | See the experience in action in the [preview](#preview) below!
+## Why Iris OS?
 
-#### Demo Chats
+In Greek mythology, **Iris** is the messenger who connects worlds. That idea is
+the foundation of this project: intelligence becomes more useful when it can
+connect people, models, knowledge, and software.
 
-- **MCP Tools Demo:** [Chat with Tools](https://better-chatbot-demo.vercel.app/export/a4820921-8012-496b-8a5d-13757050bafe)
-- **Image Generation Demo:** [Chat with Image Generation](https://better-chatbot-demo.vercel.app/export/452ad745-9efb-49ae-9114-10db15f1b827)
+Iris is also associated with the rainbow: many distinct colors forming one
+bridge. In Iris OS, those colors represent different models, providers, tools,
+and ways of working. The goal is not to hide their differences, but to make
+them interoperable through one coherent experience.
 
-## Quick Start 🚀
+The **OS** does not mean Iris OS replaces your device operating system. It means
+Iris OS acts as an operating layer for AI work:
 
-> **Get your app running in minutes! No installation or payment required.**
+- **Models are the intelligence.** Use the provider best suited to each task.
+- **Agents are the specialists.** Give each agent a role, context, and tools.
+- **Tools are the capabilities.** Connect external systems through MCP and
+  built-in integrations.
+- **Workflows are the coordination layer.** Turn repeatable processes into
+  reusable automation.
+- **Iris is the interface.** Keep human intent, control, and visibility at the
+  center of every action.
 
-You only need **one AI Provider API Key** (OpenAI, Claude, Gemini, etc.). Everything else runs on free tiers - database, file storage, and hosting.
+### Product Principles
 
-👉 **[Click this guide to deploy your site with just a few clicks](docs/tips-guides/vercel.md)**
+- **Open by design:** Self-hostable, extensible, and not tied to one model
+  provider.
+- **Action over answers:** AI should be able to complete work, not only produce
+  text.
+- **Human control:** Tool modes let users choose autonomous, approval-based, or
+  tool-free operation.
+- **Composable systems:** Agents, tools, presets, and workflows should work
+  independently and together.
+- **Local ownership:** Your deployment, configuration, credentials, and data
+  remain under your control.
 
----
+## Capabilities
 
-**Keinsaas Navigator** - A better open-source AI chatbot for individuals and teams, inspired by ChatGPT, Claude, Grok, and Gemini.
+| Layer | What Iris OS provides |
+| --- | --- |
+| **Iris Chat** | Multi-model conversations, attachments, temporary chats, and `@mention` invocation |
+| **Iris Agents** | Specialized assistants with custom instructions, context, and tool access |
+| **Iris Tools** | MCP integrations, web search, HTTP requests, code execution, and data visualization |
+| **Iris Flow** | Visual workflows that can be published and invoked as reusable tools |
+| **Iris Voice** | Realtime voice conversations with MCP tool access |
+| **Iris Studio** | Image generation, artifacts, structured output, and rich content rendering |
 
-• **Multi-AI Support** - Integrates all major LLMs: OpenAI, Anthropic, Google, xAI, Ollama, and more  
-• **Powerful Tools** - MCP protocol, web search, JS/Python code execution, data visualization  
-• **Image Generation** - Create and edit images with AI models (OpenAI, Google Gemini, xAI)  
-• **Automation** - Custom agents, visual workflows, artifact generation  
-• **Collaboration** - Share agents, workflows, and MCP configurations with your team  
-• **Voice Assistant** - Realtime voice chat with full MCP tool integration  
-• **Intuitive UX** - Instantly invoke any feature with `@mention`  
-• **Quick Start** - Deploy free with Vercel Deploy button
+Iris OS supports OpenAI, Anthropic, Google, xAI, OpenRouter, Ollama, and other
+compatible providers. It is built with Next.js, the Vercel AI SDK, PostgreSQL,
+and MCP.
 
-Built with Vercel AI SDK and Next.js, combining the best features of leading AI services into one platform.
+## Quick Start
+
+You need PostgreSQL and at least one AI provider API key. For a managed setup,
+use the Vercel deployment flow. For full ownership, run Iris OS locally or with
+Docker.
+
+[Open the Vercel deployment guide](docs/tips-guides/vercel.md), or continue to
+[Getting Started](#getting-started) for local installation.
 
 ## Table of Contents
 
-- [Table of Contents](#table-of-contents)
-- [Preview](#preview)
-  - [🧩 Browser Automation with Playwright MCP](#-browser-automation-with-playwright-mcp)
-  - [🔗 Visual Workflows as Custom Tools](#-visual-workflows-as-custom-tools)
-  - [🤖 Custom Agents](#-custom-agents)
-  - [🎙️ Realtime Voice Assistant + MCP Tools](#️-realtime-voice-assistant--mcp-tools)
-  - [⚡️ Quick Tool Mentions (`@`) \& Presets](#️-quick-tool-mentions---presets)
-  - [🧭 Tool Choice Mode](#-tool-choice-mode)
-  - [🛠️ Default Tools](#️-default-tools)
-    - [🌐 Web Search](#-web-search)
-    - [⚡️ JS,PYTHON Executor](#️-jspython-executor)
-    - [📊 Data Visualization Tools](#-data-visualization-tools)
+- [Why Iris OS?](#why-iris-os)
+  - [Product Principles](#product-principles)
+- [Capabilities](#capabilities)
+- [Quick Start](#quick-start)
+- [How Iris OS Works](#how-iris-os-works)
+  - [Browser Automation with Playwright MCP](#browser-automation-with-playwright-mcp)
+  - [Visual Workflows as Custom Tools](#visual-workflows-as-custom-tools)
+  - [Custom Agents](#custom-agents)
+  - [Realtime Voice and MCP Tools](#realtime-voice-and-mcp-tools)
+  - [Quick Tool Mentions and Presets](#quick-tool-mentions-and-presets)
+  - [Tool Choice Mode](#tool-choice-mode)
+  - [Default Tools](#default-tools)
 - [Getting Started](#getting-started)
-  - [Quick Start (Docker Compose Version) 🐳](#quick-start-docker-compose-version-)
-  - [Quick Start (Local Version) 🚀](#quick-start-local-version-)
+  - [Docker Compose](#docker-compose)
+  - [Local Development](#local-development)
   - [Environment Variables](#environment-variables)
-- [📘 Guides](#-guides)
-  - [🔌 MCP Server Setup \& Tool Testing](#-mcp-server-setup--tool-testing)
-  - [🐳 Docker Hosting Guide](#-docker-hosting-guide)
-  - [▲ Vercel Hosting Guide](#-vercel-hosting-guide)
-  - [🗂️ File Storage Drivers](#️-file-storage-drivers)
-  - [🎯 System Prompts \& Chat Customization](#-system-prompts--chat-customization)
-  - [🔐 OAuth Sign-In Setup](#-oauth-sign-in-setup)
-  - [🕵🏿 Adding openAI like providers](#-adding-openai-like-providers)
-  - [🧪 E2E Testing Guide](#-e2e-testing-guide)
-- [💡 Tips](#-tips)
-  - [💬 Temporary Chat Windows](#-temporary-chat-windows)
-- [🗺️ Roadmap](#️-roadmap)
-- [🙌 Contributing](#-contributing)
-- [💬 Join Our Discord](#-join-our-discord)
+- [Guides](#guides)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Credits](#credits)
 
-> This project is evolving at lightning speed! ⚡️ We're constantly shipping new features and smashing bugs. **Star this repo** to join the ride and stay in the loop with the latest updates!
+## How Iris OS Works
 
-## Preview
+The following examples show how the layers of Iris OS work together.
 
-Get a feel for the UX — here's a quick look at what's possible.
-
-### 🧩 Browser Automation with Playwright MCP
-
-![preview](https://github.com/user-attachments/assets/e4febb04-26d5-45da-a7bb-f7d452d333c2)
+### Browser Automation with Playwright MCP
 
 **Example:** Control a web browser using Microsoft's [playwright-mcp](https://github.com/microsoft/playwright-mcp) tool.
 
@@ -90,23 +109,18 @@ Get a feel for the UX — here's a quick look at what's possible.
 Sample prompt:
 
 ```prompt
-1. Use the @tool('web-search') to look up information about “modelcontetprotocol.”
+1. Use the @tool('web-search') to look up information about
+   "Model Context Protocol."
 
 2. Then, using : @mcp("playwright")
-   - navigate Google (https://www.google.com)
-   - Click the “Login” button
-   - Enter my email address (neo.cgoing@gmail.com)
-   - Clock the "Next"  button
+   - navigate to Google (https://www.google.com)
+   - click the "Login" button
+   - enter the email address provided in the prompt
+   - click the "Next" button
    - Close the browser
 ```
 
-<br/>
-
-### 🔗 Visual Workflows as Custom Tools
-
-<img width="1912" height="953" alt="workflow" loading="lazy" src="https://github.com/user-attachments/assets/e69e72e8-595c-480e-b519-4531f4c6331f" />
-
-<img width="1567" alt="workflow-mention" loading="lazy" src="https://github.com/user-attachments/assets/cf3e1339-ee44-4615-a71d-f6b46833e41f" />
+### Visual Workflows as Custom Tools
 
 **Example:** Create custom workflows that become callable tools in your chat conversations.
 
@@ -114,11 +128,7 @@ Sample prompt:
 - Publish workflows to make them available as `@workflow_name` tools in chat
 - Chain complex multi-step processes into reusable, automated sequences
 
-<br/>
-
-### 🤖 Custom Agents
-
-<img width="1567" alt="agent-example" loading="lazy" src="https://github.com/user-attachments/assets/d0a325c0-ff1e-4038-b6bf-fcf57659a5c1" />
+### Custom Agents
 
 **Example:** Create specialized AI agents with custom instructions and tool access.
 
@@ -132,20 +142,13 @@ For instance, create a GitHub Manager agent by:
 - Adding project details to the system prompt
 - Calling it with `@github_manager` to manage your repository
 
-<br/>
+### Realtime Voice and MCP Tools
 
-### 🎙️ Realtime Voice Assistant + MCP Tools
+Iris Voice provides realtime conversations through OpenAI's Realtime API with
+full MCP tool integration. Talk naturally while Iris OS executes tools and
+reports progress in real time.
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/e2657b8c-ce0b-40dd-80b6-755324024973" width="100%" />
-</p>
-
-This demo showcases a **realtime voice-based chatbot assistant** built with OpenAI's new Realtime API — now extended with full **MCP tool integration**.
-Talk to the assistant naturally, and watch it execute tools in real time.
-
-### ⚡️ Quick Tool Mentions (`@`) & Presets
-
-<img width="1225" alt="image" src="https://github.com/user-attachments/assets/dfe76b3b-c3d8-436e-8a7c-7b23292e234c" loading="lazy"/>
+### Quick Tool Mentions and Presets
 
 Quickly call tool during chat by typing `@toolname`.
 No need to memorize — just type `@` and pick from the list!
@@ -160,9 +163,7 @@ Each method has its own strengths — use them together to balance efficiency an
 You can also create **tool presets** by selecting only the MCP servers or tools you need.
 Switch between presets instantly with a click — perfect for organizing tools by task or workflow.
 
-### 🧭 Tool Choice Mode
-
-<img width="1225" alt="image" src="https://github.com/user-attachments/assets/8fc64c6a-30c9-41a4-a5e5-4e8804f73473" loading="lazy"/>
+### Tool Choice Mode
 
 Control how tools are used in each chat with **Tool Choice Mode** — switch anytime with `⌘P`.
 
@@ -172,11 +173,9 @@ Control how tools are used in each chat with **Tool Choice Mode** — switch any
 
 This lets you flexibly choose between autonomous, guided, or tool-free interaction depending on the situation.
 
-### 🛠️ Default Tools
+### Default Tools
 
-#### 🌐 Web Search
-
-<img width="1034" height="940" alt="web-search" src="https://github.com/user-attachments/assets/261037d9-e1a7-44ad-b45e-43780390a94e" />
+#### Web Search
 
 Built-in web search powered by [Exa AI](https://exa.ai). Search the web with semantic AI and extract content from URLs directly in your chats.
 
@@ -184,22 +183,19 @@ Built-in web search powered by [Exa AI](https://exa.ai). Search the web with sem
 - **Free Tier:** 1,000 requests/month at no cost, no credit card required
 - **Easy Setup:** Get your API key instantly at [dashboard.exa.ai](https://dashboard.exa.ai)
 
-#### 🎨 Image Generation
-
-<img width="1034" height="940" loading="lazy" alt="image-generation" src="https://github.com/user-attachments/assets/b081c837-8948-4f4d-a2f4-c8630cf0eaa2" />
+#### Image Generation
 
 Built-in image generation and editing capabilities powered by AI models. Create, edit, and modify images directly in your chats.
 
 - **Supported Operations:** Image generation, editing, and composition
 - **Current Models:** Gemini Nano Banana, OpenAI
 
-#### ⚡️ JS,PYTHON Executor
+#### JavaScript and Python Execution
 
-<img width="1225" alt="js-executor-preview" src="https://github.com/user-attachments/assets/7deed824-e70b-46d4-a294-de20ed4dc869" loading="lazy"/>
+Run JavaScript or Python for calculations, data transformation, prototyping,
+and tool-assisted reasoning directly within a conversation.
 
-It is a simple JS execution tool.
-
-#### 📊 Data Visualization Tools
+#### Data Visualization
 
 **Interactive Tables**: Create feature-rich data tables with advanced functionality:
 
@@ -214,12 +210,9 @@ It is a simple JS execution tool.
 
 > Additionally, many other tools are provided, such as an HTTP client for API requests and more.
 
-<br/>
-
-…and there's even more waiting for you.
-Try it out and see what else it can do!
-
-<br/>
+These capabilities are designed to compose: an agent can search the web, run
+code, transform the result, and pass it into a reusable workflow without
+leaving Iris OS.
 
 ## Getting Started
 
@@ -230,7 +223,7 @@ Try it out and see what else it can do!
 npm install -g pnpm
 ```
 
-### Quick Start (Docker Compose Version) 🐳
+### Docker Compose
 
 ```bash
 # 1. Install dependencies
@@ -245,7 +238,7 @@ pnpm docker-compose:up
 
 ```
 
-### Quick Start (Local Version) 🚀
+### Local Development
 
 ```bash
 pnpm i
@@ -362,54 +355,50 @@ DISABLE_SIGN_UP=
 NOT_ALLOW_ADD_MCP_SERVERS=
 ```
 
-<br/>
+## Guides
 
-## 📘 Guides
+Step-by-step setup guides for running and configuring Iris OS.
 
-Step-by-step setup guides for running and configuring better-chatbot.
-
-#### [🔌 MCP Server Setup & Tool Testing](./docs/tips-guides/mcp-server-setup-and-tool-testing.md)
+### [MCP Server Setup and Tool Testing](./docs/tips-guides/mcp-server-setup-and-tool-testing.md)
 
 - How to add and configure MCP servers in your environment
 
-#### [🐳 Docker Hosting Guide](./docs/tips-guides/docker.md)
+### [Docker Hosting Guide](./docs/tips-guides/docker.md)
 
-- How to self-host the chatbot using Docker, including environment configuration.
+- Self-host Iris OS with Docker, including environment configuration.
 
-#### [▲ Vercel Hosting Guide](./docs/tips-guides/vercel.md)
+### [Vercel Hosting Guide](./docs/tips-guides/vercel.md)
 
-- Deploy the chatbot to Vercel with simple setup steps for production use.
+- Deploy Iris OS to Vercel with a guided production setup.
 
-#### [🗂️ File Storage Drivers](./docs/tips-guides/file-storage.md)
+### [File Storage Drivers](./docs/tips-guides/file-storage.md)
 
 - Cloud-based file storage with Vercel Blob (default) for seamless uploads in both development and production. S3 support coming soon.
 
-#### [🎯 System Prompts & Chat Customization](./docs/tips-guides/system-prompts-and-customization.md)
+### [System Prompts and Workspace Customization](./docs/tips-guides/system-prompts-and-customization.md)
 
-- Personalize your chatbot experience with custom system prompts, user preferences, and MCP tool instructions
+- Personalize Iris OS with system prompts, user preferences, and MCP tool instructions.
 
-#### [🔐 OAuth Sign-In Setup](./docs/tips-guides/oauth.md)
+### [OAuth Sign-In Setup](./docs/tips-guides/oauth.md)
 
 - Configure Google, GitHub, and Microsoft OAuth for secure user login support.
 
-#### [🕵🏿 Adding openAI like providers](docs/tips-guides/adding-openAI-like-providers.md)
+### [Adding OpenAI-Compatible Providers](docs/tips-guides/adding-openAI-like-providers.md)
 
-- Adding openAI like ai providers
+- Connect providers that implement an OpenAI-compatible API.
 
-#### [🧪 E2E Testing Guide](./docs/tips-guides/e2e-testing-guide.md)
+### [End-to-End Testing Guide](./docs/tips-guides/e2e-testing-guide.md)
 
-- Comprehensive end-to-end testing with Playwright including multi-user scenarios, agent visibility testing, and CI/CD integration
-  <br/>
+- Run Playwright tests for multi-user scenarios, agent visibility, and CI/CD.
 
-## 💡 Tips
+### [Temporary Chat Windows](./docs/tips-guides/temporary_chat.md)
 
-#### [💬 Temporary Chat Windows](./docs/tips-guides/temporary_chat.md)
+- Open lightweight popup conversations for side questions or testing without
+  affecting the main thread.
 
-- Open lightweight popup chats for quick side questions or testing — separate from your main thread.
+## Roadmap
 
-## 🗺️ Roadmap
-
-Planned features coming soon to better-chatbot:
+Planned features coming soon to Iris OS:
 
 - [x] **File Upload & Storage** (Vercel Blob integration)
 - [x] **Image Generation**
@@ -417,32 +406,27 @@ Planned features coming soon to better-chatbot:
 - [ ] **RAG (Retrieval-Augmented Generation)**
 - [ ] **Web-based Compute** (with [WebContainers](https://webcontainers.io) integration)
 
-💡 If you have suggestions or need specific features, please create an [issue](https://github.com/cgoinglove/better-chatbot/issues)!
+Have an idea for the next Iris OS capability? Open a
+[feature request](https://github.com/dwickyfp/iris-os/issues/new).
 
-## 💖 Support
+## Contributing
 
-If this project has been helpful to you, please consider supporting its development:
+Bug reports, feature ideas, documentation, translations, and code contributions
+are welcome. The goal is to build an open AI operating layer that remains
+useful, understandable, and under its users' control.
 
-- ⭐ **Star** this repository
-- 🐛 **Report** bugs and suggest features
-- 💰 **[Become a sponsor](https://github.com/sponsors/cgoinglove)** to support ongoing development
+Read the [Contributing Guide](./CONTRIBUTING.md) before opening a pull request or
+proposing a major change.
 
-Your support helps maintain and improve this project. Thank you! 🙏
+For language contributions, see the
+[translation guide](./messages/language.md).
 
-## 🙌 Contributing
+## Credits
 
-We welcome all contributions! Bug reports, feature ideas, code improvements — everything helps us build the best local AI assistant.
+Iris OS is maintained by [Dwicky Feri](https://github.com/dwickyfp). It is based
+on the open-source project originally created by
+[Choi Sung Keun](https://github.com/cgoinglove) and includes work from its
+contributors. The upstream history and attribution are preserved in this
+repository.
 
-> **⚠️ Please read our [Contributing Guide](./CONTRIBUTING.md) before submitting any Pull Requests or Issues.** This helps us work together more effectively and saves time for everyone.
-
-**For detailed contribution guidelines**, please see our [Contributing Guide](./CONTRIBUTING.md).
-
-**Language Translations:** Help us make the chatbot accessible to more users by adding new language translations. See [language.md](./messages/language.md) for instructions on how to contribute translations.
-
-Let's build it together 🚀
-
-## 💬 Join Our Discord
-
-[![Discord](https://img.shields.io/discord/1374047276074537103?label=Discord&logo=discord&color=5865F2)](https://discord.gg/gCRu69Upnp)
-
-Connect with the community, ask questions, and get support on our official Discord server!
+Iris OS is released under the [MIT License](./LICENSE).

@@ -9,6 +9,7 @@ export type ChatMetadata = {
   chatModel?: ChatModel;
   toolChoice?: "auto" | "none" | "manual";
   toolCount?: number;
+  agentType?: "base" | "custom";
   agentId?: string;
 };
 

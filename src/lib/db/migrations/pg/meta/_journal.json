@@ -113,6 +113,27 @@
       "when": 1771595097815,
       "tag": "0015_yummy_wallflower",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0016_model_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786644804332,
+      "tag": "0017_skills_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786723200000,
+      "tag": "0018_learning_memory",
+      "breakpoints": true
     }
   ]
 }

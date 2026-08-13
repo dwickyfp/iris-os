@@ -21,8 +21,9 @@ export const useChatModels = (options?: SWRConfiguration) => {
     onSuccess: (data) => {
       const status = appStore.getState();
       if (!status.chatModel) {
-        const firstProvider = data[0].provider;
-        const model = data[0].models[0].name;
+        const firstProvider = data[0]?.provider;
+        const model = data[0]?.models[0]?.name;
+        if (!firstProvider || !model) return;
         appStore.setState({ chatModel: { provider: firstProvider, model } });
       }
     },

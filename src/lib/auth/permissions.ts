@@ -174,7 +174,7 @@ function hasPermission(
     | "update"
     | "view"
     | "share",
-  resource: "agent" | "workflow" | "mcp",
+  resource: "agent" | "workflow" | "mcp" | "skill",
 ): boolean {
   const roleObject = getRolePermissions(userRoleString);
 
@@ -233,6 +233,39 @@ export async function canDeleteAgent(): Promise<boolean> {
     return hasPermission(session.user.role, "delete", "agent");
   } catch (error) {
     console.error("Error checking agent delete permission:", error);
+    return false;
+  }
+}
+
+export async function canCreateSkill(): Promise<boolean> {
+  try {
+    const session = await getSession();
+    return (
+      !!session?.user && hasPermission(session.user.role, "create", "skill")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function canEditSkill(): Promise<boolean> {
+  try {
+    const session = await getSession();
+    return (
+      !!session?.user && hasPermission(session.user.role, "update", "skill")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function canDeleteSkill(): Promise<boolean> {
+  try {
+    const session = await getSession();
+    return (
+      !!session?.user && hasPermission(session.user.role, "delete", "skill")
+    );
+  } catch {
     return false;
   }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { format } from "date-fns";
+import { formatInAppTimeZone } from "lib/date-time";
 import {
   Card,
   CardContent,
@@ -161,7 +161,9 @@ export function UserDetailFormCard({
                 {tCommon("joined")}
               </Label>
               <p className="text-sm font-medium" data-testid="user-created-at">
-                {format(new Date(currentUser.createdAt), "PPP")}
+                {formatInAppTimeZone(currentUser.createdAt, {
+                  dateStyle: "long",
+                })}
               </p>
             </div>
 
@@ -170,7 +172,9 @@ export function UserDetailFormCard({
                 {tCommon("lastUpdated")}
               </Label>
               <p className="text-sm font-medium" data-testid="user-updated-at">
-                {format(new Date(currentUser.updatedAt), "PPP")}
+                {formatInAppTimeZone(currentUser.updatedAt, {
+                  dateStyle: "long",
+                })}
               </p>
             </div>
           </div>

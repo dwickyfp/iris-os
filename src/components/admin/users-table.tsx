@@ -2,7 +2,7 @@
 
 import { useTransition, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { format } from "date-fns";
+import { formatAppDate } from "lib/date-time";
 import {
   Table,
   TableBody,
@@ -282,7 +282,7 @@ export function UsersTable({
                     />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {format(new Date(user.createdAt), "MMM d, yyyy")}
+                    {formatAppDate(user.createdAt)}
                   </TableCell>
                   <TableCell>
                     <ChevronRight

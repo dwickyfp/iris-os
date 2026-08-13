@@ -1,54 +1,71 @@
 import {
+  Tool,
+  UIMessage,
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
   smoothStream,
-  stepCountIs,
-  streamText,
-  Tool,
-  UIMessage,
 } from "ai";
 
-import { customModelProvider, isToolCallUnsupportedModel } from "lib/ai/models";
+import { customModelProvider } from "lib/ai/models";
 
-import { agentRepository, chatRepository } from "lib/db/repository";
-import globalLogger from "logger";
 import {
-  buildMcpServerCustomizationsSystemPrompt,
-  buildUserSystemPrompt,
-  buildToolCallUnsupportedModelSystemPrompt,
-} from "lib/ai/prompts";
-import {
-  chatApiSchemaRequestBodySchema,
   ChatMention,
   ChatMetadata,
+  chatApiSchemaRequestBodySchema,
 } from "app-types/chat";
+import {
+  buildMcpServerCustomizationsSystemPrompt,
+  buildBaseAgentSystemPrompt,
+  buildToolCallUnsupportedModelSystemPrompt,
+  buildUserSystemPrompt,
+} from "lib/ai/prompts";
+import {
+  agentRepository,
+  chatRepository,
+  skillRepository,
+} from "lib/db/repository";
+import globalLogger from "logger";
 
 import { errorIf, safe } from "ts-safe";
 
+import { buildCsvIngestionPreviewParts } from "@/lib/ai/ingest/csv-ingest";
+import { getSession } from "auth/server";
+import { colorize } from "consola/utils";
+import { createToolLoopAgent } from "lib/ai/agent/create-tool-loop-agent";
 import {
-  excludeToolExecution,
-  handleError,
-  manualToolExecuteByLastMessage,
-  mergeSystemPrompt,
-  extractInProgressToolPart,
-  filterMcpServerCustomizations,
-  loadMcpTools,
-  loadWorkFlowTools,
-  loadAppDefaultTools,
-  convertToSavePart,
-} from "./shared.chat";
+  createAgentRuntimeContext,
+  createBaseAgentRuntimeContext,
+} from "lib/ai/agent/runtime-context";
+import { compactContext } from "lib/ai/context-compaction";
+import {
+  type AssignedSkillsRepository,
+  bindSkillTools,
+  buildSkillManifestPrompt,
+  createSkillsRuntime,
+} from "lib/ai/skill";
+import { ImageToolName } from "lib/ai/tools";
+import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
+import { serverFileStorage } from "lib/file-storage";
+import { generateUUID } from "lib/utils";
+import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
+import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
 } from "./actions";
-import { getSession } from "auth/server";
-import { colorize } from "consola/utils";
-import { generateUUID } from "lib/utils";
-import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
-import { ImageToolName } from "lib/ai/tools";
-import { buildCsvIngestionPreviewParts } from "@/lib/ai/ingest/csv-ingest";
-import { serverFileStorage } from "lib/file-storage";
+import {
+  convertToSavePart,
+  excludeToolExecution,
+  extractInProgressToolPart,
+  filterMcpServerCustomizations,
+  handleError,
+  loadAppDefaultTools,
+  loadMcpTools,
+  loadWorkFlowTools,
+  manualToolExecuteByLastMessage,
+  mergeSystemPrompt,
+} from "./shared.chat";
 
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Chat API: `),
@@ -75,7 +92,20 @@ export async function POST(request: Request) {
       attachments = [],
     } = chatApiSchemaRequestBodySchema.parse(json);
 
-    const model = customModelProvider.getModel(chatModel);
+    const modelConfig =
+      await customModelProvider.getModelConfiguration(chatModel);
+    const model = await customModelProvider.getModel(chatModel);
+
+    if (
+      attachments.some((attachment) =>
+        attachment.mediaType?.startsWith("image/"),
+      ) &&
+      !modelConfig.capabilities.vision
+    ) {
+      return new Response("The selected model does not support image input", {
+        status: 400,
+      });
+    }
 
     let thread = await chatRepository.selectThreadDetails(id);
 
@@ -171,7 +201,7 @@ export async function POST(request: Request) {
 
     messages.push(message);
 
-    const supportToolCall = !isToolCallUnsupportedModel(model);
+    const supportToolCall = modelConfig.capabilities.toolCalls;
 
     const agentId = (
       mentions.find((m) => m.type === "agent") as Extract<
@@ -186,14 +216,13 @@ export async function POST(request: Request) {
       mentions.push(...agent.instructions.mentions);
     }
 
-    const useImageTool = Boolean(imageTool?.model);
+    const useImageTool = Boolean(imageTool?.model) && toolChoice !== "none";
 
     const isToolCallAllowed =
-      supportToolCall &&
-      (toolChoice != "none" || mentions.length > 0) &&
-      !useImageTool;
+      supportToolCall && toolChoice !== "none" && !useImageTool;
 
     const metadata: ChatMetadata = {
+      agentType: agent ? "custom" : "base",
       agentId: agent?.id,
       toolChoice: toolChoice,
       toolCount: 0,
@@ -231,13 +260,28 @@ export async function POST(request: Request) {
             }),
           )
           .orElse({});
+        const skillsRuntime =
+          agent && supportToolCall
+            ? await createSkillsRuntime({
+                repository: skillRepository as AssignedSkillsRepository,
+                agentId: agent.id,
+                userId: session.user.id,
+              })
+            : { manifest: [], tools: {} };
         const inProgressToolParts = extractInProgressToolPart(message);
         if (inProgressToolParts.length) {
           await Promise.all(
             inProgressToolParts.map(async (part) => {
               const output = await manualToolExecuteByLastMessage(
                 part,
-                { ...MCP_TOOLS, ...WORKFLOW_TOOLS, ...APP_DEFAULT_TOOLS },
+                bindSkillTools(
+                  {
+                    ...MCP_TOOLS,
+                    ...WORKFLOW_TOOLS,
+                    ...APP_DEFAULT_TOOLS,
+                  },
+                  skillsRuntime.tools,
+                ),
                 request.signal,
               );
               part.output = output;
@@ -262,9 +306,19 @@ export async function POST(request: Request) {
           .map((v) => filterMcpServerCustomizations(MCP_TOOLS!, v))
           .orElse({});
 
+        const memoryContext = await buildMemoryContext(
+          session.user.id,
+          message.parts
+            .filter((part: any) => part.type === "text")
+            .map((part: any) => part.text)
+            .join(" "),
+        );
         const systemPrompt = mergeSystemPrompt(
+          !agent && buildBaseAgentSystemPrompt(),
           buildUserSystemPrompt(session.user, userPreferences, agent),
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
+          buildSkillManifestPrompt(skillsRuntime.manifest),
+          memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
 
@@ -286,11 +340,14 @@ export async function POST(request: Request) {
               (message.metadata as ChatMetadata)?.toolChoice === "manual"
                 ? excludeToolExecution(t)
                 : t;
-            return {
-              ...bindingTools,
-              ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
-              ...IMAGE_TOOL,
-            };
+            return bindSkillTools(
+              {
+                ...bindingTools,
+                ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
+                ...IMAGE_TOOL,
+              },
+              skillsRuntime.tools,
+            );
           })
           .unwrap();
         metadata.toolCount = Object.keys(vercelAITooles).length;
@@ -315,17 +372,43 @@ export async function POST(request: Request) {
         }
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
-        const result = streamText({
+        const compactedMessages = await compactContext({
+          threadId: thread!.id,
+          messages,
+          contextWindow: modelConfig.contextWindow,
           model,
-          system: systemPrompt,
-          messages: convertToModelMessages(messages),
-          experimental_transform: smoothStream({ chunking: "word" }),
-          maxRetries: 2,
-          tools: vercelAITooles,
-          stopWhen: stepCountIs(10),
-          toolChoice: "auto",
-          abortSignal: request.signal,
         });
+        const modelMessages = await convertToModelMessages(compactedMessages);
+        const runtimeContext = agent
+          ? createAgentRuntimeContext({
+              requestId: generateUUID(),
+              userId: session.user.id,
+              threadId: thread!.id,
+              agent,
+              userRole: (session.user as any).role,
+              toolChoice,
+              skills: skillsRuntime.manifest,
+            })
+          : createBaseAgentRuntimeContext({
+              requestId: generateUUID(),
+              userId: session.user.id,
+              threadId: thread!.id,
+              userRole: (session.user as any).role,
+              toolChoice,
+            });
+        const result = await createToolLoopAgent({
+          profile: agent ? { type: "custom", agent } : { type: "base" },
+          model,
+          instructions: systemPrompt,
+          tools: vercelAITooles,
+          runtimeContext,
+        }).stream({
+          messages: modelMessages,
+          runtimeContext,
+          toolsContext: runtimeContext,
+          abortSignal: request.signal,
+          experimental_transform: smoothStream({ chunking: "word" }),
+        } as any);
         result.consumeStream();
         dataStream.merge(
           result.toUIMessageStream({
@@ -340,11 +423,12 @@ export async function POST(request: Request) {
       },
 
       generateId: generateUUID,
-      onFinish: async ({ responseMessage }) => {
+      onEnd: async ({ responseMessage }) => {
         if (responseMessage.id == message.id) {
           await chatRepository.upsertMessage({
             threadId: thread!.id,
-            ...responseMessage,
+            id: responseMessage.id,
+            role: responseMessage.role,
             parts: responseMessage.parts.map(convertToSavePart),
             metadata,
           });
@@ -369,6 +453,38 @@ export async function POST(request: Request) {
             updatedAt: new Date(),
           } as any);
         }
+        await Promise.all([
+          indexChatMessage({
+            userId: session.user.id,
+            threadId: thread!.id,
+            message,
+          }),
+          indexChatMessage({
+            userId: session.user.id,
+            threadId: thread!.id,
+            message: responseMessage,
+          }),
+        ]);
+        void enqueueMemoryReview({
+          id: `${thread!.id}:${responseMessage.id}`,
+          userId: session.user.id,
+          threadId: thread!.id,
+          assistantMessageId: responseMessage.id,
+          agentId: agent?.id,
+          userText: message.parts
+            .filter((part: any) => part.type === "text")
+            .map((part: any) => part.text)
+            .join(" ")
+            .slice(0, 8_000),
+          assistantText: responseMessage.parts
+            .filter((part: any) => part.type === "text")
+            .map((part: any) => part.text)
+            .join(" ")
+            .slice(0, 8_000),
+          chatModel,
+        }).catch((error) =>
+          logger.warn("Unable to enqueue memory review", error),
+        );
       },
       onError: handleError,
       originalMessages: messages,

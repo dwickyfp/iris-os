@@ -10,13 +10,7 @@ import { serverFileStorage } from "lib/file-storage";
 import { openai } from "@ai-sdk/openai";
 import { xai } from "@ai-sdk/xai";
 
-import {
-  FilePart,
-  ImagePart,
-  ModelMessage,
-  TextPart,
-  experimental_generateImage,
-} from "ai";
+import { FilePart, ImagePart, ModelMessage, TextPart, generateImage } from "ai";
 import { isString } from "lib/utils";
 import logger from "logger";
 
@@ -38,7 +32,7 @@ export type GeneratedImageResult = {
 export async function generateImageWithOpenAI(
   options: GenerateImageOptions,
 ): Promise<GeneratedImageResult> {
-  return experimental_generateImage({
+  return generateImage({
     model: openai.image("gpt-image-1-mini"),
     abortSignal: options.abortSignal,
     prompt: options.prompt,
@@ -58,7 +52,7 @@ export async function generateImageWithOpenAI(
 export async function generateImageWithXAI(
   options: GenerateImageOptions,
 ): Promise<GeneratedImageResult> {
-  return experimental_generateImage({
+  return generateImage({
     model: xai.image("grok-2-image"),
     abortSignal: options.abortSignal,
     prompt: options.prompt,
@@ -168,7 +162,7 @@ async function convertToGeminiMessage(
           if (content.type == "file") {
             const part = content as FilePart;
             const data = await getBase64DataSmart({
-              data: part.data,
+              data: part.data as any,
               mimeType: part.mediaType!,
             });
             return {
@@ -184,7 +178,7 @@ async function convertToGeminiMessage(
           if (content.type == "image") {
             const part = content as ImagePart;
             const data = await getBase64DataSmart({
-              data: part.image,
+              data: part.image as any,
               mimeType: part.mediaType!,
             });
             return {

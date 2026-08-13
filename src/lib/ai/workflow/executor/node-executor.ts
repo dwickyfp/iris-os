@@ -91,7 +91,10 @@ export const llmNodeExecutor: NodeExecutor<LLMNodeData> = async ({
   node,
   state,
 }) => {
-  const model = customModelProvider.getModel(node.model);
+  const modelConfig = await customModelProvider.getModelConfiguration(
+    node.model,
+  );
+  const model = await customModelProvider.getModel(node.model);
 
   // Convert TipTap JSON messages to AI SDK format, resolving mentions to actual data
   const messages: Omit<UIMessage, "id">[] = node.messages.map((message) =>
@@ -114,7 +117,7 @@ export const llmNodeExecutor: NodeExecutor<LLMNodeData> = async ({
   if (isTextResponse) {
     const response = await generateText({
       model,
-      messages: convertToModelMessages(messages),
+      messages: await convertToModelMessages(messages),
     });
     return {
       output: {
@@ -124,9 +127,13 @@ export const llmNodeExecutor: NodeExecutor<LLMNodeData> = async ({
     };
   }
 
+  if (!modelConfig.capabilities.structuredOutput) {
+    throw new Error("The selected model does not support structured output");
+  }
+
   const response = await generateObject({
     model,
-    messages: convertToModelMessages(messages),
+    messages: await convertToModelMessages(messages),
     schema: jsonSchemaToZod(node.outputSchema.properties.answer),
     maxRetries: 3,
   });
@@ -214,7 +221,7 @@ export const toolNodeExecutor: NodeExecutor<ToolNodeData> = async ({
       : undefined;
 
     const response = await generateText({
-      model: customModelProvider.getModel(node.model),
+      model: await customModelProvider.getModel(node.model),
       toolChoice: "required", // Force the model to call the tool
       prompt: prompt || "",
       tools: {
@@ -259,6 +266,7 @@ export const toolNodeExecutor: NodeExecutor<ToolNodeData> = async ({
     const toolResult = await executor?.(result.input.parameter, {
       messages: [],
       toolCallId: "",
+      context: {},
     });
     result.output = {
       tool_result: toolResult,

@@ -1,13 +1,15 @@
+import { config } from "dotenv";
+import { and, eq, inArray, like, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import {
-  UserTable,
-  SessionTable,
+  AgentSkillTable,
   AgentTable,
   BookmarkTable,
   ChatThreadTable,
+  SessionTable,
+  SkillTable,
+  UserTable,
 } from "../../src/lib/db/pg/schema.pg";
-import { eq, like, or } from "drizzle-orm";
-import { config } from "dotenv";
 
 config();
 
@@ -17,6 +19,48 @@ async function cleanup() {
   console.log("Cleaning up test data...");
 
   try {
+    // Skills tests use seeded users, so clean their prefixed records explicitly.
+    const testSkills = await db
+      .select({ id: SkillTable.id })
+      .from(SkillTable)
+      .where(like(SkillTable.name, "playwright-skill-%"));
+    const testSkillIds = testSkills.map(({ id }) => id);
+
+    const testAgents = await db
+      .select({ id: AgentTable.id })
+      .from(AgentTable)
+      .where(like(AgentTable.name, "playwright-skill-agent-%"));
+    const testAgentIds = testAgents.map(({ id }) => id);
+
+    if (testSkillIds.length > 0 || testAgentIds.length > 0) {
+      await db
+        .delete(AgentSkillTable)
+        .where(
+          or(
+            ...(testSkillIds.length > 0
+              ? [inArray(AgentSkillTable.skillId, testSkillIds)]
+              : []),
+            ...(testAgentIds.length > 0
+              ? [inArray(AgentSkillTable.agentId, testAgentIds)]
+              : []),
+          ),
+        );
+    }
+    if (testAgentIds.length > 0) {
+      await db.delete(AgentTable).where(inArray(AgentTable.id, testAgentIds));
+    }
+    if (testSkillIds.length > 0) {
+      await db
+        .delete(BookmarkTable)
+        .where(
+          and(
+            eq(BookmarkTable.itemType, "skill"),
+            inArray(BookmarkTable.itemId, testSkillIds),
+          ),
+        );
+      await db.delete(SkillTable).where(inArray(SkillTable.id, testSkillIds));
+    }
+
     // Clean up only dynamically created test users (not seeded ones)
     // Preserve our seeded test users in @test-seed.local domain
     const testEmailPatterns = [

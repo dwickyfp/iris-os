@@ -9,7 +9,7 @@ import {
 import { generateImageWithNanoBanana } from "lib/ai/image/generate-image";
 import { serverFileStorage } from "lib/file-storage";
 import { safe, watchError } from "ts-safe";
-import z from "zod";
+import z from "zod/v4";
 import { ImageToolName } from "..";
 import logger from "logger";
 import { openai } from "@ai-sdk/openai";
@@ -111,7 +111,7 @@ export const nanoBananaTool = createTool({
       throw e;
     }
   },
-});
+} as any);
 
 export const openaiImageTool = createTool({
   name: ImageToolName,
@@ -192,12 +192,12 @@ export const openaiImageTool = createTool({
       guide: "",
     };
   },
-});
+} as any);
 
 function convertToImageToolPartToImagePart(part: ToolResultPart): ImagePart[] {
   if (part.toolName !== ImageToolName) return [];
   if (!toAny(part).output?.value?.images?.length) return [];
-  const result = part.output.value as ImageToolResult;
+  const result = toAny(part).output.value as ImageToolResult;
   return result.images.map((image) => ({
     type: "image",
     image: image.url,
@@ -208,7 +208,7 @@ function convertToImageToolPartToImagePart(part: ToolResultPart): ImagePart[] {
 function convertToImageToolPartToFilePart(part: ToolResultPart): FilePart[] {
   if (part.toolName !== ImageToolName) return [];
   if (!toAny(part).output?.value?.images?.length) return [];
-  const result = part.output.value as ImageToolResult;
+  const result = toAny(part).output.value as ImageToolResult;
   return result.images.map((image) => ({
     type: "file",
     mediaType: image.mimeType!,

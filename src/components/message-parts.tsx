@@ -64,6 +64,8 @@ import { notify } from "lib/notify";
 import { ModelProviderIcon } from "ui/model-provider-icon";
 import { appStore } from "@/app/store";
 import { BACKGROUND_COLORS, EMOJI_DATA } from "lib/const";
+import { experimental_MCPAppRenderer as MCPAppRenderer } from "@ai-sdk/react";
+import { SkillView } from "./tool-invocation/skill-view";
 
 type MessagePart = UIMessage["parts"][number];
 type TextMessagePart = Extract<MessagePart, { type: "text" }>;
@@ -101,6 +103,7 @@ interface ToolMessagePartProps {
   isLast?: boolean;
   isManualToolInvocation?: boolean;
   addToolResult?: UseChatHelpers<UIMessage>["addToolResult"];
+  addToolApprovalResponse?: UseChatHelpers<UIMessage>["addToolApprovalResponse"];
   isError?: boolean;
   setMessages?: UseChatHelpers<UIMessage>["setMessages"];
   readonly?: boolean;
@@ -749,6 +752,7 @@ export const ToolMessagePart = memo(
     isLast,
     showActions,
     addToolResult,
+    addToolApprovalResponse,
     isError,
     messageId,
     setMessages,
@@ -757,6 +761,8 @@ export const ToolMessagePart = memo(
     const t = useTranslations("");
 
     const { output, toolCallId, state, input, errorText } = part;
+    const approval = (part as any).approval;
+    const isApprovalRequested = state === "approval-requested";
 
     const toolName = useMemo(() => getToolName(part), [part.type]);
 
@@ -771,8 +777,7 @@ export const ToolMessagePart = memo(
 
     // Handle keyboard shortcuts for approve/reject actions
     useEffect(() => {
-      // Only enable shortcuts when manual tool invocation buttons are shown
-      if (!isManualToolInvocation) return;
+      if (!isManualToolInvocation && !isApprovalRequested) return;
 
       const handleKeyDown = (e: KeyboardEvent) => {
         const isApprove = isShortcutEvent(e, approveToolInvocationShortcut);
@@ -784,26 +789,33 @@ export const ToolMessagePart = memo(
         e.stopPropagation();
         e.stopImmediatePropagation();
 
-        if (isApprove) {
-          addToolResult?.({
-            tool: toolName,
-            toolCallId,
-            output: ManualToolConfirmTag.create({ confirm: true }),
+        if (isApprovalRequested) {
+          addToolApprovalResponse?.({
+            id: approval.id,
+            approved: isApprove,
           });
+          return;
         }
 
-        if (isReject) {
-          addToolResult?.({
-            tool: toolName,
-            toolCallId,
-            output: ManualToolConfirmTag.create({ confirm: false }),
-          });
-        }
+        addToolResult?.({
+          tool: toolName,
+          toolCallId,
+          output: ManualToolConfirmTag.create({ confirm: isApprove }),
+        });
       };
 
       window.addEventListener("keydown", handleKeyDown);
       return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isManualToolInvocation, isLast]);
+    }, [
+      approval?.id,
+      addToolApprovalResponse,
+      addToolResult,
+      isApprovalRequested,
+      isLast,
+      isManualToolInvocation,
+      toolCallId,
+      toolName,
+    ]);
 
     const deleteMessage = useCallback(async () => {
       const ok = await notify.confirm({
@@ -902,6 +914,15 @@ export const ToolMessagePart = memo(
         );
       }
 
+      if (toolName === "skill_view") {
+        return (
+          <SkillView
+            output={result}
+            loading={state === "input-streaming" || state === "input-available"}
+          />
+        );
+      }
+
       if (state === "output-available") {
         switch (toolName) {
           case DefaultToolName.CreatePieChart:
@@ -935,6 +956,40 @@ export const ToolMessagePart = memo(
       return extractMCPToolId(toolName);
     }, [toolName]);
 
+    const mcpApp = useMemo(() => {
+      const appMetadata = (part as any).toolMetadata?.app;
+      if (
+        !mcpServerName ||
+        appMetadata?.mimeType !== "text/html;profile=mcp-app" ||
+        typeof appMetadata.resourceUri !== "string"
+      )
+        return null;
+      return (
+        <MCPAppRenderer
+          part={part as any}
+          sandbox={{
+            url: "/mcp-app-sandbox",
+            className: "h-80 w-full rounded-lg border",
+            allowedPermissions: [],
+          }}
+          loadResource={(app) =>
+            fetch("/api/mcp-apps/resource", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                serverName: mcpServerName,
+                uri: app.resourceUri,
+              }),
+            }).then(async (response) => {
+              if (!response.ok) throw new Error("Unable to load MCP App");
+              return response.json();
+            })
+          }
+          handlers={{ allowedTools: [] }}
+        />
+      );
+    }, [part, mcpServerName]);
+
     const isExpanded = useMemo(() => {
       return expanded || result === null || isWorkflowTool;
     }, [expanded, result, isWorkflowTool]);
@@ -949,107 +1004,68 @@ export const ToolMessagePart = memo(
 
     return (
       <div className="group w-full">
-        {CustomToolComponent ? (
-          CustomToolComponent
-        ) : (
-          <div className="flex flex-col fade-in duration-300 animate-in">
-            <div
-              className="flex gap-2 items-center cursor-pointer group/title"
-              onClick={() => setExpanded(!expanded)}
-            >
-              <div className="p-1.5 text-primary bg-input/40 rounded">
-                {isExecuting ? (
-                  <Loader className="size-3.5 animate-spin" />
-                ) : isError ? (
-                  <TriangleAlert className="size-3.5 text-destructive" />
-                ) : isWorkflowTool ? (
-                  <Avatar className="size-3.5">
-                    <AvatarImage
-                      src={
-                        (result as VercelAIWorkflowToolStreamingResult)
-                          .workflowIcon?.value
-                      }
-                    />
-                    <AvatarFallback>
-                      {toolName.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                ) : (
-                  <HammerIcon className="size-3.5" />
-                )}
-              </div>
-              <span className="font-bold flex items-center gap-2">
-                {isExecuting ? (
-                  <TextShimmer>{mcpServerName}</TextShimmer>
-                ) : (
-                  mcpServerName
-                )}
-              </span>
-              {mcpToolName && (
-                <>
-                  <ChevronRight className="size-3.5" />
-                  <span className="text-muted-foreground group-hover/title:text-primary transition-colors duration-300">
-                    {mcpToolName}
-                  </span>
-                </>
-              )}
-              <div className="ml-auto group-hover/title:bg-input p-1.5 rounded transition-colors duration-300">
-                <ChevronDownIcon
-                  className={cn(isExpanded && "rotate-180", "size-3.5")}
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 py-2">
-              <div className="w-7 flex justify-center">
-                <Separator
-                  orientation="vertical"
-                  className="h-full bg-gradient-to-t from-transparent to-border to-5%"
-                />
-              </div>
-              <div className="w-full flex flex-col gap-2">
-                <div
-                  className={cn(
-                    "min-w-0 w-full p-4 rounded-lg bg-card px-4 border text-xs transition-colors fade-300",
-                    !isExpanded && "hover:bg-secondary cursor-pointer",
-                  )}
-                  onClick={() => {
-                    if (!isExpanded) {
-                      setExpanded(true);
-                    }
-                  }}
-                >
-                  <div className="flex items-center">
-                    <h5 className="text-muted-foreground font-medium select-none transition-colors">
-                      Request
-                    </h5>
-                    <div className="flex-1" />
-                    {copiedInput ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-3 text-muted-foreground"
-                        onClick={() => copyInput(JSON.stringify(input))}
-                      >
-                        <Copy className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  {isExpanded && (
-                    <div className="p-2 max-h-[300px] overflow-y-auto ">
-                      <JsonView data={input} />
-                    </div>
+        {mcpApp ??
+          (CustomToolComponent ? (
+            CustomToolComponent
+          ) : (
+            <div className="flex flex-col fade-in duration-300 animate-in">
+              <div
+                className="flex gap-2 items-center cursor-pointer group/title"
+                onClick={() => setExpanded(!expanded)}
+              >
+                <div className="p-1.5 text-primary bg-input/40 rounded">
+                  {isExecuting ? (
+                    <Loader className="size-3.5 animate-spin" />
+                  ) : isError ? (
+                    <TriangleAlert className="size-3.5 text-destructive" />
+                  ) : isWorkflowTool ? (
+                    <Avatar className="size-3.5">
+                      <AvatarImage
+                        src={
+                          (result as VercelAIWorkflowToolStreamingResult)
+                            .workflowIcon?.value
+                        }
+                      />
+                      <AvatarFallback>
+                        {toolName.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  ) : (
+                    <HammerIcon className="size-3.5" />
                   )}
                 </div>
-                {!result ? null : isWorkflowTool ? (
-                  <WorkflowInvocation
-                    result={result as VercelAIWorkflowToolStreamingResult}
+                <span className="font-bold flex items-center gap-2">
+                  {isExecuting ? (
+                    <TextShimmer>{mcpServerName}</TextShimmer>
+                  ) : (
+                    mcpServerName
+                  )}
+                </span>
+                {mcpToolName && (
+                  <>
+                    <ChevronRight className="size-3.5" />
+                    <span className="text-muted-foreground group-hover/title:text-primary transition-colors duration-300">
+                      {mcpToolName}
+                    </span>
+                  </>
+                )}
+                <div className="ml-auto group-hover/title:bg-input p-1.5 rounded transition-colors duration-300">
+                  <ChevronDownIcon
+                    className={cn(isExpanded && "rotate-180", "size-3.5")}
                   />
-                ) : (
+                </div>
+              </div>
+              <div className="flex gap-2 py-2">
+                <div className="w-7 flex justify-center">
+                  <Separator
+                    orientation="vertical"
+                    className="h-full bg-gradient-to-t from-transparent to-border to-5%"
+                  />
+                </div>
+                <div className="w-full flex flex-col gap-2">
                   <div
                     className={cn(
-                      "min-w-0 w-full p-4 rounded-lg bg-card px-4 border text-xs mt-2 transition-colors fade-300",
+                      "min-w-0 w-full p-4 rounded-lg bg-card px-4 border text-xs transition-colors fade-300",
                       !isExpanded && "hover:bg-secondary cursor-pointer",
                     )}
                     onClick={() => {
@@ -1059,110 +1075,160 @@ export const ToolMessagePart = memo(
                     }}
                   >
                     <div className="flex items-center">
-                      <h5 className="text-muted-foreground font-medium select-none">
-                        Response
+                      <h5 className="text-muted-foreground font-medium select-none transition-colors">
+                        Request
                       </h5>
                       <div className="flex-1" />
-                      {copiedOutput ? (
+                      {copiedInput ? (
                         <Check className="size-3" />
                       ) : (
                         <Button
                           variant="ghost"
                           size="icon"
                           className="size-3 text-muted-foreground"
-                          onClick={() => copyOutput(JSON.stringify(result))}
+                          onClick={() => copyInput(JSON.stringify(input))}
                         >
                           <Copy className="size-3" />
                         </Button>
                       )}
                     </div>
                     {isExpanded && (
-                      <div className="p-2 max-h-[300px] overflow-y-auto">
-                        <JsonView data={result} />
+                      <div className="p-2 max-h-[300px] overflow-y-auto ">
+                        <JsonView data={input} />
                       </div>
                     )}
                   </div>
-                )}
-
-                {isManualToolInvocation && (
-                  <div className="flex flex-row gap-2 items-center mt-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="rounded-full text-xs hover:ring py-2"
-                      onClick={() =>
-                        addToolResult?.({
-                          tool: toolName,
-                          toolCallId,
-                          output: ManualToolConfirmTag.create({
-                            confirm: true,
-                          }),
-                        })
-                      }
-                    >
-                      <Check />
-                      {t("Common.approve")}
-                      <Separator orientation="vertical" className="h-4" />
-                      <span className="text-muted-foreground">
-                        {getShortcutKeyList(approveToolInvocationShortcut).join(
-                          " ",
-                        )}
-                      </span>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-full text-xs py-2"
-                      onClick={() =>
-                        addToolResult?.({
-                          tool: toolName,
-                          toolCallId,
-                          output: ManualToolConfirmTag.create({
-                            confirm: false,
-                          }),
-                        })
-                      }
-                    >
-                      <X />
-                      {t("Common.reject")}
-                      <Separator orientation="vertical" />
-                      <span className="text-muted-foreground">
-                        {getShortcutKeyList(rejectToolInvocationShortcut).join(
-                          " ",
-                        )}
-                      </span>
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {showActions && (
-              <div className="flex flex-row gap-2 items-center">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      disabled={isDeleting}
-                      onClick={deleteMessage}
-                      variant="ghost"
-                      size="icon"
-                      className="size-3! p-4! opacity-0 group-hover/message:opacity-100 hover:text-destructive"
-                    >
-                      {isDeleting ? (
-                        <Loader className="animate-spin" />
-                      ) : (
-                        <Trash2 />
+                  {!result ? null : isWorkflowTool ? (
+                    <WorkflowInvocation
+                      result={result as VercelAIWorkflowToolStreamingResult}
+                    />
+                  ) : (
+                    <div
+                      className={cn(
+                        "min-w-0 w-full p-4 rounded-lg bg-card px-4 border text-xs mt-2 transition-colors fade-300",
+                        !isExpanded && "hover:bg-secondary cursor-pointer",
                       )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="text-destructive" side="bottom">
-                    Delete Message
-                  </TooltipContent>
-                </Tooltip>
+                      onClick={() => {
+                        if (!isExpanded) {
+                          setExpanded(true);
+                        }
+                      }}
+                    >
+                      <div className="flex items-center">
+                        <h5 className="text-muted-foreground font-medium select-none">
+                          Response
+                        </h5>
+                        <div className="flex-1" />
+                        {copiedOutput ? (
+                          <Check className="size-3" />
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="size-3 text-muted-foreground"
+                            onClick={() => copyOutput(JSON.stringify(result))}
+                          >
+                            <Copy className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                      {isExpanded && (
+                        <div className="p-2 max-h-[300px] overflow-y-auto">
+                          <JsonView data={result} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(isManualToolInvocation || isApprovalRequested) && (
+                    <div className="flex flex-row gap-2 items-center mt-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rounded-full text-xs hover:ring py-2"
+                        onClick={() =>
+                          isApprovalRequested
+                            ? addToolApprovalResponse?.({
+                                id: approval.id,
+                                approved: true,
+                              })
+                            : addToolResult?.({
+                                tool: toolName,
+                                toolCallId,
+                                output: ManualToolConfirmTag.create({
+                                  confirm: true,
+                                }),
+                              })
+                        }
+                      >
+                        <Check />
+                        {t("Common.approve")}
+                        <Separator orientation="vertical" className="h-4" />
+                        <span className="text-muted-foreground">
+                          {getShortcutKeyList(
+                            approveToolInvocationShortcut,
+                          ).join(" ")}
+                        </span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full text-xs py-2"
+                        onClick={() =>
+                          isApprovalRequested
+                            ? addToolApprovalResponse?.({
+                                id: approval.id,
+                                approved: false,
+                              })
+                            : addToolResult?.({
+                                tool: toolName,
+                                toolCallId,
+                                output: ManualToolConfirmTag.create({
+                                  confirm: false,
+                                }),
+                              })
+                        }
+                      >
+                        <X />
+                        {t("Common.reject")}
+                        <Separator orientation="vertical" />
+                        <span className="text-muted-foreground">
+                          {getShortcutKeyList(
+                            rejectToolInvocationShortcut,
+                          ).join(" ")}
+                        </span>
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        )}
+
+              {showActions && (
+                <div className="flex flex-row gap-2 items-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        disabled={isDeleting}
+                        onClick={deleteMessage}
+                        variant="ghost"
+                        size="icon"
+                        className="size-3! p-4! opacity-0 group-hover/message:opacity-100 hover:text-destructive"
+                      >
+                        {isDeleting ? (
+                          <Loader className="animate-spin" />
+                        ) : (
+                          <Trash2 />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="text-destructive" side="bottom">
+                      Delete Message
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
+          ))}
       </div>
     );
   },

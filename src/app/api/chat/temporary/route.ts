@@ -34,16 +34,16 @@ export async function POST(request: Request) {
       instructions?: string;
     };
     logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
-    const model = customModelProvider.getModel(chatModel);
+    const model = await customModelProvider.getModel(chatModel);
     const userPreferences =
       (await getUserPreferences(session.user.id)) || undefined;
 
     return streamText({
       model,
-      system: `${buildUserSystemPrompt(session.user, userPreferences)} ${
+      instructions: `${buildUserSystemPrompt(session.user, userPreferences)} ${
         instructions ? `\n\n${instructions}` : ""
       }`.trim(),
-      messages: convertToModelMessages(messages),
+      messages: await convertToModelMessages(messages),
       experimental_transform: smoothStream({ chunking: "word" }),
     }).toUIMessageStreamResponse();
   } catch (error: any) {

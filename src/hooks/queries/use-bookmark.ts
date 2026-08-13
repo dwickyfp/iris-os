@@ -9,7 +9,7 @@ export interface BookmarkItem {
 }
 
 interface UseBookmarkOptions {
-  itemType?: "agent" | "workflow" | "mcp";
+  itemType?: "agent" | "workflow" | "mcp" | "skill";
 }
 
 export function useBookmark(options: UseBookmarkOptions = {}) {

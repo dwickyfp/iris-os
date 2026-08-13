@@ -1,10 +1,10 @@
-import { agentRepository } from "lib/db/repository";
-import { getSession } from "auth/server";
-import { z } from "zod";
 import { AgentUpdateSchema } from "app-types/agent";
+import { getSession } from "auth/server";
+import { canDeleteAgent, canEditAgent } from "lib/auth/permissions";
 import { serverCache } from "lib/cache";
 import { CacheKeys } from "lib/cache/cache-keys";
-import { canEditAgent, canDeleteAgent } from "lib/auth/permissions";
+import { agentRepository } from "lib/db/repository";
+import { z } from "zod";
 
 export async function GET(
   _request: Request,
@@ -67,7 +67,7 @@ export async function PUT(
     }
 
     const agent = await agentRepository.updateAgent(id, session.user.id, data);
-    serverCache.delete(CacheKeys.agentInstructions(agent.id));
+    serverCache.delete(CacheKeys.agentInstructions(agent.id, session.user.id));
 
     return Response.json(agent);
   } catch (error) {
@@ -113,7 +113,7 @@ export async function DELETE(
       return new Response("Unauthorized", { status: 401 });
     }
     await agentRepository.deleteAgent(id, session.user.id);
-    serverCache.delete(CacheKeys.agentInstructions(id));
+    serverCache.delete(CacheKeys.agentInstructions(id, session.user.id));
     return Response.json({ success: true });
   } catch (error) {
     console.error("Failed to delete agent:", error);

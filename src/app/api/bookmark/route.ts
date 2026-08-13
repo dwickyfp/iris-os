@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const BookmarkTable = z.object({
   itemId: z.string().min(1),
-  itemType: z.enum(["agent", "workflow"]),
+  itemType: z.enum(["agent", "workflow", "skill"]),
 });
 
 export async function POST(request: Request) {

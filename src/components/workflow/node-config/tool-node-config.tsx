@@ -66,13 +66,13 @@ export const ToolNodeDataConfig = memo(function ({
       {
         type: "app-tool",
         id: DefaultToolName.WebSearch,
-        description: exaSearchTool.description!,
+        description: String(exaSearchTool.description ?? ""),
         parameterSchema: exaSearchSchema,
       },
       {
         type: "app-tool",
         id: DefaultToolName.WebContent,
-        description: exaContentsTool.description!,
+        description: String(exaContentsTool.description ?? ""),
         parameterSchema: exaContentsSchema,
       },
     ];

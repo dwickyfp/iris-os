@@ -11,7 +11,13 @@ import {
 import { SidebarGroupContent, SidebarMenu, SidebarMenuItem } from "ui/sidebar";
 import { SidebarGroup } from "ui/sidebar";
 import { ThreadDropdown } from "../thread-dropdown";
-import { ChevronDown, ChevronUp, MoreHorizontal, Trash } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  LoaderCircle,
+  MoreHorizontal,
+  Trash,
+} from "lucide-react";
 import { useMounted } from "@/hooks/use-mounted";
 import { appStore } from "@/app/store";
 import { Button } from "ui/button";
@@ -50,11 +56,17 @@ export function AppSidebarThreads() {
   const mounted = useMounted();
   const router = useRouter();
   const t = useTranslations("Layout");
-  const [storeMutate, currentThreadId, generatingTitleThreadIds] = appStore(
+  const [
+    storeMutate,
+    currentThreadId,
+    generatingTitleThreadIds,
+    runningThreadIds,
+  ] = appStore(
     useShallow((state) => [
       state.mutate,
       state.currentThreadId,
       state.generatingTitleThreadIds,
+      state.runningThreadIds,
     ]),
   );
   // State to track if expanded view is active
@@ -265,8 +277,14 @@ export function AppSidebarThreads() {
                                 >
                                   <Link
                                     href={`/chat/${thread.id}`}
-                                    className="flex items-center"
+                                    className="flex items-center gap-2"
                                   >
+                                    {runningThreadIds.includes(thread.id) && (
+                                      <LoaderCircle
+                                        aria-label="Generating response"
+                                        className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                                      />
+                                    )}
                                     {generatingTitleThreadIds.includes(
                                       thread.id,
                                     ) ? (

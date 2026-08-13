@@ -19,9 +19,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "better-chatbot",
-  description:
-    "Better Chatbot is a chatbot that uses the Tools to answer questions.",
+  applicationName: "Iris OS",
+  title: {
+    default: "Iris OS",
+    template: "%s | Iris OS",
+  },
+  description: "The open operating system for AI agents, tools, and workflows.",
 };
 
 export default async function RootLayout({

@@ -9,15 +9,27 @@ import {
   json,
   uuid,
   boolean,
+  integer,
   unique,
   varchar,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { isNotNull } from "drizzle-orm";
 import { DBWorkflow, DBEdge, DBNode } from "app-types/workflow";
 import { UIMessage } from "ai";
 import { ChatMetadata } from "app-types/chat";
 import { TipTapMentionJsonContent } from "@/types/util";
+import type {
+  SkillMetadata,
+  SkillProvenance,
+  SkillVisibility,
+} from "app-types/skill";
+import type {
+  MemoryKind,
+  MemoryProvenance,
+  MemoryStatus,
+} from "app-types/memory";
 
 export const ChatThreadTable = pgTable("chat_thread", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -27,6 +39,67 @@ export const ChatThreadTable = pgTable("chat_thread", {
     .references(() => UserTable.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+/** Runtime context is separate from visible messages so compaction never removes history. */
+export const ChatThreadContextTable = pgTable("chat_thread_context", {
+  threadId: uuid("thread_id")
+    .primaryKey()
+    .notNull()
+    .references(() => ChatThreadTable.id, { onDelete: "cascade" }),
+  summary: text("summary").notNull().default(""),
+  summarizedUntil: timestamp("summarized_until"),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const ModelProviderTable = pgTable(
+  "model_provider",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    name: text("name").notNull(),
+    type: varchar("type", { length: 32 }).notNull(),
+    baseUrl: text("base_url"),
+    encryptedApiKey: text("encrypted_api_key"),
+    enabled: boolean("enabled").notNull().default(true),
+    lastConnectionStatus: varchar("last_connection_status", { length: 16 }),
+    lastConnectionError: text("last_connection_error"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [unique().on(table.name)],
+);
+
+export const ModelConfigurationTable = pgTable(
+  "model_configuration",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => ModelProviderTable.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    apiModelId: text("api_model_id").notNull(),
+    apiVersion: text("api_version"),
+    contextWindow: integer("context_window").notNull().default(128000),
+    capabilities: json("capabilities")
+      .notNull()
+      .default({ toolCalls: true, vision: false, structuredOutput: true }),
+    enabled: boolean("enabled").notNull().default(true),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.providerId, table.name),
+    index("model_configuration_provider_idx").on(table.providerId),
+  ],
+);
 
 export const ChatMessageTable = pgTable("chat_message", {
   id: text("id").primaryKey().notNull(),
@@ -38,6 +111,93 @@ export const ChatMessageTable = pgTable("chat_message", {
   metadata: json("metadata").$type<ChatMetadata>(),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+/** Denormalized, user-scoped text extracted from messages for cross-thread recall. */
+export const ChatMessageSearchTable = pgTable(
+  "chat_message_search",
+  {
+    messageId: text("message_id")
+      .primaryKey()
+      .notNull()
+      .references(() => ChatMessageTable.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => ChatThreadTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("chat_message_search_user_idx").on(table.userId)],
+);
+
+export const UserMemoryTable = pgTable(
+  "user_memory",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { enum: ["preference", "fact", "goal"] })
+      .notNull()
+      .$type<MemoryKind>(),
+    content: text("content").notNull(),
+    confidence: integer("confidence").notNull().default(100),
+    status: varchar("status", {
+      enum: ["active", "pending", "superseded", "deleted"],
+    })
+      .notNull()
+      .default("active")
+      .$type<MemoryStatus>(),
+    provenance: varchar("provenance", { enum: ["manual", "background_review"] })
+      .notNull()
+      .$type<MemoryProvenance>(),
+    sourceThreadId: uuid("source_thread_id").references(
+      () => ChatThreadTable.id,
+      { onDelete: "set null" },
+    ),
+    sourceMessageId: text("source_message_id").references(
+      () => ChatMessageTable.id,
+      { onDelete: "set null" },
+    ),
+    version: integer("version").notNull().default(1),
+    expiresAt: timestamp("expires_at"),
+    deletedAt: timestamp("deleted_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("user_memory_user_status_idx").on(table.userId, table.status),
+  ],
+);
+
+export const UserMemoryEventTable = pgTable(
+  "user_memory_event",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    memoryId: uuid("memory_id")
+      .notNull()
+      .references(() => UserMemoryTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    action: varchar("action", {
+      enum: ["create", "update", "supersede", "delete", "restore"],
+    }).notNull(),
+    snapshot: json("snapshot").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("user_memory_event_memory_idx").on(table.memoryId)],
+);
 
 export const AgentTable = pgTable("agent", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -57,6 +217,113 @@ export const AgentTable = pgTable("agent", {
   updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const SkillTable = pgTable(
+  "skill",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    icon: json("icon").$type<Agent["icon"]>(),
+    license: text("license"),
+    compatibility: text("compatibility"),
+    metadata: json("metadata").$type<SkillMetadata>(),
+    provenance: varchar("provenance", { enum: ["manual", "background_review"] })
+      .notNull()
+      .default("manual")
+      .$type<SkillProvenance>(),
+    allowedTools: json("allowed_tools").$type<string[]>(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    visibility: varchar("visibility", {
+      enum: ["private", "readonly"],
+    })
+      .notNull()
+      .default("private")
+      .$type<SkillVisibility>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    archivedAt: timestamp("archived_at"),
+  },
+  (table) => [
+    unique().on(table.userId, table.name),
+    index("skill_user_id_idx").on(table.userId),
+    check(
+      "skill_name_check",
+      sql`${table.name} ~ '^[a-z0-9]+(-[a-z0-9]+)*$' and char_length(${table.name}) between 1 and 64`,
+    ),
+    check(
+      "skill_description_check",
+      sql`char_length(${table.description}) between 1 and 1024`,
+    ),
+    check(
+      "skill_body_size_check",
+      sql`octet_length(${table.body}) between 1 and 102400`,
+    ),
+    check(
+      "skill_visibility_check",
+      sql`${table.visibility} in ('private', 'readonly')`,
+    ),
+  ],
+);
+
+export const SkillFileTable = pgTable(
+  "skill_file",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    skillId: uuid("skill_id")
+      .notNull()
+      .references(() => SkillTable.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    content: text("content").notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.skillId, table.path),
+    index("skill_file_skill_id_idx").on(table.skillId),
+    check("skill_file_size_check", sql`${table.size} between 0 and 10485760`),
+  ],
+);
+
+export const AgentSkillTable = pgTable(
+  "agent_skill",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => AgentTable.id, { onDelete: "cascade" }),
+    skillId: uuid("skill_id")
+      .notNull()
+      .references(() => SkillTable.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.agentId, table.skillId),
+    unique().on(table.agentId, table.position),
+    index("agent_skill_agent_id_idx").on(table.agentId),
+    index("agent_skill_skill_id_idx").on(table.skillId),
+    check(
+      "agent_skill_position_check",
+      sql`${table.position} between 0 and 19`,
+    ),
+  ],
+);
+
 export const BookmarkTable = pgTable(
   "bookmark",
   {
@@ -66,7 +333,7 @@ export const BookmarkTable = pgTable(
       .references(() => UserTable.id, { onDelete: "cascade" }),
     itemId: uuid("item_id").notNull(),
     itemType: varchar("item_type", {
-      enum: ["agent", "workflow", "mcp"],
+      enum: ["agent", "workflow", "mcp", "skill"],
     }).notNull(),
     createdAt: timestamp("created_at")
       .notNull()
@@ -331,6 +598,9 @@ export type ChatThreadEntity = typeof ChatThreadTable.$inferSelect;
 export type ChatMessageEntity = typeof ChatMessageTable.$inferSelect;
 
 export type AgentEntity = typeof AgentTable.$inferSelect;
+export type SkillEntity = typeof SkillTable.$inferSelect;
+export type SkillFileEntity = typeof SkillFileTable.$inferSelect;
+export type AgentSkillEntity = typeof AgentSkillTable.$inferSelect;
 export type UserEntity = typeof UserTable.$inferSelect;
 export type SessionEntity = typeof SessionTable.$inferSelect;
 

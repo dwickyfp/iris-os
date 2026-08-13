@@ -1,10 +1,21 @@
-import { McpServerCustomizationsPrompt, MCPToolInfo } from "app-types/mcp";
+import { MCPToolInfo, McpServerCustomizationsPrompt } from "app-types/mcp";
 
+import { Agent } from "app-types/agent";
 import { UserPreferences } from "app-types/user";
 import { User } from "better-auth";
+import { formatInAppTimeZone } from "lib/date-time";
 import { createMCPToolId } from "./mcp/mcp-tool-id";
-import { format } from "date-fns";
-import { Agent } from "app-types/agent";
+
+const getCurrentTime = () =>
+  `${formatInAppTimeZone(new Date(), {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  })} WIB`;
 
 export const CREATE_THREAD_TITLE_PROMPT = `
 You are a chat title generation expert.
@@ -15,6 +26,23 @@ Critical rules:
 - Summarize only the core content clearly
 - Do not use quotes, colons, or special characters
 - Use the same language as the user's message`;
+
+export const buildBaseAgentSystemPrompt = () =>
+  `
+You are operating as an agentic assistant. Work toward the user's actual goal,
+not merely a superficial reply.
+
+When a task benefits from available tools, first determine the smallest useful
+set of actions, then execute them step by step. Use tools only when they add
+real value, verify important tool results before relying on them, and never
+claim that an action succeeded when it did not. For requests that cannot be
+completed with the available context or tools, clearly state the limitation and
+offer the most useful next step.
+
+Keep internal reasoning private. Give the user concise progress updates around
+tool use when helpful, then provide a clear final answer that directly addresses
+their goal.
+`.trim();
 
 export const buildAgentGenerationPrompt = (toolNames: string[]) => {
   const toolsList = toolNames.map((name) => `- ${name}`).join("\n");
@@ -48,14 +76,34 @@ ${toolsList}
 CRITICAL: Generate all output content in the same language as the user's request. Be specific and comprehensive. Proactively seek clarification if requirements are ambiguous. Your output should enable the new agent to operate autonomously and reliably within its domain.`.trim();
 };
 
+export const buildSkillGenerationPrompt = () =>
+  `
+You are an expert at authoring reusable AI agent skills. Turn the user's request
+into a complete, practical skill draft that an agent can follow reliably.
+
+Return an object with these fields:
+- name: a concise lowercase kebab-case identifier (for example, "release-notes")
+- description: one or two sentences explaining exactly when to use the skill
+- compatibility: optional runtime or environment requirements; omit it if none apply
+- allowedTools: an array of tool names only when the user explicitly requires tools;
+  otherwise return an empty array
+- body: the complete Markdown content for SKILL.md
+
+Write the body in the same language as the user's request. Start it with a clear
+Markdown title, then cover when to use the skill, the ordered workflow, expected
+output, quality checks, constraints, and sensible edge cases. Keep the instructions
+actionable and self-contained. Do not include YAML frontmatter, file attachments,
+or any explanation outside the requested fields. Do not invent tools or external
+capabilities that the user did not request.
+`.trim();
+
 export const buildUserSystemPrompt = (
   user?: User,
   userPreferences?: UserPreferences,
   agent?: Agent,
 ) => {
-  const assistantName =
-    agent?.name || userPreferences?.botName || "better-chatbot";
-  const currentTime = format(new Date(), "EEEE, MMMM d, yyyy 'at' h:mm:ss a");
+  const assistantName = agent?.name || userPreferences?.botName || "Iris OS";
+  const currentTime = getCurrentTime();
 
   let prompt = `You are ${assistantName}`;
 
@@ -138,7 +186,7 @@ export const buildSpeechSystemPrompt = (
   agent?: Agent,
 ) => {
   const assistantName = agent?.name || userPreferences?.botName || "Assistant";
-  const currentTime = format(new Date(), "EEEE, MMMM d, yyyy 'at' h:mm:ss a");
+  const currentTime = getCurrentTime();
 
   let prompt = `You are ${assistantName}`;
 

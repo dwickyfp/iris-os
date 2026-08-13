@@ -36,6 +36,7 @@ import { ShareableActions, Visibility } from "@/components/shareable-actions";
 import { GenerateAgentDialog } from "./generate-agent-dialog";
 import { AgentIconPicker } from "./agent-icon-picker";
 import { AgentToolSelector } from "./agent-tool-selector";
+import { AgentSkillSelector } from "./agent-skill-selector";
 import {
   RandomDataGeneratorExample,
   WeatherExample,
@@ -61,6 +62,7 @@ const defaultConfig = (): PartialBy<
       role: "",
       systemPrompt: "",
       mentions: [],
+      reasoningMode: "auto",
     },
     visibility: "private",
   };
@@ -506,6 +508,36 @@ export default function EditAgent({
           </div>
 
           <div className="flex gap-2 flex-col">
+            <Label htmlFor="agent-reasoning" className="text-base">
+              Reasoning mode
+            </Label>
+            <select
+              id="agent-reasoning"
+              data-testid="agent-reasoning-select"
+              disabled={isLoading || !hasEditAccess}
+              className="h-10 rounded-md border border-input bg-secondary/40 px-3 text-sm"
+              value={agent.instructions?.reasoningMode ?? "auto"}
+              onChange={(e) =>
+                setAgent({
+                  instructions: {
+                    ...agent.instructions,
+                    reasoningMode: e.target.value as
+                      | "auto"
+                      | "low"
+                      | "medium"
+                      | "high",
+                  },
+                })
+              }
+            >
+              <option value="auto">Automatic (model default)</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+
+          <div className="flex gap-2 flex-col">
             <Label htmlFor="agent-tool-bindings" className="text-base">
               {t("Agent.agentToolsLabel")}
             </Label>
@@ -528,6 +560,17 @@ export default function EditAgent({
               />
             )}
           </div>
+
+          {initialAgent?.id && (
+            <div className="flex gap-2 flex-col">
+              <Label className="text-base">Skills</Label>
+              <AgentSkillSelector
+                agentId={initialAgent.id}
+                disabled={isLoading}
+                hasEditAccess={hasEditAccess && isOwner}
+              />
+            </div>
+          )}
         </div>
 
         {hasEditAccess && (

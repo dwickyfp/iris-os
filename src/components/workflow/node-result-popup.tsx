@@ -25,6 +25,7 @@ import { Button } from "ui/button";
 import { cn, errorToString } from "lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { useTranslations } from "next-intl";
+import { formatAppDateTime } from "lib/date-time";
 
 export function NodeResultPopup({
   history,
@@ -90,7 +91,7 @@ export function NodeResultPopup({
               <p className="text-muted-foreground mb-2">
                 {t("Common.startedAt")}
               </p>
-              <p>{new Date(history.startedAt).toLocaleString()}</p>
+              <p>{formatAppDateTime(history.startedAt)}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-2">

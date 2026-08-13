@@ -420,7 +420,7 @@ async function seedSampleUsageData(userIds: string[]) {
               },
             },
           },
-        ]);
+        ] as any);
       }
     }
 
