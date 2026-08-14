@@ -3,9 +3,9 @@
     {
       "id": "iris-v2",
       "title": "IRIS-OS V2 vertical slices",
-      "status": "active",
+      "status": "paused",
       "path": ".agent\\workstreams\\active\\iris-v2",
-      "updated_at": "2026-08-14T07:55:04.492126+00:00"
+      "updated_at": "2026-08-14T09:05:59.516818+00:00"
     }
   ]
 }

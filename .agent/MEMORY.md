@@ -13,8 +13,11 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   with Drizzle.
 - `POST /api/chat` currently composes chat, agent, tools, workflows, skills,
   memory recall, streaming, persistence, and memory-review enqueueing.
-- Memory uses claims, topics, entities, edges, evidence, optional embeddings,
-  retrieval audits, and a PgBoss background worker.
+- Memory V2 scopes claims, topics, entities, edges, evidence, embeddings, and
+  audits exactly across global/workspace/task/agent contexts.
+- Workspace, task ledger, activity/learning, learned-skill, workflow automation,
+  delegation records, and OS dashboard foundations are implemented behind V2
+  feature flags on `codex/iris-v2-foundation`.
 - Agent execution uses Vercel AI SDK `ToolLoopAgent`; workflows and Skills have
   existing runtimes that V2 must extend rather than replace.
 
@@ -42,10 +45,13 @@ skills, visual workflows, voice, file storage, and persistent user memory.
 
 ## Known risks
 
-- Memory graph storage and queries are currently user-scoped only; adding scope
-  to claims alone would still allow cross-workspace topic/entity/edge leakage.
 - Chat streaming is a high-coupling integration point, so domain extraction must
   preserve current persistence, approval, and streaming behavior.
+- Skill/agent automation execution and queued delegated-child execution still
+  require adapters to the existing runtimes; unsupported automation targets
+  currently fail explicitly instead of reporting false success.
+- Migrations 0022-0027 pass Drizzle journal validation but still require a
+  disposable PostgreSQL migration/backfill/integrity test.
 
 ## Active work
 
