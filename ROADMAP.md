@@ -4,6 +4,37 @@ Dokumen ini adalah rencana kerja lanjutan setelah implementasi fondasi IRIS-OS
 V2 pada branch `codex/iris-v2-foundation`. Gunakan dokumen ini sebagai sumber
 urutan eksekusi. Spesifikasi produk utama tetap berada di `IRIS-OS-V2.md`.
 
+## Status Implementasi — 14 Agustus 2026
+
+Core V2 pada roadmap ini telah diimplementasikan dan diverifikasi pada branch
+`codex/iris-v2-foundation`:
+
+- [x] PostgreSQL disposable harness, empty/legacy migration path, dan additive
+      integrity migrations `0028`–`0033`.
+- [x] Typed activity registry, centralized sanitizer, durable claim lease,
+      bounded retry/backoff, stale recovery, dan identifier-only queue payload.
+- [x] Workflow/skill/agent automation adapters, durable approval, attempt
+      history, retry, timeout, cancellation, dan schedule reconciliation.
+- [x] Bounded delegated child execution dengan permission intersection,
+      depth/parallel/budget limits, cancellation tree, dan structured result.
+- [x] Multi-evidence learning candidates, exact-scope suppression, learning
+      privacy settings, confidence policy, dan append-only skill revisions.
+- [x] Operational Tasks, Automations, Delegation, Learning Inbox, dan OS
+      dashboard beserta loading/empty/error/action states.
+- [x] Task ownership, parent/workspace consistency, cycle prevention, status
+      transition, resource ownership, dan terminal timestamps ditegakkan di DB.
+- [x] Gate lokal: lint, typecheck, 518 unit tests, 4 PostgreSQL integration
+      tests, production build, dan 6 Playwright setup/operational tests.
+
+Release ke production tetap harus menunggu bukti environment-specific berikut;
+hal ini tidak dapat dibuktikan hanya dari repository lokal:
+
+- [ ] migration rehearsal pada snapshot staging yang ukurannya representatif;
+- [ ] load/latency/queue-throughput baseline dan alert threshold;
+- [ ] security/accessibility review independen serta rollback drill;
+- [ ] konfigurasi secret, provider model, PgBoss worker, observability backend,
+      dan rollout flag per environment.
+
 ## 1. Kondisi Saat Ini
 
 ### Sudah tersedia

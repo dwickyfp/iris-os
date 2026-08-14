@@ -107,8 +107,6 @@ async function cleanup() {
   } catch (error) {
     console.error("Error cleaning up test data:", error);
   }
-
-  process.exit(0);
 }
 
 export default cleanup;

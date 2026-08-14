@@ -4,5 +4,7 @@ import { notFound } from "next/navigation";
 
 export default function LearningPage() {
   if (!isV2FeatureEnabled("learning")) notFound();
-  return <LearningInbox />;
+  return (
+    <LearningInbox developerMode={process.env.NODE_ENV === "development"} />
+  );
 }

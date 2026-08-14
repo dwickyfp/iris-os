@@ -170,4 +170,71 @@ describe("IRIS V2 PostgreSQL migrations", () => {
       ),
     ).rejects.toThrow(/scope/i);
   });
+
+  test("enforces task ownership, parent cycles, transitions, and timestamps", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client);
+    const userId = randomUUID();
+    const otherUserId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password) VALUES
+       ($1, 'Task Owner', $3, 'hash'), ($2, 'Other Owner', $4, 'hash')`,
+      [
+        userId,
+        otherUserId,
+        `task-${userId}@example.test`,
+        `task-${otherUserId}@example.test`,
+      ],
+    );
+    const foreignAgentId = randomUUID();
+    await client.query(
+      `INSERT INTO agent (id, user_id, name) VALUES ($1, $2, 'Foreign')`,
+      [foreignAgentId, otherUserId],
+    );
+    await expect(
+      client.query(
+        `INSERT INTO iris_task (user_id, assigned_agent_id, title)
+         VALUES ($1, $2, 'Invalid owner')`,
+        [userId, foreignAgentId],
+      ),
+    ).rejects.toThrow(/owned/i);
+
+    const parentId = randomUUID();
+    const childId = randomUUID();
+    await client.query(
+      `INSERT INTO iris_task (id, user_id, title) VALUES
+       ($1, $3, 'Parent'), ($2, $3, 'Child')`,
+      [parentId, childId, userId],
+    );
+    await client.query(
+      `UPDATE iris_task SET parent_task_id = $1 WHERE id = $2`,
+      [parentId, childId],
+    );
+    await expect(
+      client.query(`UPDATE iris_task SET parent_task_id = $1 WHERE id = $2`, [
+        childId,
+        parentId,
+      ]),
+    ).rejects.toThrow(/cycle/i);
+    await expect(
+      client.query(`UPDATE iris_task SET status = 'completed' WHERE id = $1`, [
+        parentId,
+      ]),
+    ).rejects.toThrow(/transition/i);
+    const started = await client.query(
+      `UPDATE iris_task SET status = 'in_progress' WHERE id = $1
+       RETURNING started_at`,
+      [parentId],
+    );
+    expect(started.rows[0].started_at).not.toBeNull();
+
+    await expect(
+      client.query(
+        `INSERT INTO task_resource_ref
+          (task_id, user_id, kind, reference_id)
+         VALUES ($1, $2, 'url', 'https://example.test')`,
+        [parentId, otherUserId],
+      ),
+    ).rejects.toThrow(/ownership/i);
+  });
 });

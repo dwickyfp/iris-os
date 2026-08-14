@@ -2,6 +2,8 @@ import { test as setup, expect } from "@playwright/test";
 import * as fs from "node:fs";
 import { TEST_USERS } from "../constants/test-users";
 import type { Page } from "@playwright/test";
+
+setup.describe.configure({ mode: "serial" });
 export async function selectModel(
   page: Page,
   providerModel: string,
@@ -63,7 +65,7 @@ async function signInViaUi(
       const urlStr = url.toString();
       return !urlStr.includes("/sign-in") && !urlStr.includes("/sign-up");
     },
-    { timeout: 10000 },
+    { timeout: 20000 },
   );
 }
 

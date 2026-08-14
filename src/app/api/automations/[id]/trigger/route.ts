@@ -3,13 +3,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { createDurableAutomationRun } from "lib/automation/service";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
-import { z } from "zod";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 
-const TriggerSchema = z.object({ approvalGranted: z.boolean().default(false) });
-
 export async function POST(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
@@ -17,7 +14,6 @@ export async function POST(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!isV2FeatureEnabled("automation"))
     return Response.json({ error: "Not found" }, { status: 404 });
-  const input = TriggerSchema.parse(await request.json().catch(() => ({})));
   const [automation] = await pgDb
     .select()
     .from(AutomationTable)
@@ -34,7 +30,6 @@ export async function POST(
   const run = await createDurableAutomationRun({
     automation,
     scheduledFor,
-    approvedBy: input.approvalGranted ? session.user.id : undefined,
   });
   return Response.json(
     {

@@ -144,6 +144,10 @@ export const TaskTable = pgTable(
   (table) => [
     index("iris_task_user_status_idx").on(table.userId, table.status),
     index("iris_task_workspace_status_idx").on(table.workspaceId, table.status),
+    check(
+      "iris_task_terminal_timestamp_check",
+      sql`(${table.status} <> 'in_progress' OR ${table.startedAt} IS NOT NULL) AND (${table.status} <> 'blocked' OR (${table.startedAt} IS NOT NULL AND ${table.blockedAt} IS NOT NULL)) AND (${table.status} <> 'completed' OR ${table.completedAt} IS NOT NULL) AND (${table.status} <> 'cancelled' OR ${table.cancelledAt} IS NOT NULL)`,
+    ),
   ],
 );
 

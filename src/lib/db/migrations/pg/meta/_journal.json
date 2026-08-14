@@ -232,6 +232,13 @@
       "when": 1786714800000,
       "tag": "0032_learning_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786716000000,
+      "tag": "0033_task_integrity",
+      "breakpoints": true
     }
   ]
 }
