@@ -24,14 +24,17 @@ import {
   LearningObservationTable,
   LearningSettingTable,
   LearningSuppressionTable,
+  SkillTable,
 } from "lib/db/pg/schema.pg";
 import {
   extractLearningSignal,
   isLearningAllowed,
   learningConfidence,
   learningSuppressionKey,
+  procedureSimilarity,
 } from "lib/learning/policy";
 import { generateUUID } from "lib/utils";
+import { enqueueLearningPromotion } from "lib/learning/queue";
 
 const CLAIM_MS = 5 * 60 * 1_000;
 const MAX_ATTEMPTS = 8;
@@ -80,6 +83,7 @@ async function claimEvent(eventId: string) {
 async function processClaimedEvent(
   event: typeof IrisActivityEventTable.$inferSelect,
 ) {
+  let promotionCandidateId: string | undefined;
   await pgDb.transaction(async (tx) => {
     const signal = extractLearningSignal({
       eventType: event.eventType as ActivityEventType,
@@ -93,7 +97,7 @@ async function processClaimedEvent(
       const settings = storedSettings ?? {
         enabled: true,
         allowedScopes: ["global", "workspace", "task", "agent"] as const,
-        allowedCategories: ["memory", "skill", "automation"] as const,
+        allowedCategories: ["memory", "skill"] as const,
       };
       if (
         !isLearningAllowed({
@@ -155,6 +159,80 @@ async function processClaimedEvent(
         )
         .limit(1);
       if (!suppressed) {
+        let correctedSkill:
+          | { id: string; name: string; version: number }
+          | undefined;
+        if (event.eventType === "chat.correction") {
+          const activeLearned = await tx
+            .select({
+              candidateId: LearningCandidateTable.id,
+              title: LearningCandidateTable.title,
+              id: SkillTable.id,
+              name: SkillTable.name,
+              version: SkillTable.version,
+            })
+            .from(LearningCandidateTable)
+            .innerJoin(
+              SkillTable,
+              eq(SkillTable.sourceCandidateId, LearningCandidateTable.id),
+            )
+            .where(
+              and(
+                eq(LearningCandidateTable.userId, event.userId),
+                eq(LearningCandidateTable.candidateType, "skill"),
+                eq(LearningCandidateTable.status, "confirmed"),
+                eq(LearningCandidateTable.scopeType, event.scopeType),
+                event.scopeId
+                  ? eq(LearningCandidateTable.scopeId, event.scopeId)
+                  : isNull(LearningCandidateTable.scopeId),
+                isNull(SkillTable.archivedAt),
+              ),
+            );
+          const match = activeLearned
+            .map((item) => ({
+              ...item,
+              similarity: procedureSimilarity(signal.summary, item.title),
+            }))
+            .filter((item) => item.similarity >= 0.45)
+            .sort((a, b) => b.similarity - a.similarity)[0];
+          if (match) {
+            correctedSkill = {
+              id: match.id,
+              name: match.name,
+              version: match.version,
+            };
+            await tx
+              .update(SkillTable)
+              .set({ archivedAt: new Date(), updatedAt: new Date() })
+              .where(eq(SkillTable.id, match.id));
+            await tx
+              .update(LearningCandidateTable)
+              .set({
+                status: "superseded",
+                resolutionReason: "explicit_correction_received",
+                updatedAt: new Date(),
+              })
+              .where(eq(LearningCandidateTable.id, match.candidateId));
+            await tx
+              .insert(IrisActivityEventTable)
+              .values({
+                id: generateUUID(),
+                userId: event.userId,
+                actorType: "system",
+                scopeType: event.scopeType,
+                scopeId: event.scopeId,
+                eventType: "learning.skill_deactivated",
+                subjectType: "skill",
+                subjectId: match.id,
+                payload: { toStatus: "inactive" },
+                requestId: event.requestId,
+                runId: event.runId,
+                threadId: event.threadId,
+                idempotencyKey: `learning.skill_deactivated:${match.id}:${event.id}`,
+              })
+              .onConflictDoNothing();
+          }
+        }
         const [existing] = await tx
           .select()
           .from(LearningCandidateTable)
@@ -186,10 +264,18 @@ async function processClaimedEvent(
                 proposedPayload:
                   signal.candidateType === "skill"
                     ? {
-                        name: `learned-${suppressionKey.slice(0, 12)}`,
+                        name:
+                          correctedSkill?.name ??
+                          `learned-${suppressionKey.slice(0, 12)}`,
                         description: signal.summary.slice(0, 1_024),
                         body: `# Learned procedure\n\n${signal.summary}`,
                         allowedTools: [],
+                        ...(correctedSkill
+                          ? {
+                              revisesSkillId: correctedSkill.id,
+                              nextVersion: correctedSkill.version + 1,
+                            }
+                          : {}),
                       }
                     : signal.candidateType === "automation"
                       ? {
@@ -217,6 +303,10 @@ async function processClaimedEvent(
           .select({ total: count() })
           .from(LearningCandidateEvidenceTable)
           .where(eq(LearningCandidateEvidenceTable.candidateId, candidate.id));
+        const nextStatus =
+          candidate.status === "collecting" && total >= signal.threshold
+            ? "pending"
+            : candidate.status;
         await tx
           .update(LearningCandidateTable)
           .set({
@@ -229,17 +319,18 @@ async function processClaimedEvent(
               consistency: 1,
             }),
             lastObservedAt: new Date(),
-            status:
-              candidate.status === "collecting" && total >= signal.threshold
-                ? "pending"
-                : candidate.status,
+            status: nextStatus,
             updatedAt: new Date(),
           })
           .where(eq(LearningCandidateTable.id, candidate.id));
+        if (signal.candidateType === "skill" && nextStatus === "pending") {
+          promotionCandidateId = candidate.id;
+        }
       }
     }
     await markProcessed(tx, event.id);
   });
+  return promotionCandidateId;
 }
 
 async function markProcessed(
@@ -267,7 +358,10 @@ async function processEvent(eventId: string) {
   const event = await claimEvent(eventId);
   if (!event) return;
   try {
-    await processClaimedEvent(event);
+    const promotionCandidateId = await processClaimedEvent(event);
+    if (promotionCandidateId) {
+      await enqueueLearningPromotion(promotionCandidateId);
+    }
   } catch (error) {
     const delaySeconds = Math.min(
       3_600,

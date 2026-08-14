@@ -178,7 +178,13 @@ export type MemoryConflict = {
 export type MemoryCuratorRun = {
   id: string;
   userId: string;
-  jobType: "extract" | "curate" | "sweep" | "reembed";
+  jobType:
+    | "extract"
+    | "curate"
+    | "sweep"
+    | "reembed"
+    | "review"
+    | "consolidate";
   status: "running" | "completed" | "failed";
   stats: Record<string, number>;
   error?: string;

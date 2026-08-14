@@ -239,6 +239,27 @@
       "when": 1786777200000,
       "tag": "0033_task_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786780800000,
+      "tag": "0034_chat_first_learning",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786784400000,
+      "tag": "0035_agentic_memory_curator",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786788000000,
+      "tag": "0036_system_model_engines",
+      "breakpoints": true
     }
   ]
 }

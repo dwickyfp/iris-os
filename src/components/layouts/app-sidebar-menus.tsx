@@ -25,8 +25,6 @@ import {
   PlusIcon,
   Waypoints,
   BrainIcon,
-  LayoutDashboardIcon,
-  InboxIcon,
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Skeleton } from "ui/skeleton";
@@ -51,18 +49,6 @@ export function AppSidebarMenus({ user }: { user?: BasicUser }) {
   return (
     <SidebarGroup>
       <SidebarGroupContent>
-        <SidebarMenu>
-          <Tooltip>
-            <SidebarMenuItem>
-              <Link href="/os" onClick={() => setOpenMobile(false)}>
-                <SidebarMenuButton className="font-semibold">
-                  <LayoutDashboardIcon className="size-4" />
-                  OS Dashboard
-                </SidebarMenuButton>
-              </Link>
-            </SidebarMenuItem>
-          </Tooltip>
-        </SidebarMenu>
         <SidebarMenu>
           <Tooltip>
             <SidebarMenuItem className="mb-1">
@@ -100,18 +86,6 @@ export function AppSidebarMenus({ user }: { user?: BasicUser }) {
                 <SidebarMenuButton className="font-semibold">
                   <BrainIcon className="size-4" />
                   Memory
-                </SidebarMenuButton>
-              </Link>
-            </SidebarMenuItem>
-          </Tooltip>
-        </SidebarMenu>
-        <SidebarMenu>
-          <Tooltip>
-            <SidebarMenuItem>
-              <Link href="/learning" onClick={() => setOpenMobile(false)}>
-                <SidebarMenuButton className="font-semibold">
-                  <InboxIcon className="size-4" />
-                  Learning inbox
                 </SidebarMenuButton>
               </Link>
             </SidebarMenuItem>

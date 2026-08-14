@@ -1,10 +1,9 @@
 import { getSession } from "auth/server";
-import { AutomationUpdateSchema } from "app-types/automation";
 import { and, desc, eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import { enqueueAutomationRefresh } from "lib/automation/queue";
+import { updateManagedAutomation } from "lib/automation/management";
 
 export async function GET(
   _request: Request,
@@ -52,19 +51,18 @@ export async function PATCH(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!isV2FeatureEnabled("automation"))
     return Response.json({ error: "Not found" }, { status: 404 });
-  const input = AutomationUpdateSchema.parse(await request.json());
-  const [automation] = await pgDb
-    .update(AutomationTable)
-    .set({ ...input, updatedAt: new Date() })
-    .where(
-      and(
-        eq(AutomationTable.id, (await params).id),
-        eq(AutomationTable.userId, session.user.id),
+  try {
+    return Response.json(
+      await updateManagedAutomation(
+        session.user.id,
+        (await params).id,
+        await request.json(),
       ),
-    )
-    .returning();
-  if (automation) void enqueueAutomationRefresh(automation.id);
-  return automation
-    ? Response.json(automation)
-    : Response.json({ error: "Automation not found" }, { status: 404 });
+    );
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Invalid automation" },
+      { status: 400 },
+    );
+  }
 }

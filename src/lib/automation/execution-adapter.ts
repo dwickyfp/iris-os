@@ -40,6 +40,7 @@ export type AutomationExecutionRequest = {
   allowedTools?: string[];
   timeoutMs: number;
   signal: AbortSignal;
+  executionSource: "automation" | "delegation";
 };
 
 type TargetExecutor = (
@@ -75,7 +76,11 @@ async function runHeadlessAgent(input: {
   instructions: string;
   allowedTools: string[];
 }) {
-  const model = await customModelProvider.getModel();
+  const model = await customModelProvider.getEngineModel(
+    input.request.executionSource === "delegation"
+      ? "delegation-runner"
+      : "automation-runner",
+  );
   const runtimeContext =
     input.profile.type === "custom"
       ? createAgentRuntimeContext({

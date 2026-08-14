@@ -46,6 +46,7 @@ import {
   buildSkillManifestPrompt,
   createSkillsRuntime,
 } from "lib/ai/skill";
+import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
 import { ImageToolName } from "lib/ai/tools";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { serverFileStorage } from "lib/file-storage";
@@ -60,6 +61,7 @@ import {
 import { workspaceService } from "lib/workspace/server";
 import { buildTaskContextPrompt } from "lib/task/context";
 import { recordActivityEvent } from "lib/activity/service";
+import { isChatCorrection } from "lib/learning/policy";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable } from "lib/db/pg/schema.pg";
 import { and, eq } from "drizzle-orm";
@@ -68,6 +70,14 @@ import {
   createDelegateWorkTool,
   DELEGATE_WORK_TOOL_NAME,
 } from "lib/ai/tools/delegation/delegate-work";
+import {
+  createManageLearningTool,
+  MANAGE_LEARNING_TOOL_NAME,
+} from "lib/ai/tools/background/manage-learning";
+import {
+  createManageAutomationTool,
+  MANAGE_AUTOMATION_TOOL_NAME,
+} from "lib/ai/tools/background/manage-automation";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -349,14 +359,46 @@ export async function POST(request: Request) {
             }),
           )
           .orElse({});
-        const skillsRuntime =
-          agent && supportToolCall
-            ? await createSkillsRuntime({
-                repository: skillRepository as AssignedSkillsRepository,
-                agentId: agent.id,
+        const userText = message.parts
+          .filter((part: any) => part.type === "text")
+          .map((part: any) => part.text)
+          .join(" ");
+        const BACKGROUND_CONTROL_TOOLS: Record<string, Tool> = {
+          ...(isV2FeatureEnabled("learning")
+            ? {
+                [MANAGE_LEARNING_TOOL_NAME]: createManageLearningTool({
+                  userId: session.user.id,
+                  userText,
+                }),
+              }
+            : {}),
+          ...(isV2FeatureEnabled("automation")
+            ? {
+                [MANAGE_AUTOMATION_TOOL_NAME]: createManageAutomationTool({
+                  userId: session.user.id,
+                  userText,
+                }),
+              }
+            : {}),
+        };
+        const scopedLearnedSkills =
+          supportToolCall && isV2FeatureEnabled("learning")
+            ? await selectScopedLearnedSkillSummaries({
                 userId: session.user.id,
+                query: userText,
+                workspaceId: workspace?.id,
+                taskId: task?.id,
+                agentId: agent?.id,
               })
-            : { manifest: [], tools: {} };
+            : [];
+        const skillsRuntime = supportToolCall
+          ? await createSkillsRuntime({
+              repository: skillRepository as AssignedSkillsRepository,
+              agentId: agent?.id,
+              userId: session.user.id,
+              additionalSkills: scopedLearnedSkills,
+            })
+          : { manifest: [], tools: {} };
         const inProgressToolParts = extractInProgressToolPart(message);
         if (inProgressToolParts.length) {
           await Promise.all(
@@ -368,6 +410,7 @@ export async function POST(request: Request) {
                     ...MCP_TOOLS,
                     ...WORKFLOW_TOOLS,
                     ...APP_DEFAULT_TOOLS,
+                    ...BACKGROUND_CONTROL_TOOLS,
                   },
                   skillsRuntime.tools,
                 ),
@@ -397,10 +440,7 @@ export async function POST(request: Request) {
 
         const memoryContext = await buildMemoryContext(
           session.user.id,
-          message.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" "),
+          userText,
           {
             agentId: agent?.id,
             workspaceId: workspace?.id,
@@ -452,6 +492,7 @@ export async function POST(request: Request) {
                 ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
                 ...IMAGE_TOOL,
                 ...DELEGATION_TOOLS,
+                ...BACKGROUND_CONTROL_TOOLS,
               },
               skillsRuntime.tools,
             );
@@ -505,7 +546,6 @@ export async function POST(request: Request) {
           threadId: thread!.id,
           messages,
           contextWindow: modelConfig.contextWindow,
-          model,
         });
         const modelMessages = await convertToModelMessages(compactedMessages);
         const runtimeContext = agent
@@ -604,33 +644,31 @@ export async function POST(request: Request) {
             message: responseMessage,
           }),
         ]);
-        void enqueueMemoryReview({
-          id: `${thread!.id}:${responseMessage.id}`,
-          userId: session.user.id,
-          threadId: thread!.id,
-          workspaceId: workspace?.id,
-          assistantMessageId: responseMessage.id,
-          userMessageId: message.id,
-          agentId: agent?.id,
-          userText: message.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" ")
-            .slice(0, 8_000),
-          assistantText: responseMessage.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" ")
-            .slice(0, 8_000),
-          chatModel,
-        }).catch((error) =>
-          logger.warn("Unable to enqueue memory review", error),
-        );
+        if (!isAborted && finishReason !== "error")
+          void enqueueMemoryReview({
+            id: `${thread!.id}:${responseMessage.id}`,
+            userId: session.user.id,
+            threadId: thread!.id,
+            workspaceId: workspace?.id,
+            taskId: task?.id,
+            assistantMessageId: responseMessage.id,
+            userMessageId: message.id,
+            agentId: agent?.id,
+          }).catch((error) =>
+            logger.warn("Unable to enqueue memory review", error),
+          );
+        const completedUserText = message.parts
+          .filter((part: any) => part.type === "text")
+          .map((part: any) => part.text)
+          .join(" ")
+          .slice(0, 2_000);
         const chatEventType = isAborted
           ? "chat.cancelled"
           : finishReason === "error"
             ? "chat.failed"
-            : "chat.completed";
+            : isChatCorrection(completedUserText)
+              ? "chat.correction"
+              : "chat.completed";
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
           actorId: agent?.id,
@@ -649,11 +687,7 @@ export async function POST(request: Request) {
             userMessageId: message.id,
             assistantMessageId: responseMessage.id,
             model: chatModel,
-            userText: message.parts
-              .filter((part: any) => part.type === "text")
-              .map((part: any) => part.text)
-              .join(" ")
-              .slice(0, 8_000),
+            userText: completedUserText,
           },
           requestId,
           runId,

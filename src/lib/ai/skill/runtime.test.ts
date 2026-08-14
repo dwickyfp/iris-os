@@ -216,6 +216,25 @@ describe("createSkillsRuntime", () => {
     expect(runtime.manifest).toHaveLength(MAX_ASSIGNED_SKILLS);
   });
 
+  it("makes scoped learned skills available without an agent assignment", async () => {
+    const repository = createRepository();
+    const runtime = await createSkillsRuntime({
+      repository,
+      userId: "user-1",
+      additionalSkills: [
+        { id: "review", name: "Code Review", description: "Review safely" },
+      ],
+    });
+
+    expect(repository.selectSkillsByAgentId).not.toHaveBeenCalled();
+    expect(runtime.manifest).toEqual([
+      { id: "review", name: "Code Review", description: "Review safely" },
+    ]);
+    await expect(
+      execute(runtime, "skill_view", { skillId: "review" }),
+    ).resolves.toMatchObject({ content: "Full instructions" });
+  });
+
   it("binds reserved tools after colliding tools", async () => {
     const runtime = await createSkillsRuntime({
       repository: createRepository(),

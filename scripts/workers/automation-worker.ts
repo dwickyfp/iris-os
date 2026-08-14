@@ -112,6 +112,7 @@ async function execute(runId: string) {
     input: automation.input,
     timeoutMs: automation.timeoutMs,
     signal: controller.signal,
+    executionSource: "automation",
   }).finally(() => {
     clearTimeout(timeout);
     clearInterval(cancellationPoll);

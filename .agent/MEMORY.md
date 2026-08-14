@@ -28,6 +28,12 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   authoritative for an existing thread.
 - Use additive migrations and vertical slices; do not create parallel runtimes.
 - New behavior follows test-first RED-GREEN-REFACTOR.
+- Treat memory meaning as a model-reviewed decision: regex may sanitize input
+  but must not classify preference, negation, subject, scope, or conflict.
+- Memory review mutations are one atomic, idempotent batch. Any correction must
+  preserve evidence and lineage through a superseded node and `SUPERSEDES` edge.
+- Internal LLM consumers resolve through typed global system-engine assignments;
+  foreground chat and workflow-node model selection remain independent.
 
 ## Important entry points
 
@@ -50,8 +56,8 @@ skills, visual workflows, voice, file storage, and persistent user memory.
 - Skill/agent automation execution and queued delegated-child execution still
   require adapters to the existing runtimes; unsupported automation targets
   currently fail explicitly instead of reporting false success.
-- Migrations 0022-0027 pass Drizzle journal validation but still require a
-  disposable PostgreSQL migration/backfill/integrity test.
+- Repository defaults keep agentic memory curation in shadow mode. The local
+  development environment may explicitly enable write mode after verification.
 
 ## Active work
 

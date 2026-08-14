@@ -1,8 +1,8 @@
 import { getSession } from "auth/server";
 import { and, desc, eq } from "drizzle-orm";
-import { createDurableAutomationRun } from "lib/automation/service";
+import { triggerManagedAutomation } from "lib/automation/management";
 import { pgDb } from "lib/db/pg/db.pg";
-import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
+import { AutomationRunTable } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function POST(
@@ -14,23 +14,8 @@ export async function POST(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!isV2FeatureEnabled("automation"))
     return Response.json({ error: "Not found" }, { status: 404 });
-  const [automation] = await pgDb
-    .select()
-    .from(AutomationTable)
-    .where(
-      and(
-        eq(AutomationTable.id, (await params).id),
-        eq(AutomationTable.userId, session.user.id),
-        eq(AutomationTable.status, "active"),
-      ),
-    );
-  if (!automation)
-    return Response.json({ error: "Automation not found" }, { status: 404 });
   const scheduledFor = new Date();
-  const run = await createDurableAutomationRun({
-    automation,
-    scheduledFor,
-  });
+  const run = await triggerManagedAutomation(session.user.id, (await params).id);
   return Response.json(
     {
       queued: run?.status === "queued",

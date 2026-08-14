@@ -8,7 +8,7 @@ const ChatPayloadSchema = JsonPayloadSchema.extend({
   userMessageId: z.string().max(200).optional(),
   assistantMessageId: z.string().max(200).optional(),
   model: z.string().max(240).optional(),
-  userText: z.string().max(8_000).optional(),
+  userText: z.string().max(2_000).optional(),
   errorCode: z.string().max(120).optional(),
 });
 const StatePayloadSchema = JsonPayloadSchema.extend({
@@ -59,6 +59,10 @@ export const ActivityEventPayloadRegistry = {
   "learning.candidate_reviewed": StatePayloadSchema,
   "learning.suppressed": StatePayloadSchema,
   "learning.promoted": StatePayloadSchema,
+  "learning.promotion_started": StatePayloadSchema,
+  "learning.promotion_failed": StatePayloadSchema,
+  "learning.skill_activated": StatePayloadSchema,
+  "learning.skill_deactivated": StatePayloadSchema,
   "automation.triggered": RunPayloadSchema,
   "automation.approval_blocked": RunPayloadSchema,
   "automation.started": RunPayloadSchema,

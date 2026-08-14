@@ -12,16 +12,27 @@ import { and, asc, eq } from "drizzle-orm";
 import { createOllama } from "ollama-ai-provider-v2";
 
 import { ChatModel } from "app-types/chat";
-import { ModelCapabilities, ModelCatalogItem } from "app-types/model-settings";
+import {
+  ModelCapabilities,
+  ModelCatalogItem,
+  type SystemModelEngineKey,
+} from "app-types/model-settings";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   ModelConfigurationTable,
+  ModelEngineAssignmentTable,
   ModelProviderTable,
 } from "lib/db/pg/schema.pg";
 import { decryptSecret } from "lib/model-settings/crypto";
 import { createAzureOpenAICompatible } from "./azure-openai-compatible";
+import {
+  SYSTEM_MODEL_ENGINES,
+  getSystemModelEngine,
+  resolveSystemEngineModels,
+  type SystemModelEngineDefinition,
+} from "./system-model-engines";
 
-type ConfiguredModel = ModelCatalogItem & {
+export type ConfiguredModel = ModelCatalogItem & {
   apiModelId: string;
   apiVersion: string | null;
   providerType: string;
@@ -31,6 +42,8 @@ type ConfiguredModel = ModelCatalogItem & {
   isCurator: boolean;
   isEmbeddingDefault: boolean;
   embeddingDimensions: number | null;
+  enabled: boolean;
+  providerEnabled: boolean;
 };
 
 const capabilityDefaults: ModelCapabilities = {
@@ -77,6 +90,8 @@ async function configuredModels(
     isCurator: model.isCurator,
     isEmbeddingDefault: model.isEmbeddingDefault,
     embeddingDimensions: model.embeddingDimensions,
+    enabled: model.enabled,
+    providerEnabled: provider.enabled,
     contextWindow: model.contextWindow,
     capabilities: {
       ...capabilityDefaults,
@@ -158,14 +173,115 @@ export async function getModelConfiguration(model?: ChatModel) {
 }
 
 export async function getCuratorModelConfiguration() {
-  const models = await configuredModels(true, "chat");
-  const configured = models.find((item) => item.isCurator);
-  return configured ?? models.find((item) => item.isDefault) ?? models[0];
+  return getEngineModelConfiguration("memory-curator");
 }
 
 export async function getEmbeddingModelConfiguration() {
-  const models = await configuredModels(true, "embedding");
-  return models.find((item) => item.isEmbeddingDefault) ?? models[0];
+  return getEngineModelConfiguration("memory-embedding");
+}
+
+type EngineResolution = {
+  engine: SystemModelEngineDefinition;
+  assignedModelId: string | null;
+  effective: ConfiguredModel | null;
+  candidates: ConfiguredModel[];
+  isFallback: boolean;
+  warning: string | null;
+};
+
+function resolveSystemEngine(
+  engine: SystemModelEngineDefinition,
+  allModels: ConfiguredModel[],
+  assignedModelId: string | null,
+): EngineResolution {
+  const { assignedIsUsable, candidates, effective } =
+    resolveSystemEngineModels(engine, allModels, assignedModelId);
+  const warning = assignedIsUsable
+    ? null
+    : assignedModelId
+      ? effective
+        ? `Assigned model is unavailable or incompatible; using ${effective.provider}/${effective.model}.`
+        : "Assigned model is unavailable or incompatible, and no fallback is configured."
+      : effective
+        ? `No model is assigned; using ${effective.provider}/${effective.model}.`
+        : "No compatible model is configured.";
+  return {
+    engine,
+    assignedModelId,
+    effective,
+    candidates,
+    isFallback: !assignedIsUsable,
+    warning,
+  };
+}
+
+async function loadEngineResolutions() {
+  const [models, assignments] = await Promise.all([
+    configuredModels(false),
+    pgDb.select().from(ModelEngineAssignmentTable),
+  ]);
+  const assigned = new Map(
+    assignments.map((assignment) => [
+      assignment.engineKey,
+      assignment.modelId,
+    ]),
+  );
+  return SYSTEM_MODEL_ENGINES.map((engine) =>
+    resolveSystemEngine(engine, models, assigned.get(engine.key) ?? null),
+  );
+}
+
+export async function getEngineModelConfiguration(
+  engineKey: SystemModelEngineKey,
+) {
+  const engine = getSystemModelEngine(engineKey);
+  const [assignment] = await pgDb
+    .select({ modelId: ModelEngineAssignmentTable.modelId })
+    .from(ModelEngineAssignmentTable)
+    .where(eq(ModelEngineAssignmentTable.engineKey, engineKey))
+    .limit(1);
+  const resolution = resolveSystemEngine(
+    engine,
+    await configuredModels(false),
+    assignment?.modelId ?? null,
+  );
+  if (resolution.warning)
+    console.warn(
+      JSON.stringify({
+        event: "system_model_engine_fallback",
+        engineKey,
+        warning: resolution.warning,
+      }),
+    );
+  if (!resolution.effective)
+    throw new Error(
+      `No enabled compatible model is configured for ${engine.key}`,
+    );
+  return resolution.effective;
+}
+
+function publicModel(model: ConfiguredModel) {
+  return {
+    id: model.id,
+    provider: model.provider,
+    name: model.model,
+    modelKind: model.modelKind,
+    capabilities: model.capabilities,
+    contextWindow: model.contextWindow,
+  };
+}
+
+export async function getSystemModelEngineSettings() {
+  return (await loadEngineResolutions()).map((resolution) => ({
+    ...resolution.engine,
+    assignedModelId: resolution.assignedModelId,
+    effectiveModel: resolution.effective
+      ? publicModel(resolution.effective)
+      : null,
+    candidates: resolution.candidates.map(publicModel),
+    isFallback: resolution.isFallback,
+    warning: resolution.warning,
+  }));
 }
 
 function createLanguageModel(config: ConfiguredModel): LanguageModel {
@@ -253,6 +369,12 @@ export const customModelProvider = {
   getCuratorModel: async () => {
     const config = await getCuratorModelConfiguration();
     if (!config) throw new Error("No enabled curator model configured");
+    return createLanguageModel(config);
+  },
+  getEngineModel: async (engineKey: SystemModelEngineKey) => {
+    const config = await getEngineModelConfiguration(engineKey);
+    if (config.modelKind !== "chat")
+      throw new Error(`${engineKey} is not a language-model engine`);
     return createLanguageModel(config);
   },
   getEmbeddingModel: async () => {

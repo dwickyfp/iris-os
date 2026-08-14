@@ -18,11 +18,48 @@ describe("IRIS V2 PostgreSQL migrations", () => {
   test("applies every migration to an empty database", async () => {
     await recreatePublicSchema(client);
     const applied = await applyMigrations(client);
-    expect(applied).toContain("0028_v2_integrity_hardening.sql");
+    expect(applied).toContain("0036_system_model_engines.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );
     expect(result.rows[0].count).toBeGreaterThan(20);
+  });
+
+  test("backfills legacy curator and embedding model engine assignments", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, {
+      through: "0035_agentic_memory_curator.sql",
+    });
+    const providerId = randomUUID();
+    const curatorId = randomUUID();
+    const embeddingId = randomUUID();
+    await client.query(
+      `INSERT INTO model_provider (id, name, type)
+       VALUES ($1, 'Engine Provider', 'openai')`,
+      [providerId],
+    );
+    await client.query(
+      `INSERT INTO model_configuration
+        (id, provider_id, name, api_model_id, model_kind, is_curator,
+         is_embedding_default)
+       VALUES ($1, $3, 'Curator', 'curator-model', 'chat', true, false),
+              ($2, $3, 'Embedding', 'embedding-model', 'embedding', false, true)`,
+      [curatorId, embeddingId, providerId],
+    );
+
+    await applyMigrations(client, {
+      after: "0035_agentic_memory_curator.sql",
+    });
+
+    const assignments = await client.query(
+      `SELECT engine_key, model_id
+       FROM model_engine_assignment
+       ORDER BY engine_key`,
+    );
+    expect(assignments.rows).toEqual([
+      { engine_key: "memory-curator", model_id: curatorId },
+      { engine_key: "memory-embedding", model_id: embeddingId },
+    ]);
   });
 
   test("backfills legacy memory and preserves exact global scope", async () => {
@@ -236,5 +273,94 @@ describe("IRIS V2 PostgreSQL migrations", () => {
         [parentId, otherUserId],
       ),
     ).rejects.toThrow(/ownership/i);
+  });
+
+  test("reconciles legacy inbox candidates for chat-first learning", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, { through: "0033_task_integrity.sql" });
+    const userId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Learning User', $2, 'hash')`,
+      [userId, `learning-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO learning_setting
+        (user_id, allowed_categories, autonomy_level)
+       VALUES ($1, '["memory","skill","automation"]'::json, 1)`,
+      [userId],
+    );
+
+    for (const [index, candidateType] of [
+      "memory",
+      "automation",
+      "skill",
+    ].entries()) {
+      const eventId = randomUUID();
+      const observationId = randomUUID();
+      await client.query(
+        `INSERT INTO iris_activity_event
+          (id, user_id, actor_type, event_type, subject_type, idempotency_key)
+         VALUES ($1, $2, 'system', 'chat.completed', 'thread', $3)`,
+        [eventId, userId, `legacy-learning-${index}`],
+      );
+      await client.query(
+        `INSERT INTO learning_observation
+          (id, event_id, user_id, scope_type, observation_type, summary,
+           confidence)
+         VALUES ($1, $2, $3, 'global', 'legacy', $4, 80)`,
+        [observationId, eventId, userId, `${candidateType} observation`],
+      );
+      await client.query(
+        `INSERT INTO learning_candidate
+          (user_id, observation_id, scope_type, candidate_type, title,
+           proposed_payload, confidence, status, suppression_key,
+           evidence_count)
+         VALUES ($1, $2, 'global', $3, $4, '{}'::json, 80, 'pending', $5, $6)`,
+        [
+          userId,
+          observationId,
+          candidateType,
+          `${candidateType} candidate`,
+          String(index).padStart(64, "0"),
+          candidateType === "skill" ? 3 : 1,
+        ],
+      );
+    }
+
+    await applyMigrations(client, { after: "0033_task_integrity.sql" });
+
+    const candidates = await client.query(
+      `SELECT candidate_type, status, resolution_reason
+       FROM learning_candidate ORDER BY candidate_type`,
+    );
+    expect(candidates.rows).toEqual([
+      {
+        candidate_type: "automation",
+        status: "superseded",
+        resolution_reason: "inferred_automation_disabled",
+      },
+      {
+        candidate_type: "memory",
+        status: "superseded",
+        resolution_reason: "duplicate_memory_pipeline",
+      },
+      {
+        candidate_type: "skill",
+        status: "pending",
+        resolution_reason: null,
+      },
+    ]);
+    const settings = await client.query(
+      `SELECT allowed_categories FROM learning_setting WHERE user_id = $1`,
+      [userId],
+    );
+    expect(settings.rows[0].allowed_categories).toEqual(["memory", "skill"]);
+    const attempts = await client.query(
+      `SELECT count(*)::int AS count FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name = 'learning_promotion_attempt'`,
+    );
+    expect(attempts.rows[0].count).toBe(1);
   });
 });

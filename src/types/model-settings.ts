@@ -22,6 +22,24 @@ export const ModelCapabilitiesSchema = z.object({
 
 export type ModelCapabilities = z.infer<typeof ModelCapabilitiesSchema>;
 
+export const SystemModelEngineKeySchema = z.enum([
+  "memory-curator",
+  "context-summary",
+  "thread-title",
+  "automation-runner",
+  "delegation-runner",
+  "memory-embedding",
+]);
+
+export type SystemModelEngineKey = z.infer<
+  typeof SystemModelEngineKeySchema
+>;
+
+export const SystemModelEngineAssignmentSchema = z.object({
+  engineKey: SystemModelEngineKeySchema,
+  modelId: z.string().uuid().nullable(),
+});
+
 export const ProviderInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   type: ProviderTypeSchema,

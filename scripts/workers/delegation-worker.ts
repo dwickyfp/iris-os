@@ -97,6 +97,7 @@ async function execute(childRunId: string) {
     allowedTools: child.allowedTools,
     timeoutMs: child.timeoutMs,
     signal: controller.signal,
+    executionSource: "delegation",
   }).finally(() => {
     clearTimeout(timeout);
     clearInterval(poll);

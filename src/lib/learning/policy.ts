@@ -20,6 +20,39 @@ function normalizePattern(value: string) {
     .trim();
 }
 
+export function isChatCorrection(text: string) {
+  return /\b(koreksi|ralat|bukan begitu|jangan (?:lagi )?lakukan|ubah (?:cara|prosedur)|instead|correction)\b/i.test(
+    text,
+  );
+}
+
+export function procedureSimilarity(left: string, right: string) {
+  const ignored = new Set([
+    "koreksi",
+    "ralat",
+    "jangan",
+    "lagi",
+    "ubah",
+    "cara",
+    "prosedur",
+    "lakukan",
+    "yang",
+    "untuk",
+    "dengan",
+  ]);
+  const tokens = (value: string) =>
+    new Set(
+      normalizePattern(value)
+        .split(" ")
+        .filter((token) => token.length >= 3 && !ignored.has(token)),
+    );
+  const a = tokens(left);
+  const b = tokens(right);
+  if (a.size === 0 || b.size === 0) return 0;
+  const intersection = [...a].filter((token) => b.has(token)).length;
+  return intersection / Math.min(a.size, b.size);
+}
+
 export function extractLearningSignal(input: {
   eventType: ActivityEventType;
   payload: Record<string, unknown>;
@@ -30,14 +63,9 @@ export function extractLearningSignal(input: {
   if (!text || !["chat.completed", "chat.correction"].includes(input.eventType))
     return null;
   const normalizedPattern = normalizePattern(text);
-  if (/\b(setiap|tiap|harian|mingguan|bulanan|every)\b/i.test(text))
-    return {
-      candidateType: "automation",
-      observationType: "time_pattern",
-      summary: text,
-      normalizedPattern,
-      threshold: 3,
-    };
+  // Time patterns are intentionally telemetry-only. Background learning must
+  // never turn an inferred schedule into an executable automation.
+  if (/\b(setiap|tiap|harian|mingguan|bulanan|every)\b/i.test(text)) return null;
   if (/\b(langkah|prosedur|workflow|selalu lakukan|cara untuk)\b/i.test(text))
     return {
       candidateType: "skill",
@@ -46,15 +74,26 @@ export function extractLearningSignal(input: {
       normalizedPattern,
       threshold: 3,
     };
-  if (/\b(ingat|catat|aku|saya|gue|prefer|tolong|jangan|selalu)\b/i.test(text))
-    return {
-      candidateType: "memory",
-      observationType: "durable_statement",
-      summary: text,
-      normalizedPattern,
-      threshold: 1,
-    };
+  // Durable statements are handled exclusively by the memory worker.
   return null;
+}
+
+export function canAutoPromoteSkill(input: {
+  enabled: boolean;
+  autonomyLevel: number;
+  allowedCategories: LearningCandidateType[];
+  evidenceCount: number;
+  correctionCount?: number;
+  successfulOutcomeCount?: number;
+}) {
+  return (
+    input.enabled &&
+    input.autonomyLevel >= 1 &&
+    input.allowedCategories.includes("skill") &&
+    input.evidenceCount >= 3 &&
+    (input.successfulOutcomeCount ?? input.evidenceCount) >= 3 &&
+    (input.correctionCount ?? 0) === 0
+  );
 }
 
 export function learningSuppressionKey(input: {

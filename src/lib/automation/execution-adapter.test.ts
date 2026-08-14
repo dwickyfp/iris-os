@@ -18,6 +18,7 @@ function request(
     input: { objective: "Do the bounded work" },
     timeoutMs: 1_000,
     signal: new AbortController().signal,
+    executionSource: "automation",
   };
 }
 

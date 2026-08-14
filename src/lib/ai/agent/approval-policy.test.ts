@@ -17,4 +17,9 @@ describe("requiresToolApproval", () => {
     expect(requiresToolApproval(ImageToolName)).toBe(true);
     expect(requiresToolApproval("mcp-unclassified-tool")).toBe(true);
   });
+
+  it("allows explicit learning policy changes without granting delegation read access", () => {
+    expect(requiresToolApproval("manage_learning")).toBe(false);
+    expect(isReadOnlyTool("manage_learning")).toBe(false);
+  });
 });

@@ -28,19 +28,28 @@ export async function createSkillsRuntime({
   repository,
   agentId,
   userId,
+  additionalSkills = [],
 }: {
   repository: AssignedSkillsRepository;
-  agentId: string;
+  agentId?: string;
   userId: string;
+  additionalSkills?: SkillManifestEntry[];
 }): Promise<SkillsRuntime> {
-  const assigned = repository.selectSkillSummariesByAgentId
-    ? await repository.selectSkillSummariesByAgentId(
-        agentId,
-        userId,
-        MAX_ASSIGNED_SKILLS,
-      )
-    : await repository.selectSkillsByAgentId(agentId, userId);
-  const manifest = createSkillManifest(assigned);
+  const assigned = agentId
+    ? repository.selectSkillSummariesByAgentId
+      ? await repository.selectSkillSummariesByAgentId(
+          agentId,
+          userId,
+          MAX_ASSIGNED_SKILLS,
+        )
+      : await repository.selectSkillsByAgentId(agentId, userId)
+    : [];
+  const manifest = createSkillManifest(
+    [...assigned, ...additionalSkills].filter(
+      (skill, index, skills) =>
+        skills.findIndex((candidate) => candidate.id === skill.id) === index,
+    ),
+  );
   const assignedById = new Map(manifest.map((skill) => [skill.id, skill]));
   const loads = new Map<string, Promise<unknown>>();
   const loadedSkills = new Set<string>();

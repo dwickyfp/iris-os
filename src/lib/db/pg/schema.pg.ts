@@ -35,6 +35,7 @@ import type {
 } from "app-types/memory";
 import type { Workspace, WorkspaceStatus } from "app-types/workspace";
 import type { TaskPriority, TaskStatus } from "app-types/task";
+import type { SystemModelEngineKey } from "app-types/model-settings";
 
 export const WorkspaceTable = pgTable(
   "workspace",
@@ -292,6 +293,26 @@ export const ModelConfigurationTable = pgTable(
     unique().on(table.providerId, table.name),
     index("model_configuration_provider_idx").on(table.providerId),
   ],
+);
+
+export const ModelEngineAssignmentTable = pgTable(
+  "model_engine_assignment",
+  {
+    engineKey: varchar("engine_key", { length: 64 })
+      .primaryKey()
+      .notNull()
+      .$type<SystemModelEngineKey>(),
+    modelId: uuid("model_id")
+      .notNull()
+      .references(() => ModelConfigurationTable.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("model_engine_assignment_model_idx").on(table.modelId)],
 );
 
 export const ChatMessageTable = pgTable("chat_message", {
@@ -711,8 +732,16 @@ export const MemoryCuratorRunTable = pgTable(
       .notNull()
       .default("global"),
     scopeId: uuid("scope_id"),
+    jobKey: varchar("job_key", { length: 240 }),
     jobType: varchar("job_type", {
-      enum: ["extract", "curate", "sweep", "reembed"],
+      enum: [
+        "extract",
+        "curate",
+        "sweep",
+        "reembed",
+        "review",
+        "consolidate",
+      ],
     }).notNull(),
     status: varchar("status", {
       enum: ["running", "completed", "failed"],
@@ -730,6 +759,7 @@ export const MemoryCuratorRunTable = pgTable(
       "memory_curator_run_scope_check",
       sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
     ),
+    unique().on(table.jobKey),
     index("memory_curator_run_user_idx").on(table.userId, table.createdAt),
   ],
 );
@@ -936,6 +966,12 @@ export const LearningCandidateTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
     promotedType: varchar("promoted_type", { length: 40 }),
     promotedId: uuid("promoted_id"),
+    promotionClaimedAt: timestamp("promotion_claimed_at"),
+    promotionClaimExpiresAt: timestamp("promotion_claim_expires_at"),
+    promotionNextAttemptAt: timestamp("promotion_next_attempt_at"),
+    promotionAttempts: integer("promotion_attempts").notNull().default(0),
+    promotionErrorCode: varchar("promotion_error_code", { length: 120 }),
+    resolutionReason: varchar("resolution_reason", { length: 240 }),
     reviewedAt: timestamp("reviewed_at"),
     createdAt: timestamp("created_at")
       .notNull()
@@ -959,6 +995,11 @@ export const LearningCandidateTable = pgTable(
     ),
     unique().on(table.userId, table.suppressionKey, table.status),
     index("learning_candidate_inbox_idx").on(table.userId, table.status),
+    index("learning_candidate_promotion_idx").on(
+      table.status,
+      table.promotionNextAttemptAt,
+      table.promotionClaimExpiresAt,
+    ),
   ],
 );
 
@@ -995,7 +1036,7 @@ export const LearningSettingTable = pgTable("learning_setting", {
   allowedCategories: json("allowed_categories")
     .notNull()
     .$type<Array<"memory" | "skill" | "automation">>()
-    .default(["memory", "skill", "automation"]),
+    .default(["memory", "skill"]),
   retentionDays: integer("retention_days").notNull().default(90),
   autonomyLevel: integer("autonomy_level").notNull().default(1),
   updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -1055,6 +1096,33 @@ export const LearningFeedbackTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("learning_feedback_candidate_idx").on(table.candidateId)],
+);
+
+export const LearningPromotionAttemptTable = pgTable(
+  "learning_promotion_attempt",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => LearningCandidateTable.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    status: varchar("status", {
+      enum: ["running", "succeeded", "failed", "superseded"],
+    }).notNull(),
+    errorCode: varchar("error_code", { length: 120 }),
+    error: text("error"),
+    startedAt: timestamp("started_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => [
+    unique().on(table.candidateId, table.attempt),
+    index("learning_promotion_attempt_history_idx").on(
+      table.candidateId,
+      table.attempt,
+    ),
+  ],
 );
 
 export const AutomationTable = pgTable(

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Cpu,
   Loader2,
   Pencil,
   Plus,
@@ -8,6 +9,7 @@ import {
   Server,
   Sparkles,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -39,14 +41,33 @@ type Model = {
   enabled: boolean;
   isDefault: boolean;
   modelKind: "chat" | "embedding";
-  isCurator: boolean;
-  isEmbeddingDefault: boolean;
   embeddingDimensions: number | null;
   capabilities: {
     toolCalls: boolean;
     vision: boolean;
     structuredOutput: boolean;
   };
+};
+type EngineModel = {
+  id: string;
+  provider: string;
+  name: string;
+  modelKind: "chat" | "embedding";
+  capabilities: Model["capabilities"];
+  contextWindow: number;
+};
+type SystemEngine = {
+  key: string;
+  label: string;
+  description: string;
+  category: "background" | "auxiliary" | "vector";
+  modelKind: "chat" | "embedding";
+  requiredCapabilities: Partial<Model["capabilities"]>;
+  assignedModelId: string | null;
+  effectiveModel: EngineModel | null;
+  candidates: EngineModel[];
+  isFallback: boolean;
+  warning: string | null;
 };
 const providerTypes = [
   "openai",
@@ -75,6 +96,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export function ModelSettingsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<Model[]>([]);
+  const [engines, setEngines] = useState<SystemEngine[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingProviderId, setTestingProviderId] = useState<string | null>(
@@ -84,6 +106,7 @@ export function ModelSettingsPage() {
     null,
   );
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [savingEngineKey, setSavingEngineKey] = useState<string | null>(null);
   const [providerForm, setProviderForm] = useState({
     name: "",
     type: "openai-compatible",
@@ -103,19 +126,19 @@ export function ModelSettingsPage() {
     enabled: true,
     isDefault: false,
     modelKind: "chat" as "chat" | "embedding",
-    isCurator: false,
-    isEmbeddingDefault: false,
     embeddingDimensions: 1536,
   });
   const load = async () => {
     setLoading(true);
     try {
-      const [nextProviders, nextModels] = await Promise.all([
+      const [nextProviders, nextModels, nextEngines] = await Promise.all([
         request<Provider[]>("/api/admin/model-settings/providers"),
         request<Model[]>("/api/admin/model-settings/models"),
+        request<SystemEngine[]>("/api/admin/model-settings/engines"),
       ]);
       setProviders(nextProviders);
       setModels(nextModels);
+      setEngines(nextEngines);
       setModelForm((state) => ({
         ...state,
         providerId: state.providerId || nextProviders[0]?.id || "",
@@ -247,6 +270,30 @@ export function ModelSettingsPage() {
       setTestingProviderId(null);
     }
   };
+  const saveEngine = async (engineKey: string, modelId: string | null) => {
+    setSavingEngineKey(engineKey);
+    try {
+      const updated = await request<SystemEngine>(
+        "/api/admin/model-settings/engines",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ engineKey, modelId }),
+        },
+      );
+      setEngines((items) =>
+        items.map((engine) =>
+          engine.key === updated.key ? updated : engine,
+        ),
+      );
+      toast.success(`${updated.label} model updated.`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update engine",
+      );
+    } finally {
+      setSavingEngineKey(null);
+    }
+  };
   const editProvider = (provider: Provider) => {
     setEditingProviderId(provider.id);
     setProviderForm({
@@ -271,8 +318,6 @@ export function ModelSettingsPage() {
       enabled: model.enabled,
       isDefault: model.isDefault,
       modelKind: model.modelKind,
-      isCurator: model.isCurator,
-      isEmbeddingDefault: model.isEmbeddingDefault,
       embeddingDimensions: model.embeddingDimensions || 1536,
     });
   };
@@ -299,6 +344,10 @@ export function ModelSettingsPage() {
           <TabsTrigger value="models">
             <Sparkles className="mr-2 size-4" />
             Models
+          </TabsTrigger>
+          <TabsTrigger value="engines">
+            <Cpu className="mr-2 size-4" />
+            System Engines
           </TabsTrigger>
         </TabsList>
         <TabsContent value="providers" className="space-y-6">
@@ -532,7 +581,7 @@ export function ModelSettingsPage() {
                       })
                     }
                   >
-                    <option value="chat">Chat / Curator</option>
+                    <option value="chat">Chat / language model</option>
                     <option value="embedding">Memory embedding</option>
                   </select>
                 </Field>
@@ -628,24 +677,6 @@ export function ModelSettingsPage() {
                       setModelForm({ ...modelForm, isDefault })
                     }
                   />
-                  {modelForm.modelKind === "chat" && (
-                    <Toggle
-                      label="Dedicated curator"
-                      checked={modelForm.isCurator}
-                      onChange={(isCurator) =>
-                        setModelForm({ ...modelForm, isCurator })
-                      }
-                    />
-                  )}
-                  {modelForm.modelKind === "embedding" && (
-                    <Toggle
-                      label="Default embedding"
-                      checked={modelForm.isEmbeddingDefault}
-                      onChange={(isEmbeddingDefault) =>
-                        setModelForm({ ...modelForm, isEmbeddingDefault })
-                      }
-                    />
-                  )}
                 </div>
                 <div className="flex justify-end gap-2">
                   {editingModelId && (
@@ -688,16 +719,6 @@ export function ModelSettingsPage() {
                       {model.isDefault && (
                         <span className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">
                           Default
-                        </span>
-                      )}
-                      {model.isCurator && (
-                        <span className="rounded bg-violet-500/10 px-2 py-0.5 text-xs text-violet-500">
-                          Curator
-                        </span>
-                      )}
-                      {model.isEmbeddingDefault && (
-                        <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-500">
-                          Embedding
                         </span>
                       )}
                     </div>
@@ -745,6 +766,89 @@ export function ModelSettingsPage() {
               ))
             )}
           </section>
+        </TabsContent>
+        <TabsContent value="engines" className="space-y-8">
+          {[
+            ["background", "Background Agents"],
+            ["auxiliary", "Chat Auxiliaries"],
+            ["vector", "Memory Vector"],
+          ].map(([category, label]) => (
+            <section key={category} className="space-y-3">
+              <div>
+                <h2 className="font-medium">{label}</h2>
+                <p className="text-sm text-muted-foreground">
+                  Assign an enabled model to each internal IRIS engine.
+                </p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {engines
+                  .filter((engine) => engine.category === category)
+                  .map((engine) => (
+                    <div key={engine.key} className="rounded-lg border p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-medium">{engine.label}</h3>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {engine.description}
+                          </p>
+                        </div>
+                        <span
+                          className={
+                            engine.isFallback
+                              ? "shrink-0 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-600"
+                              : "shrink-0 rounded bg-emerald-500/10 px-2 py-1 text-xs text-emerald-600"
+                          }
+                        >
+                          {engine.isFallback
+                            ? "Using default fallback"
+                            : "Assigned"}
+                        </span>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        <Label htmlFor={`engine-${engine.key}`}>Model</Label>
+                        <select
+                          id={`engine-${engine.key}`}
+                          className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                          value={engine.assignedModelId ?? ""}
+                          disabled={savingEngineKey === engine.key}
+                          onChange={(event) =>
+                            void saveEngine(
+                              engine.key,
+                              event.target.value || null,
+                            )
+                          }
+                        >
+                          <option value="">Use compatible default</option>
+                          {engine.candidates.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.provider} / {model.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Requires {engine.modelKind}
+                        {engine.requiredCapabilities.toolCalls
+                          ? ", tool calling"
+                          : ""}
+                        {engine.requiredCapabilities.structuredOutput
+                          ? ", structured output"
+                          : ""}
+                        . Effective: {engine.effectiveModel
+                          ? `${engine.effectiveModel.provider} / ${engine.effectiveModel.name}`
+                          : "none"}
+                      </p>
+                      {engine.warning && (
+                        <p className="mt-3 flex gap-2 text-xs text-amber-600">
+                          <TriangleAlert className="mt-0.5 size-3 shrink-0" />
+                          {engine.warning}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </section>
+          ))}
         </TabsContent>
       </Tabs>
     </div>
