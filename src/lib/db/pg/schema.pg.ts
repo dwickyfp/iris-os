@@ -995,6 +995,7 @@ export const AutomationTable = pgTable(
     }).notNull(),
     input: json("input").notNull().$type<Record<string, unknown>>().default({}),
     retryLimit: integer("retry_limit").notNull().default(3),
+    timeoutMs: integer("timeout_ms").notNull().default(300000),
     createdAt: timestamp("created_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -1019,12 +1020,34 @@ export const AutomationRunTable = pgTable(
       .references(() => UserTable.id, { onDelete: "cascade" }),
     idempotencyKey: varchar("idempotency_key", { length: 64 }).notNull(),
     status: varchar("status", {
-      enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+      enum: [
+        "queued",
+        "awaiting_approval",
+        "running",
+        "retry_scheduled",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+      ],
     })
       .notNull()
       .default("queued"),
     scheduledFor: timestamp("scheduled_for").notNull(),
     attempt: integer("attempt").notNull().default(0),
+    approvalStatus: varchar("approval_status", {
+      enum: ["not_required", "pending", "approved", "rejected"],
+    })
+      .notNull()
+      .default("not_required"),
+    approvedBy: uuid("approved_by").references(() => UserTable.id, {
+      onDelete: "set null",
+    }),
+    approvedAt: timestamp("approved_at"),
+    cancelRequestedAt: timestamp("cancel_requested_at"),
+    nextAttemptAt: timestamp("next_attempt_at"),
+    errorCode: varchar("error_code", { length: 120 }),
+    retryable: boolean("retryable").notNull().default(false),
     result: json("result").$type<Record<string, unknown>>(),
     error: text("error"),
     startedAt: timestamp("started_at"),
@@ -1036,6 +1059,36 @@ export const AutomationRunTable = pgTable(
   (table) => [
     unique().on(table.automationId, table.idempotencyKey),
     index("automation_run_history_idx").on(table.automationId, table.createdAt),
+    index("automation_run_delivery_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const AutomationRunAttemptTable = pgTable(
+  "automation_run_attempt",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => AutomationRunTable.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    status: varchar("status", {
+      enum: ["running", "succeeded", "failed", "cancelled", "timed_out"],
+    }).notNull(),
+    result: json("result").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 120 }),
+    error: text("error"),
+    startedAt: timestamp("started_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => [
+    unique().on(table.runId, table.attempt),
+    index("automation_run_attempt_history_idx").on(table.runId, table.attempt),
   ],
 );
 

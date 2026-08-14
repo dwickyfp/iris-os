@@ -12,6 +12,7 @@ export const AutomationCreateSchema = z.object({
   approvalPolicy: z.enum(["always", "destructive_only", "never"]),
   input: z.record(z.string(), z.unknown()).default({}),
   retryLimit: z.number().int().min(0).max(20).default(3),
+  timeoutMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
 });
 
 export const AutomationUpdateSchema = AutomationCreateSchema.partial().extend({

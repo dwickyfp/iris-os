@@ -24,19 +24,20 @@ export async function enqueueAutomationRefresh(automationId: string) {
   );
 }
 
-export async function enqueueAutomationRun(input: {
-  automationId: string;
-  scheduledFor: string;
-  approvalGranted?: boolean;
-}) {
+export async function enqueueAutomationRun(runId: string, delaySeconds = 0) {
   const queue = getBoss();
   if (!queue) return;
   await queue.start();
   await queue.createQueue(AUTOMATION_EXECUTE_QUEUE);
-  await queue.send(AUTOMATION_EXECUTE_QUEUE, input, {
-    singletonKey: `${input.automationId}:${input.scheduledFor}`,
-    retryLimit: 5,
-    retryDelay: 30,
-    expireInHours: 23,
-  });
+  await queue.send(
+    AUTOMATION_EXECUTE_QUEUE,
+    { runId },
+    {
+      singletonKey: `${runId}:${delaySeconds}`,
+      retryLimit: 5,
+      retryDelay: 30,
+      expireInHours: 23,
+      ...(delaySeconds > 0 ? { startAfter: delaySeconds } : {}),
+    },
+  );
 }

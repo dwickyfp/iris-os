@@ -1,120 +1,197 @@
 import type PgBoss from "pg-boss";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { recordActivityEvent } from "lib/activity/service";
+import { createAutomationExecutionAdapter } from "lib/automation/execution-adapter";
 import {
   AUTOMATION_EXECUTE_QUEUE,
   AUTOMATION_REFRESH_QUEUE,
+  enqueueAutomationRun,
 } from "lib/automation/queue";
-import { automationRunKey } from "lib/automation/idempotency";
+import { createDurableAutomationRun } from "lib/automation/service";
 import { pgDb } from "lib/db/pg/db.pg";
-import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
+import {
+  AutomationRunAttemptTable,
+  AutomationRunTable,
+  AutomationTable,
+} from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
-import { workflowRepository } from "lib/db/repository";
-import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 
-type AutomationJob = {
-  automationId: string;
-  scheduledFor: string;
-  approvalGranted?: boolean;
-};
+const executeTarget = createAutomationExecutionAdapter();
 
-async function execute(job: AutomationJob) {
-  const scheduledFor = new Date(job.scheduledFor);
-  const key = automationRunKey(job.automationId, scheduledFor);
-  const [automation] = await pgDb
-    .select()
-    .from(AutomationTable)
-    .where(
-      and(
-        eq(AutomationTable.id, job.automationId),
-        eq(AutomationTable.status, "active"),
-      ),
-    );
-  if (!automation) return;
-  const [run] = await pgDb
-    .insert(AutomationRunTable)
-    .values({
-      id: generateUUID(),
-      automationId: automation.id,
-      userId: automation.userId,
-      idempotencyKey: key,
-      scheduledFor,
-    })
-    .onConflictDoNothing()
-    .returning();
-  if (!run) return;
-  if (automation.approvalPolicy === "always" && !job.approvalGranted) {
+async function execute(runId: string) {
+  const [joined] = await pgDb
+    .select({ run: AutomationRunTable, automation: AutomationTable })
+    .from(AutomationRunTable)
+    .innerJoin(
+      AutomationTable,
+      eq(AutomationRunTable.automationId, AutomationTable.id),
+    )
+    .where(eq(AutomationRunTable.id, runId));
+  if (!joined) return;
+  const { run, automation } = joined;
+  if (
+    !["queued", "retry_scheduled"].includes(run.status) ||
+    automation.status !== "active"
+  )
+    return;
+  if (
+    automation.approvalPolicy !== "never" &&
+    run.approvalStatus !== "approved"
+  )
+    return;
+  if (run.cancelRequestedAt) {
     await pgDb
       .update(AutomationRunTable)
-      .set({
-        status: "failed",
-        error: "Runtime approval required",
-        completedAt: new Date(),
-      })
+      .set({ status: "cancelled", completedAt: new Date() })
       .where(eq(AutomationRunTable.id, run.id));
     return;
   }
-  await pgDb
-    .update(AutomationRunTable)
-    .set({ status: "running", startedAt: new Date(), attempt: 1 })
-    .where(eq(AutomationRunTable.id, run.id));
-  try {
-    if (automation.targetType !== "workflow") {
-      throw new Error(
-        `${automation.targetType} automation adapter is not enabled`,
-      );
-    }
-    if (
-      !(await workflowRepository.checkAccess(
-        automation.targetId,
-        automation.userId,
-      ))
-    )
-      throw new Error("Automation workflow is no longer accessible");
-    const workflow = await workflowRepository.selectStructureById(
-      automation.targetId,
-    );
-    if (!workflow) throw new Error("Automation workflow not found");
-    const executor = createWorkflowExecutor({
-      edges: workflow.edges,
-      nodes: workflow.nodes,
-    });
-    const outcome = await executor.run(automation.input as any, {
-      disableHistory: true,
-      timeout: 300_000,
-    });
-    if (!outcome.isOk) throw outcome.error;
-    await pgDb
+
+  const attempt = run.attempt + 1;
+  const attemptId = generateUUID();
+  const [claimed] = await pgDb.transaction(async (tx) => {
+    const rows = await tx
       .update(AutomationRunTable)
       .set({
-        status: "succeeded",
-        result: { targetType: "workflow", targetId: automation.targetId },
+        status: "running",
+        attempt,
+        startedAt: run.startedAt ?? new Date(),
+        nextAttemptAt: null,
+        error: null,
+        errorCode: null,
+        retryable: false,
+      })
+      .where(
+        and(
+          eq(AutomationRunTable.id, run.id),
+          inArray(AutomationRunTable.status, ["queued", "retry_scheduled"]),
+        ),
+      )
+      .returning();
+    if (!rows[0]) return [];
+    await tx.insert(AutomationRunAttemptTable).values({
+      id: attemptId,
+      runId: run.id,
+      attempt,
+      status: "running",
+    });
+    return rows;
+  });
+  if (!claimed) return;
+
+  await recordActivityEvent(automation.userId, {
+    actorType: "system",
+    scopeType: automation.workspaceId ? "workspace" : "global",
+    scopeId: automation.workspaceId,
+    eventType: "automation.started",
+    subjectType: "automation_run",
+    subjectId: run.id,
+    runId: run.id,
+    payload: { targetType: automation.targetType, attempt },
+    idempotencyKey: `automation.started:${run.id}:${attempt}`,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), automation.timeoutMs);
+  const cancellationPoll = setInterval(() => {
+    void pgDb
+      .select({ cancelRequestedAt: AutomationRunTable.cancelRequestedAt })
+      .from(AutomationRunTable)
+      .where(eq(AutomationRunTable.id, run.id))
+      .then(([current]) => {
+        if (current?.cancelRequestedAt) controller.abort();
+      })
+      .catch(() => undefined);
+  }, 1_000);
+  const result = await executeTarget({
+    runId: run.id,
+    userId: automation.userId,
+    workspaceId: automation.workspaceId ?? undefined,
+    targetType: automation.targetType,
+    targetId: automation.targetId,
+    input: automation.input,
+    timeoutMs: automation.timeoutMs,
+    signal: controller.signal,
+  }).finally(() => {
+    clearTimeout(timeout);
+    clearInterval(cancellationPoll);
+  });
+
+  const retryable =
+    result.status === "timed_out" ||
+    (result.status === "failed" && result.retryable);
+  const retry = retryable && attempt <= automation.retryLimit;
+  const delaySeconds = Math.min(3_600, 30 * 2 ** Math.max(0, attempt - 1));
+  const status = retry
+    ? "retry_scheduled"
+    : result.status === "succeeded"
+      ? "succeeded"
+      : result.status;
+  const error = result.status === "succeeded" ? null : result.message;
+  const errorCode = result.status === "failed" ? result.errorCode : null;
+  const output = result.status === "succeeded" ? result.output : null;
+
+  await pgDb.transaction(async (tx) => {
+    await tx
+      .update(AutomationRunAttemptTable)
+      .set({
+        status: result.status === "failed" ? "failed" : result.status,
+        result: output,
+        error,
+        errorCode,
         completedAt: new Date(),
       })
-      .where(eq(AutomationRunTable.id, run.id));
-  } catch (error) {
-    await pgDb
+      .where(eq(AutomationRunAttemptTable.id, attemptId));
+    await tx
       .update(AutomationRunTable)
       .set({
-        status: "failed",
-        error:
-          error instanceof Error
-            ? error.message.slice(0, 2_000)
-            : String(error),
-        completedAt: new Date(),
+        status,
+        result: output,
+        error,
+        errorCode,
+        retryable,
+        nextAttemptAt: retry
+          ? new Date(Date.now() + delaySeconds * 1_000)
+          : null,
+        completedAt: retry ? null : new Date(),
       })
       .where(eq(AutomationRunTable.id, run.id));
-    throw error;
-  }
+  });
+  if (retry) await enqueueAutomationRun(run.id, delaySeconds);
+
+  const eventType = retry
+    ? "automation.retried"
+    : result.status === "succeeded"
+      ? "automation.completed"
+      : result.status === "cancelled"
+        ? "automation.cancelled"
+        : "automation.failed";
+  await recordActivityEvent(automation.userId, {
+    actorType: "system",
+    scopeType: automation.workspaceId ? "workspace" : "global",
+    scopeId: automation.workspaceId,
+    eventType,
+    subjectType: "automation_run",
+    subjectId: run.id,
+    runId: run.id,
+    payload: {
+      targetType: automation.targetType,
+      attempt,
+      retryable,
+      errorCode,
+    },
+    idempotencyKey: `${eventType}:${run.id}:${attempt}`,
+  });
 }
 
 export async function registerAutomationWorkers(boss: PgBoss) {
   await boss.createQueue(AUTOMATION_EXECUTE_QUEUE);
   await boss.createQueue(AUTOMATION_REFRESH_QUEUE);
-  await boss.work<AutomationJob>(
+  await boss.work<{ runId: string }>(
     AUTOMATION_EXECUTE_QUEUE,
     { batchSize: 4 },
     async (jobs) => {
-      for (const job of jobs) await execute(job.data);
+      for (const job of jobs) await execute(job.data.runId);
     },
   );
   const registered = new Set<string>();
@@ -148,10 +225,9 @@ export async function registerAutomationWorkers(boss: PgBoss) {
       { includeMetadata: true },
       async (jobs) => {
         for (const job of jobs)
-          await execute({
-            automationId: job.data.automationId,
-            scheduledFor: job.createdOn.toISOString(),
-            approvalGranted: false,
+          await createDurableAutomationRun({
+            automation,
+            scheduledFor: job.createdOn,
           });
       },
     );

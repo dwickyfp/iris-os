@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
 import { and, desc, eq } from "drizzle-orm";
-import { enqueueAutomationRun } from "lib/automation/queue";
+import { createDurableAutomationRun } from "lib/automation/service";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
 import { z } from "zod";
@@ -30,13 +30,21 @@ export async function POST(
     );
   if (!automation)
     return Response.json({ error: "Automation not found" }, { status: 404 });
-  const scheduledFor = new Date().toISOString();
-  await enqueueAutomationRun({
-    automationId: automation.id,
+  const scheduledFor = new Date();
+  const run = await createDurableAutomationRun({
+    automation,
     scheduledFor,
-    approvalGranted: input.approvalGranted,
+    approvedBy: input.approvalGranted ? session.user.id : undefined,
   });
-  return Response.json({ queued: true, scheduledFor }, { status: 202 });
+  return Response.json(
+    {
+      queued: run?.status === "queued",
+      runId: run?.id,
+      status: run?.status,
+      scheduledFor: scheduledFor.toISOString(),
+    },
+    { status: 202 },
+  );
 }
 
 export async function GET(

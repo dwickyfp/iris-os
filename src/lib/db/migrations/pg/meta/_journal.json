@@ -211,6 +211,13 @@
       "when": 1786711200000,
       "tag": "0029_activity_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786712400000,
+      "tag": "0030_automation_execution",
+      "breakpoints": true
     }
   ]
 }
