@@ -40,3 +40,36 @@
 ## Security & Configuration Tips
 - Copy `.env.example` to `.env`; never commit secrets. For local HTTP use `NO_HTTPS=1` or `pnpm build:local`.
 - If using DB/Redis locally, start services via Docker scripts or your own stack.
+
+<!-- repo-learning-loop:start -->
+## Repository learning and workstream continuity
+
+This repository uses the Repo Learning Loop plugin.
+
+Before meaningful repository work:
+
+1. Read `.agent/MEMORY.md` and relevant durable notes.
+2. Check `.agent/workstreams/active/` for a matching workstream.
+3. For multi-step work, create or resume a workstream before implementation.
+4. Validate recorded checkpoint state against the current branch, HEAD, and working tree.
+
+During multi-step work:
+
+1. Keep `PLAN.md` aligned with the actual implementation.
+2. Checkpoint only after a semantic step is verified.
+3. Record the exact next action, relevant files, and verification command.
+4. Never overwrite another live session lease without explicit reconciliation.
+
+Before stopping after repository changes:
+
+1. Run applicable verification.
+2. Update the active checkpoint or record a learning review.
+3. Classify durable findings as repository memory, decision, known trap, automation, or skill candidate.
+4. Never publish a generated skill directly; create and evaluate a candidate first.
+
+Before completing or abandoning a workstream:
+
+1. Verify the terminal state.
+2. Extract durable knowledge before archiving transient checkpoint data.
+3. Use two-phase cleanup: archive, then trash, then hard-delete after retention.
+<!-- repo-learning-loop:end -->

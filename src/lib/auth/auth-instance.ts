@@ -13,7 +13,7 @@ import {
 } from "lib/db/pg/schema.pg";
 import { getAuthConfig } from "./config";
 import logger from "logger";
-import { userRepository } from "lib/db/repository";
+import { pgUserRepository as userRepository } from "lib/db/pg/repositories/user-repository.pg";
 import { DEFAULT_USER_ROLE, USER_ROLES } from "app-types/roles";
 import { admin, editor, user, ac } from "./roles";
 
@@ -101,6 +101,9 @@ const options = {
     database: {
       generateId: false,
     },
+  },
+  rateLimit: {
+    enabled: process.env.E2E_DISABLE_AUTH_RATE_LIMIT !== "1",
   },
   account: {
     accountLinking: {

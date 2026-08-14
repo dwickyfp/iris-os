@@ -4,7 +4,6 @@ import {
   generateObject,
   generateText,
   jsonSchema,
-  LanguageModel,
   type UIMessage,
 } from "ai";
 
@@ -46,8 +45,7 @@ export async function getUserId() {
 
 export async function generateTitleFromUserMessageAction({
   message,
-  model,
-}: { message: UIMessage; model: LanguageModel }) {
+}: { message: UIMessage }) {
   const session = await getSession();
   if (!session) {
     throw new Error("Unauthorized");
@@ -55,7 +53,7 @@ export async function generateTitleFromUserMessageAction({
   const prompt = toAny(message.parts?.at(-1))?.text || "unknown";
 
   const { text: title } = await generateText({
-    model,
+    model: await customModelProvider.getEngineModel("thread-title"),
     instructions: CREATE_THREAD_TITLE_PROMPT,
     prompt,
   });

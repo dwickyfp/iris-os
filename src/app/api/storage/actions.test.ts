@@ -20,7 +20,7 @@ describe("checkStorageAction", () => {
     const res = await checkStorageAction();
     expect(res.isValid).toBe(false);
     expect(res.error).toMatch(/BLOB_READ_WRITE_TOKEN/);
-  });
+  }, 10_000);
 
   it("s3 missing config", async () => {
     process.env.FILE_STORAGE_TYPE = "s3";

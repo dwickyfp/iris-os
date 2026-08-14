@@ -8,7 +8,12 @@ export const MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024;
 export const MAX_SKILL_TOTAL_FILE_SIZE = 50 * 1024 * 1024;
 
 export const SkillVisibilitySchema = z.enum(["private", "readonly"]);
-export const SkillProvenanceSchema = z.enum(["manual", "background_review"]);
+export const SkillProvenanceSchema = z.enum([
+  "manual",
+  "background_review",
+  "generated",
+  "learned",
+]);
 export const SkillNameSchema = z
   .string()
   .min(1)
@@ -169,6 +174,8 @@ export type SkillSummary = {
   compatibility?: string;
   metadata?: SkillMetadata;
   provenance: SkillProvenance;
+  sourceCandidateId?: string;
+  version?: number;
   allowedTools?: string[];
   userId: string;
   visibility: SkillVisibility;

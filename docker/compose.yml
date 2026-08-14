@@ -18,6 +18,44 @@ services:
       - postgres
     restart: unless-stopped
 
+  iris-worker:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      target: worker
+    command:
+      - node
+      - --conditions=react-server
+      - --import
+      - tsx
+      - scripts/iris-worker.ts
+    env_file:
+      - .env
+    networks:
+      - iris-os-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  memory-worker:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      target: worker
+    command:
+      - node
+      - --conditions=react-server
+      - --import
+      - tsx
+      - scripts/memory-worker.ts
+    env_file:
+      - .env
+    networks:
+      - iris-os-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg17
     ports:

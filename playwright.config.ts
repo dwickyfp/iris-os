@@ -1,6 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 import { config } from "dotenv";
 
+// Auth setup creates several isolated sessions from one local IP. Production
+// rate limits remain enabled unless the Playwright harness explicitly opts out.
+process.env.E2E_DISABLE_AUTH_RATE_LIMIT = "1";
+
 // Load environment variables
 if (process.env.CI) {
   config({ path: ".env.test" });

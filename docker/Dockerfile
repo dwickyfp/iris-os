@@ -15,6 +15,24 @@ ENV NEXT_STANDALONE_OUTPUT="true"
 
 RUN pnpm build
 
+FROM node:23-alpine AS worker
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV TZ=Asia/Jakarta
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nodejs /app/package.json /app/pnpm-lock.yaml /app/tsconfig.json ./
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+COPY --from=builder --chown=nextjs:nodejs /app/src ./src
+
+USER nextjs
+
+CMD ["node", "--conditions=react-server", "--import", "tsx", "scripts/iris-worker.ts"]
+
 FROM node:23-alpine AS runner
 
 WORKDIR /app

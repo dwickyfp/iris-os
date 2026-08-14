@@ -2,14 +2,12 @@
 
 import { appStore } from "@/app/store";
 import { useCompletion } from "@ai-sdk/react";
-import { ChatModel } from "app-types/chat";
 import { useCallback, useEffect } from "react";
 import { mutate } from "swr";
 import { safe } from "ts-safe";
 
 export function useGenerateThreadTitle(option: {
   threadId: string;
-  chatModel?: ChatModel;
 }) {
   const { complete, completion } = useCompletion({
     api: "/api/chat/title",
@@ -39,12 +37,12 @@ export function useGenerateThreadTitle(option: {
         };
       });
     },
-    [option.threadId, option.chatModel?.model, option.chatModel?.provider],
+    [option.threadId],
   );
 
   const generateTitle = useCallback(
     (message: string) => {
-      const { threadId, chatModel } = option;
+      const { threadId } = option;
       if (appStore.getState().generatingTitleThreadIds.includes(threadId))
         return;
       appStore.setState((prev) => ({
@@ -56,7 +54,6 @@ export function useGenerateThreadTitle(option: {
           body: {
             message,
             threadId,
-            chatModel: chatModel ?? appStore.getState().chatModel,
           },
         });
       })

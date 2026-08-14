@@ -1,9 +1,10 @@
 import "server-only";
 
-import { LanguageModel, UIMessage, generateText } from "ai";
+import { UIMessage, generateText } from "ai";
 import { eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ChatThreadContextTable } from "lib/db/pg/schema.pg";
+import { customModelProvider } from "lib/ai/models";
 
 const SAFETY_MARGIN = 0.85;
 
@@ -24,12 +25,10 @@ export async function compactContext({
   threadId,
   messages,
   contextWindow,
-  model,
 }: {
   threadId: string;
   messages: UIMessage[];
   contextWindow: number;
-  model: LanguageModel;
 }) {
   const budget = Math.floor(contextWindow * SAFETY_MARGIN);
   if (estimateMessageTokens(messages) <= budget) return messages;
@@ -52,7 +51,7 @@ export async function compactContext({
     .map((message) => `${message.role}: ${textFromMessage(message)}`)
     .join("\n");
   const { text: summary } = await generateText({
-    model,
+    model: await customModelProvider.getEngineModel("context-summary"),
     instructions:
       "Summarize this chat context factually and compactly. Preserve user goals, decisions, constraints, and unresolved questions. Do not mention that you are summarizing.",
     prompt: `${previous?.summary ? `Previous summary:\n${previous.summary}\n\n` : ""}Conversation to compact:\n${source.slice(0, 24_000)}`,

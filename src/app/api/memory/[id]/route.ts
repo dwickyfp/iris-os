@@ -1,11 +1,12 @@
 import { getSession } from "auth/server";
 import { memoryRepository } from "lib/db/repository";
-import { UserMemoryInputSchema } from "app-types/memory";
+import { UserMemoryUpdateSchema } from "app-types/memory";
 import {
   isSafeMemoryContent,
   sanitizeMemoryContent,
 } from "lib/ai/memory/guardrails";
 import { z } from "zod";
+import { resolveMemoryScopeFromRequest } from "lib/ai/memory/scope-server";
 
 export async function PATCH(
   request: Request,
@@ -15,7 +16,8 @@ export async function PATCH(
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const input = UserMemoryInputSchema.partial().parse(await request.json());
+    const input = UserMemoryUpdateSchema.parse(await request.json());
+    const scope = await resolveMemoryScopeFromRequest(session.user.id, request);
     if (
       input.content &&
       !isSafeMemoryContent(sanitizeMemoryContent(input.content))
@@ -30,6 +32,7 @@ export async function PATCH(
           ? { content: sanitizeMemoryContent(input.content) }
           : {}),
       },
+      scope,
     );
     return Response.json(memory);
   } catch (error) {
@@ -41,12 +44,13 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  await memoryRepository.remove((await params).id, session.user.id);
+  const scope = await resolveMemoryScopeFromRequest(session.user.id, request);
+  await memoryRepository.remove((await params).id, session.user.id, scope);
   return new Response(null, { status: 204 });
 }

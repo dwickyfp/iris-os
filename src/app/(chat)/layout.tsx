@@ -13,6 +13,7 @@ import { ChatSessionHost } from "@/components/chat-session-host";
 
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 export default async function ChatLayout({
   children,
 }: { children: React.ReactNode }) {
@@ -33,7 +34,10 @@ export default async function ChatLayout({
             </Suspense>
           }
         />
-        <AppSidebar user={session.user} />
+        <AppSidebar
+          user={session.user}
+          workspacesEnabled={isV2FeatureEnabled("workspaces")}
+        />
         <main className="relative flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <AppHeader />
           <div className="min-h-0 flex-1 overflow-y-auto">

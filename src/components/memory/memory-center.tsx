@@ -12,6 +12,9 @@ import { Button } from "ui/button";
 import { Input } from "ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "ui/tabs";
 import { MemoryGraph } from "./memory-graph";
+import { appStore } from "@/app/store";
+import { useWorkspaces } from "@/hooks/queries/use-workspaces";
+import { filterMemoryGraph } from "./memory-graph-model";
 
 const emptyGraph: MemoryGraphView = {
   nodes: [],
@@ -20,6 +23,18 @@ const emptyGraph: MemoryGraphView = {
 };
 
 export function MemoryCenter() {
+  const activeWorkspaceId = appStore((state) => state.activeWorkspaceId);
+  const { data: workspaces = [] } = useWorkspaces();
+  const activeWorkspace = workspaces.find(
+    (workspace) => workspace.id === activeWorkspaceId,
+  );
+  const scopeQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      scopeType: activeWorkspaceId ? "workspace" : "global",
+    });
+    if (activeWorkspaceId) params.set("scopeId", activeWorkspaceId);
+    return params.toString();
+  }, [activeWorkspaceId]);
   const [memories, setMemories] = useState<UserMemory[]>([]);
   const [graph, setGraph] = useState<MemoryGraphView>(emptyGraph);
   const [conflicts, setConflicts] = useState<MemoryConflict[]>([]);
@@ -36,43 +51,36 @@ export function MemoryCenter() {
   const load = useCallback(async () => {
     const [memoryResponse, graphResponse, conflictResponse, activityResponse] =
       await Promise.all([
-        fetch("/api/memory"),
-        fetch("/api/memory/graph"),
-        fetch("/api/memory/conflicts"),
-        fetch("/api/memory/activity"),
+        fetch(`/api/memory?${scopeQuery}`),
+        fetch(`/api/memory/graph?${scopeQuery}`),
+        fetch(`/api/memory/conflicts?${scopeQuery}`),
+        fetch(`/api/memory/activity?${scopeQuery}`),
       ]);
     if (memoryResponse.ok) setMemories(await memoryResponse.json());
     if (graphResponse.ok) setGraph(await graphResponse.json());
     if (conflictResponse.ok) setConflicts(await conflictResponse.json());
     if (activityResponse.ok) setActivity(await activityResponse.json());
-  }, []);
+  }, [scopeQuery]);
   useEffect(() => {
     void load();
   }, [load]);
 
   const visibleGraph = useMemo(() => {
-    const query = search.toLocaleLowerCase("id-ID");
-    const nodes = graph.nodes.filter(
-      (node) =>
-        node.confidence >= minimumConfidence &&
-        (!query || node.label.toLocaleLowerCase("id-ID").includes(query)),
-    );
-    const ids = new Set(nodes.map((node) => node.id));
-    return {
-      ...graph,
-      nodes,
-      edges: graph.edges.filter(
-        (edge) => ids.has(edge.sourceId) && ids.has(edge.targetId),
-      ),
-    };
+    return filterMemoryGraph(graph, search, minimumConfidence);
   }, [graph, minimumConfidence, search]);
 
   async function add() {
     if (!content.trim()) return;
-    const response = await fetch("/api/memory", {
+    const response = await fetch(`/api/memory?${scopeQuery}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "preference", content, confidence: 1 }),
+      body: JSON.stringify({
+        kind: "preference",
+        content,
+        confidence: 1,
+        scopeType: activeWorkspaceId ? "workspace" : "global",
+        scopeId: activeWorkspaceId,
+      }),
     });
     if (response.ok) {
       setContent("");
@@ -80,14 +88,16 @@ export function MemoryCenter() {
     }
   }
   async function forget(id: string) {
-    await fetch(`/api/memory/${id}`, { method: "DELETE" });
+    await fetch(`/api/memory/${id}?${scopeQuery}`, { method: "DELETE" });
     await load();
   }
   async function inspect(node: MemoryNode) {
     setSelected(node);
     const [expanded, source] = await Promise.all([
-      fetch(`/api/memory/graph/${node.id}?depth=1`),
-      fetch(`/api/memory/${node.id}/provenance?type=${node.type}`),
+      fetch(`/api/memory/graph/${node.id}?depth=1&${scopeQuery}`),
+      fetch(
+        `/api/memory/${node.id}/provenance?type=${node.type}&${scopeQuery}`,
+      ),
     ]);
     if (expanded.ok) {
       const next: MemoryGraphView = await expanded.json();
@@ -108,7 +118,7 @@ export function MemoryCenter() {
     if (source.ok) setProvenance(await source.json());
   }
   async function resolve(id: string, resolution: "source" | "target" | "both") {
-    await fetch(`/api/memory/conflicts/${id}/resolve`, {
+    await fetch(`/api/memory/conflicts/${id}/resolve?${scopeQuery}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ resolution }),
@@ -123,6 +133,9 @@ export function MemoryCenter() {
         <p className="text-sm text-muted-foreground">
           Curated knowledge about you, connected to its original evidence and
           kept isolated from every other user.
+        </p>
+        <p className="mt-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          Scope: {activeWorkspace?.name ?? "Global"}
         </p>
       </header>
       <Tabs defaultValue="overview">
@@ -184,7 +197,23 @@ export function MemoryCenter() {
             )}
           </div>
           <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-            <MemoryGraph graph={visibleGraph} onNodeClick={inspect} />
+            <div className="space-y-2">
+              <MemoryGraph
+                graph={visibleGraph}
+                onNodeClick={inspect}
+                scopeLabel={activeWorkspace?.name ?? "Global Memory"}
+              />
+              <div
+                className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
+                aria-label="Memory graph legend"
+              >
+                <Legend color="#f8fafc" label="Scope" />
+                <Legend color="#a78bfa" label="Topic" />
+                <Legend color="#38bdf8" label="Claim" />
+                <Legend color="#34d399" label="Entity" />
+                <Legend color="#fb7185" label="Conflict" />
+              </div>
+            </div>
             <aside className="rounded-xl border p-4">
               <h2 className="font-medium">
                 {selected?.label ?? "Select a topic"}
@@ -330,5 +359,18 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
     </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className="size-2.5 rounded-full border border-black/20"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
   );
 }

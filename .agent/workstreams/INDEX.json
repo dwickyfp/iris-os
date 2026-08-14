@@ -1,0 +1,11 @@
+{
+  "workstreams": [
+    {
+      "id": "iris-v2",
+      "title": "IRIS-OS V2 vertical slices",
+      "status": "active",
+      "path": ".agent/workstreams/active/iris-v2",
+      "updated_at": "2026-08-14T11:26:35.000000+00:00"
+    }
+  ]
+}

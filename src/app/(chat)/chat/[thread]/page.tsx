@@ -19,5 +19,12 @@ export default async function Page({
 
   if (!thread) redirect("/", RedirectType.replace);
 
-  return <ChatBot threadId={threadId} initialMessages={thread.messages} />;
+  return (
+    <ChatBot
+      threadId={threadId}
+      initialMessages={thread.messages}
+      workspaceId={thread.workspaceId ?? null}
+      taskId={thread.taskId ?? null}
+    />
+  );
 }

@@ -8,16 +8,16 @@ import type {
   MemoryKind,
   MemoryNode,
   MemoryProvenance,
+  MemoryScope,
 } from "app-types/memory";
 import type { MemoryGraphAdapter } from "lib/ai/memory/graph-adapter";
 import { customModelProvider } from "lib/ai/models";
 import {
-  classifyMemoryRelation,
-  extractEntityName,
-  inferMemoryTopic,
+  defaultMemoryTopic,
   memoryContentHash,
   normalizeMemoryText,
 } from "lib/ai/memory/curator";
+import { memoryScopeKey } from "lib/ai/memory/scope";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import {
@@ -33,6 +33,20 @@ import {
 
 function confidence(value: number) {
   return Math.max(0, Math.min(100, Math.round(value * 100)));
+}
+
+const GLOBAL_SCOPE: MemoryScope = { scopeType: "global", scopeId: null };
+
+function exactScope(
+  table: { scopeType: any; scopeId: any },
+  scope: MemoryScope,
+) {
+  return and(
+    eq(table.scopeType, scope.scopeType),
+    scope.scopeId === null
+      ? isNull(table.scopeId)
+      : eq(table.scopeId, scope.scopeId),
+  );
 }
 
 function toEdge(row: typeof MemoryEdgeTable.$inferSelect): MemoryEdge {
@@ -72,6 +86,7 @@ async function vectorAvailable() {
 
 async function nodesByIds(
   userId: string,
+  scope: MemoryScope,
   ids?: string[],
 ): Promise<MemoryNode[]> {
   const idFilter = ids?.length ? inArray(UserMemoryTable.id, ids) : undefined;
@@ -88,6 +103,7 @@ async function nodesByIds(
       .where(
         and(
           eq(UserMemoryTable.userId, userId),
+          exactScope(UserMemoryTable, scope),
           idFilter,
           isNull(UserMemoryTable.deletedAt),
         ),
@@ -95,18 +111,35 @@ async function nodesByIds(
     db
       .select()
       .from(MemoryTopicTable)
-      .where(and(eq(MemoryTopicTable.userId, userId), topicFilter)),
+      .where(
+        and(
+          eq(MemoryTopicTable.userId, userId),
+          exactScope(MemoryTopicTable, scope),
+          topicFilter,
+        ),
+      ),
     db
       .select()
       .from(MemoryEntityTable)
-      .where(and(eq(MemoryEntityTable.userId, userId), entityFilter)),
+      .where(
+        and(
+          eq(MemoryEntityTable.userId, userId),
+          exactScope(MemoryEntityTable, scope),
+          entityFilter,
+        ),
+      ),
     db
       .select({
         memoryId: MemoryEvidenceTable.memoryId,
         count: sql<number>`count(*)::int`,
       })
       .from(MemoryEvidenceTable)
-      .where(eq(MemoryEvidenceTable.userId, userId))
+      .where(
+        and(
+          eq(MemoryEvidenceTable.userId, userId),
+          exactScope(MemoryEvidenceTable, scope),
+        ),
+      )
       .groupBy(MemoryEvidenceTable.memoryId),
   ]);
   const evidence = new Map(counts.map((row) => [row.memoryId, row.count]));
@@ -143,7 +176,16 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
     kind: MemoryKind;
     content: string;
     confidence: number;
+    importance?: number;
+    frequency?: number;
+    stability?: number;
+    payload?: Record<string, unknown>;
+    validFrom?: Date;
+    validTo?: Date;
+    observedAt?: Date;
+    expiresAt?: Date;
     provenance: MemoryProvenance;
+    scope?: MemoryScope;
     threadId?: string;
     messageId?: string;
   }): Promise<{ action: string; memoryId: string }>;
@@ -151,57 +193,41 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
     userId: string,
     query: string,
     limit?: number,
+    scope?: MemoryScope,
   ): Promise<{ nodes: MemoryNode[]; paths: string[][] }>;
   activity(
     userId: string,
+    scope?: MemoryScope,
   ): Promise<(typeof MemoryCuratorRunTable.$inferSelect)[]>;
-  sweep(userId: string): Promise<void>;
+  sweep(userId: string, scope?: MemoryScope): Promise<void>;
 } = {
-  async overview(userId) {
-    const topics = await db
-      .select()
-      .from(MemoryTopicTable)
-      .where(
-        and(
-          eq(MemoryTopicTable.userId, userId),
-          eq(MemoryTopicTable.status, "active"),
-        ),
-      )
-      .orderBy(desc(MemoryTopicTable.updatedAt))
-      .limit(100);
-    const topicIds = topics.map((topic) => topic.id);
-    const edges = topicIds.length
+  async overview(userId, scope = GLOBAL_SCOPE) {
+    const nodes = (await nodesByIds(userId, scope))
+      .filter((node) => node.status === "active")
+      .slice(0, 500);
+    const nodeIds = nodes.map((node) => node.id);
+    const edges = nodeIds.length
       ? await db
           .select()
           .from(MemoryEdgeTable)
           .where(
             and(
               eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
               eq(MemoryEdgeTable.status, "active"),
-              or(
-                inArray(MemoryEdgeTable.sourceId, topicIds),
-                inArray(MemoryEdgeTable.targetId, topicIds),
-              ),
+              inArray(MemoryEdgeTable.sourceId, nodeIds),
+              inArray(MemoryEdgeTable.targetId, nodeIds),
             ),
           )
-          .limit(500)
+          .limit(1000)
       : [];
     return {
-      nodes: topics.map((row) => ({
-        id: row.id,
-        type: "topic",
-        label: row.label,
-        status: row.status,
-        confidence: row.confidence / 100,
-        evidenceCount: 0,
-        summary: row.summary,
-        detail: row.detail,
-      })),
+      nodes,
       edges: edges.map(toEdge),
       degradedSemanticSearch: !(await vectorAvailable()),
     };
   },
-  async neighbors(userId, nodeId, depth) {
+  async neighbors(userId, nodeId, depth, scope = GLOBAL_SCOPE) {
     const visited = new Set([nodeId]);
     let frontier = [nodeId];
     const edgeMap = new Map<string, typeof MemoryEdgeTable.$inferSelect>();
@@ -213,6 +239,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
         .where(
           and(
             eq(MemoryEdgeTable.userId, userId),
+            exactScope(MemoryEdgeTable, scope),
             inArray(MemoryEdgeTable.status, ["active", "pending"]),
             or(
               inArray(MemoryEdgeTable.sourceId, frontier),
@@ -233,24 +260,25 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       frontier = next;
     }
     return {
-      nodes: await nodesByIds(userId, [...visited]),
+      nodes: await nodesByIds(userId, scope, [...visited]),
       edges: [...edgeMap.values()].map(toEdge),
       degradedSemanticSearch: !(await vectorAvailable()),
     };
   },
-  async conflicts(userId) {
+  async conflicts(userId, scope = GLOBAL_SCOPE) {
     const edges = await db
       .select()
       .from(MemoryEdgeTable)
       .where(
         and(
           eq(MemoryEdgeTable.userId, userId),
+          exactScope(MemoryEdgeTable, scope),
           eq(MemoryEdgeTable.type, "CONTRADICTS"),
           eq(MemoryEdgeTable.status, "pending"),
         ),
       )
       .orderBy(desc(MemoryEdgeTable.createdAt));
-    const nodes = await nodesByIds(userId, [
+    const nodes = await nodesByIds(userId, scope, [
       ...new Set(edges.flatMap((edge) => [edge.sourceId, edge.targetId])),
     ]);
     const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -262,13 +290,14 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       }),
     );
   },
-  async provenance(userId, nodeId, nodeType = "claim") {
+  async provenance(userId, nodeId, nodeType = "claim", scope = GLOBAL_SCOPE) {
     const evidence = await db
       .select()
       .from(MemoryEvidenceTable)
       .where(
         and(
           eq(MemoryEvidenceTable.userId, userId),
+          exactScope(MemoryEvidenceTable, scope),
           nodeType === "topic"
             ? eq(MemoryEvidenceTable.topicId, nodeId)
             : eq(MemoryEvidenceTable.memoryId, nodeId),
@@ -301,7 +330,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       history,
     };
   },
-  async resolveConflict(userId, edgeId, resolution) {
+  async resolveConflict(userId, edgeId, resolution, scope = GLOBAL_SCOPE) {
     await db.transaction(async (tx) => {
       const [edge] = await tx
         .select()
@@ -310,6 +339,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           and(
             eq(MemoryEdgeTable.id, edgeId),
             eq(MemoryEdgeTable.userId, userId),
+            exactScope(MemoryEdgeTable, scope),
             eq(MemoryEdgeTable.type, "CONTRADICTS"),
           ),
         )
@@ -324,6 +354,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
             and(
               eq(UserMemoryTable.id, loser),
               eq(UserMemoryTable.userId, userId),
+              exactScope(UserMemoryTable, scope),
             ),
           )
           .returning();
@@ -347,11 +378,17 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           and(
             eq(MemoryEdgeTable.id, edgeId),
             eq(MemoryEdgeTable.userId, userId),
+            exactScope(MemoryEdgeTable, scope),
           ),
         );
     });
   },
   async connect(userId, edge) {
+    const endpointIds = [...new Set([edge.sourceId, edge.targetId])];
+    const endpoints = await nodesByIds(userId, edge, endpointIds);
+    if (endpoints.length !== endpointIds.length) {
+      throw new Error("Memory edges cannot cross scopes");
+    }
     await db
       .insert(MemoryEdgeTable)
       .values({
@@ -364,9 +401,10 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       .onConflictDoNothing();
   },
   async curateClaim(input) {
+    const scope = input.scope ?? GLOBAL_SCOPE;
     return db.transaction(async (tx) => {
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${input.userId}))`,
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`${input.userId}:${memoryScopeKey(scope)}`}))`,
       );
       const active = await tx
         .select()
@@ -374,83 +412,52 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
         .where(
           and(
             eq(UserMemoryTable.userId, input.userId),
+            exactScope(UserMemoryTable, scope),
             inArray(UserMemoryTable.status, ["active", "pending"]),
             isNull(UserMemoryTable.deletedAt),
           ),
         )
         .orderBy(desc(UserMemoryTable.updatedAt))
         .limit(500);
-      const related = active
-        .map((row) => ({
-          row,
-          relation: classifyMemoryRelation(row.content, input.content),
-        }))
-        .find((item) => item.relation !== "new");
-      if (related?.relation === "duplicate") {
-        await tx.insert(MemoryEvidenceTable).values({
-          id: generateUUID(),
-          userId: input.userId,
-          memoryId: related.row.id,
-          threadId: input.threadId,
-          messageId: input.messageId,
-          excerpt: input.content,
-          contentHash: memoryContentHash(input.content),
-        });
-        return { action: "duplicate", memoryId: related.row.id };
-      }
-      if (
-        related?.relation === "refinement" &&
-        related.row.provenance === "background_review"
-      ) {
-        const nextContent =
-          input.content.length >= related.row.content.length
-            ? input.content
-            : related.row.content;
-        const [memory] = await tx
-          .update(UserMemoryTable)
-          .set({
-            content: nextContent,
-            confidence: Math.max(
-              related.row.confidence,
-              confidence(input.confidence),
-            ),
-            version: sql`${UserMemoryTable.version} + 1`,
-            updatedAt: new Date(),
+      const duplicate = active.find(
+        (row) =>
+          normalizeMemoryText(row.content) ===
+          normalizeMemoryText(input.content),
+      );
+      if (duplicate) {
+        await tx
+          .insert(MemoryEvidenceTable)
+          .values({
+            id: generateUUID(),
+            userId: input.userId,
+            ...scope,
+            memoryId: duplicate.id,
+            threadId: input.threadId,
+            messageId: input.messageId,
+            excerpt: input.content,
+            contentHash: memoryContentHash(input.content),
           })
-          .where(
-            and(
-              eq(UserMemoryTable.id, related.row.id),
-              eq(UserMemoryTable.userId, input.userId),
-            ),
-          )
-          .returning();
-        await tx.insert(UserMemoryEventTable).values({
-          id: generateUUID(),
-          memoryId: memory.id,
-          userId: input.userId,
-          action: "update",
-          snapshot: memory,
-        });
-        await tx.insert(MemoryEvidenceTable).values({
-          id: generateUUID(),
-          userId: input.userId,
-          memoryId: memory.id,
-          threadId: input.threadId,
-          messageId: input.messageId,
-          excerpt: input.content,
-          contentHash: memoryContentHash(input.content),
-        });
-        return { action: "refinement", memoryId: memory.id };
+          .onConflictDoNothing();
+        return { action: "duplicate", memoryId: duplicate.id };
       }
       const [memory] = await tx
         .insert(UserMemoryTable)
         .values({
           id: generateUUID(),
           userId: input.userId,
+          ...scope,
           kind: input.kind,
           content: input.content,
           confidence: confidence(input.confidence),
-          status: related?.relation === "conflict" ? "pending" : "active",
+          importance: confidence(input.importance ?? 0.5),
+          frequency: input.frequency ?? 1,
+          stability: confidence(input.stability ?? 0.5),
+          payload: input.payload ?? {},
+          validFrom: input.validFrom,
+          validTo: input.validTo,
+          observedAt: input.observedAt ?? new Date(),
+          expiresAt: input.expiresAt,
+          status: "active",
           provenance: input.provenance,
           sourceThreadId: input.threadId,
           sourceMessageId: input.messageId,
@@ -464,21 +471,26 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
         action: "create",
         snapshot: memory,
       });
-      await tx.insert(MemoryEvidenceTable).values({
-        id: generateUUID(),
-        userId: input.userId,
-        memoryId: memory.id,
-        threadId: input.threadId,
-        messageId: input.messageId,
-        excerpt: input.content,
-        contentHash: memoryContentHash(input.content),
-      });
-      const topic = inferMemoryTopic(input.kind, input.content);
+      await tx
+        .insert(MemoryEvidenceTable)
+        .values({
+          id: generateUUID(),
+          userId: input.userId,
+          ...scope,
+          memoryId: memory.id,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          excerpt: input.content,
+          contentHash: memoryContentHash(input.content),
+        })
+        .onConflictDoNothing();
+      const topic = defaultMemoryTopic(input.kind);
       const [topicRow] = await tx
         .insert(MemoryTopicTable)
         .values({
           id: generateUUID(),
           userId: input.userId,
+          ...scope,
           label: topic.label,
           normalizedKey: topic.key,
           summary: input.content.slice(0, 600),
@@ -486,35 +498,21 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           confidence: confidence(input.confidence),
         })
         .onConflictDoUpdate({
-          target: [MemoryTopicTable.userId, MemoryTopicTable.normalizedKey],
+          target: [
+            MemoryTopicTable.userId,
+            MemoryTopicTable.scopeType,
+            MemoryTopicTable.scopeId,
+            MemoryTopicTable.normalizedKey,
+          ],
           set: { updatedAt: new Date() },
         })
         .returning();
-      const entityName = extractEntityName(input.content);
-      const [entity] = entityName
-        ? await tx
-            .insert(MemoryEntityTable)
-            .values({
-              id: generateUUID(),
-              userId: input.userId,
-              name: entityName,
-              normalizedKey: normalizeMemoryText(entityName),
-              confidence: confidence(input.confidence),
-            })
-            .onConflictDoUpdate({
-              target: [
-                MemoryEntityTable.userId,
-                MemoryEntityTable.normalizedKey,
-              ],
-              set: { updatedAt: new Date() },
-            })
-            .returning()
-        : [];
       await tx
         .insert(MemoryEdgeTable)
         .values({
           id: generateUUID(),
           userId: input.userId,
+          ...scope,
           sourceId: memory.id,
           sourceType: "claim",
           targetId: topicRow.id,
@@ -525,47 +523,10 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           provenance: input.provenance,
         })
         .onConflictDoNothing();
-      if (entity)
-        await tx
-          .insert(MemoryEdgeTable)
-          .values({
-            id: generateUUID(),
-            userId: input.userId,
-            sourceId: memory.id,
-            sourceType: "claim",
-            targetId: entity.id,
-            targetType: "entity",
-            type: "RELATED_TO",
-            weight: 90,
-            confidence: confidence(input.confidence),
-            provenance: input.provenance,
-          })
-          .onConflictDoNothing();
-      if (related)
-        await tx
-          .insert(MemoryEdgeTable)
-          .values({
-            id: generateUUID(),
-            userId: input.userId,
-            sourceId: memory.id,
-            sourceType: "claim",
-            targetId: related.row.id,
-            targetType: "claim",
-            type: related.relation === "conflict" ? "CONTRADICTS" : "REFINES",
-            weight: 100,
-            confidence: confidence(input.confidence),
-            provenance: input.provenance,
-            status: related.relation === "conflict" ? "pending" : "active",
-            reason:
-              related.relation === "conflict"
-                ? "Same subject with opposite polarity"
-                : "More specific statement about the same subject",
-          })
-          .onConflictDoNothing();
-      return { action: related?.relation ?? "new", memoryId: memory.id };
+      return { action: "new", memoryId: memory.id };
     });
   },
-  async hybridRecall(userId, query, limit = 8) {
+  async hybridRecall(userId, query, limit = 8, scope = GLOBAL_SCOPE) {
     const terms = normalizeMemoryText(query)
       .split(" ")
       .filter((term) => term.length > 2)
@@ -577,6 +538,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       .where(
         and(
           eq(UserMemoryTable.userId, userId),
+          exactScope(UserMemoryTable, scope),
           eq(UserMemoryTable.status, "active"),
           isNull(UserMemoryTable.deletedAt),
           terms.length
@@ -601,7 +563,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
         const result = await embed({ model: configured.model, value: query });
         const vector = `[${result.embedding.join(",")}]`;
         const semantic = await db.execute<{ node_id: string }>(
-          sql`SELECT node_id FROM memory_embedding WHERE user_id = ${userId} AND model = ${configured.modelId} AND vector_value IS NOT NULL ORDER BY vector_value <=> ${vector}::vector LIMIT ${limit}`,
+          sql`SELECT node_id FROM memory_embedding WHERE user_id = ${userId} AND scope_type = ${scope.scopeType} AND scope_id IS NOT DISTINCT FROM ${scope.scopeId} AND model = ${configured.modelId} AND vector_value IS NOT NULL ORDER BY vector_value <=> ${vector}::vector LIMIT ${limit}`,
         );
         semanticIds = semantic.rows.map((row) => row.node_id);
       }
@@ -615,6 +577,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           .where(
             and(
               eq(UserMemoryTable.userId, userId),
+              exactScope(UserMemoryTable, scope),
               eq(UserMemoryTable.status, "active"),
               inArray(UserMemoryTable.id, semanticIds),
             ),
@@ -634,6 +597,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           .where(
             and(
               eq(UserMemoryTable.userId, userId),
+              exactScope(UserMemoryTable, scope),
               eq(UserMemoryTable.status, "active"),
               isNull(UserMemoryTable.deletedAt),
             ),
@@ -648,6 +612,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           .where(
             and(
               eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
               eq(MemoryEdgeTable.status, "active"),
               or(
                 inArray(MemoryEdgeTable.sourceId, seedIds),
@@ -663,7 +628,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
         ...edges.flatMap((edge) => [edge.sourceId, edge.targetId]),
       ]),
     ];
-    const nodes = (await nodesByIds(userId, ids))
+    const nodes = (await nodesByIds(userId, scope, ids))
       .filter((node) => node.status === "active")
       .slice(0, limit + 4);
     const ranking = Object.fromEntries(
@@ -675,6 +640,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
     await db.insert(MemoryRetrievalAuditTable).values({
       id: generateUUID(),
       userId,
+      ...scope,
       queryHash: createHash("sha256").update(query).digest("hex"),
       seedNodes: seedIds,
       traversalPaths: edges.map((edge) => [edge.sourceId, edge.targetId]),
@@ -693,23 +659,136 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       paths: edges.map((edge) => [edge.sourceId, edge.targetId]),
     };
   },
-  async activity(userId) {
+  async activity(userId, scope = GLOBAL_SCOPE) {
     return db
       .select()
       .from(MemoryCuratorRunTable)
-      .where(eq(MemoryCuratorRunTable.userId, userId))
+      .where(
+        and(
+          eq(MemoryCuratorRunTable.userId, userId),
+          exactScope(MemoryCuratorRunTable, scope),
+        ),
+      )
       .orderBy(desc(MemoryCuratorRunTable.createdAt))
       .limit(100);
   },
-  async sweep(userId) {
+  async sweep(userId, scope = GLOBAL_SCOPE) {
     await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`);
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`${userId}:${memoryScopeKey(scope)}`}))`,
+      );
+      const legacyTopicAliases: Record<
+        string,
+        { key: string; label: string }
+      > = {
+        preference: { key: "preferences.general", label: "Preferensi" },
+        preferences: { key: "preferences.general", label: "Preferensi" },
+        "food-drink": {
+          key: "preferences.food-drink",
+          label: "Preferensi makanan dan minuman",
+        },
+        communication: {
+          key: "preferences.communication",
+          label: "Gaya komunikasi",
+        },
+        goal: { key: "goals", label: "Tujuan" },
+        semantic: { key: "user-facts", label: "Tentang pengguna" },
+      };
+      const existingTopics = await tx
+        .select()
+        .from(MemoryTopicTable)
+        .where(
+          and(
+            eq(MemoryTopicTable.userId, userId),
+            exactScope(MemoryTopicTable, scope),
+            eq(MemoryTopicTable.status, "active"),
+          ),
+        );
+      for (const legacy of existingTopics) {
+        const canonical = legacyTopicAliases[legacy.normalizedKey];
+        if (!canonical) continue;
+        const [target] = await tx
+          .select()
+          .from(MemoryTopicTable)
+          .where(
+            and(
+              eq(MemoryTopicTable.userId, userId),
+              exactScope(MemoryTopicTable, scope),
+              eq(MemoryTopicTable.normalizedKey, canonical.key),
+              eq(MemoryTopicTable.status, "active"),
+              sql`${MemoryTopicTable.id} <> ${legacy.id}`,
+            ),
+          )
+          .limit(1);
+        if (!target) {
+          await tx
+            .update(MemoryTopicTable)
+            .set({
+              normalizedKey: canonical.key,
+              label: canonical.label,
+              updatedAt: new Date(),
+            })
+            .where(eq(MemoryTopicTable.id, legacy.id));
+          continue;
+        }
+        const legacyEdges = await tx
+          .select()
+          .from(MemoryEdgeTable)
+          .where(
+            and(
+              eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
+              eq(MemoryEdgeTable.targetId, legacy.id),
+              eq(MemoryEdgeTable.type, "ABOUT"),
+              eq(MemoryEdgeTable.status, "active"),
+            ),
+          );
+        for (const edge of legacyEdges)
+          await tx
+            .insert(MemoryEdgeTable)
+            .values({
+              id: generateUUID(),
+              userId,
+              ...scope,
+              sourceId: edge.sourceId,
+              sourceType: edge.sourceType,
+              targetId: target.id,
+              targetType: "topic",
+              type: "ABOUT",
+              weight: edge.weight,
+              confidence: edge.confidence,
+              provenance: edge.provenance,
+              reason: "Canonicalized legacy topic",
+            })
+            .onConflictDoNothing();
+        await tx
+          .update(MemoryEdgeTable)
+          .set({
+            status: "superseded",
+            validTo: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
+              eq(MemoryEdgeTable.targetId, legacy.id),
+              eq(MemoryEdgeTable.type, "ABOUT"),
+              eq(MemoryEdgeTable.status, "active"),
+            ),
+          );
+        await tx
+          .update(MemoryTopicTable)
+          .set({ status: "superseded", updatedAt: new Date() })
+          .where(eq(MemoryTopicTable.id, legacy.id));
+      }
       const topics = await tx
         .select()
         .from(MemoryTopicTable)
         .where(
           and(
             eq(MemoryTopicTable.userId, userId),
+            exactScope(MemoryTopicTable, scope),
             eq(MemoryTopicTable.status, "active"),
           ),
         );
@@ -722,11 +801,13 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
             and(
               eq(MemoryEdgeTable.sourceId, UserMemoryTable.id),
               eq(UserMemoryTable.userId, userId),
+              exactScope(UserMemoryTable, scope),
             ),
           )
           .where(
             and(
               eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
               eq(MemoryEdgeTable.targetId, topic.id),
               eq(MemoryEdgeTable.type, "ABOUT"),
               eq(UserMemoryTable.status, "active"),
@@ -746,8 +827,52 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
               and(
                 eq(MemoryTopicTable.id, topic.id),
                 eq(MemoryTopicTable.userId, userId),
+                exactScope(MemoryTopicTable, scope),
               ),
             );
+        else
+          await tx
+            .update(MemoryTopicTable)
+            .set({ status: "superseded", updatedAt: new Date() })
+            .where(eq(MemoryTopicTable.id, topic.id));
+      }
+      const entities = await tx
+        .select()
+        .from(MemoryEntityTable)
+        .where(
+          and(
+            eq(MemoryEntityTable.userId, userId),
+            exactScope(MemoryEntityTable, scope),
+            eq(MemoryEntityTable.status, "active"),
+          ),
+        );
+      for (const entity of entities) {
+        const [reference] = await tx
+          .select({ id: MemoryEdgeTable.id })
+          .from(MemoryEdgeTable)
+          .innerJoin(
+            UserMemoryTable,
+            and(
+              eq(MemoryEdgeTable.sourceId, UserMemoryTable.id),
+              eq(UserMemoryTable.status, "active"),
+              isNull(UserMemoryTable.deletedAt),
+            ),
+          )
+          .where(
+            and(
+              eq(MemoryEdgeTable.userId, userId),
+              exactScope(MemoryEdgeTable, scope),
+              eq(MemoryEdgeTable.targetId, entity.id),
+              eq(MemoryEdgeTable.type, "RELATED_TO"),
+              eq(MemoryEdgeTable.status, "active"),
+            ),
+          )
+          .limit(1);
+        if (!reference)
+          await tx
+            .update(MemoryEntityTable)
+            .set({ status: "superseded", updatedAt: new Date() })
+            .where(eq(MemoryEntityTable.id, entity.id));
       }
     });
   },

@@ -3,7 +3,6 @@ import { smoothStream, streamText } from "ai";
 import { customModelProvider } from "lib/ai/models";
 import { CREATE_THREAD_TITLE_PROMPT } from "lib/ai/prompts";
 import globalLogger from "logger";
-import { ChatModel } from "app-types/chat";
 import { chatRepository } from "lib/db/repository";
 import { getSession } from "auth/server";
 import { colorize } from "consola/utils";
@@ -17,12 +16,7 @@ export async function POST(request: Request) {
   try {
     const json = await request.json();
 
-    const {
-      chatModel,
-      message = "hello",
-      threadId,
-    } = json as {
-      chatModel?: ChatModel;
+    const { message = "hello", threadId } = json as {
       message: string;
       threadId: string;
     };
@@ -32,12 +26,10 @@ export async function POST(request: Request) {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    logger.info(
-      `chatModel: ${chatModel?.provider}/${chatModel?.model}, threadId: ${threadId}`,
-    );
+    logger.info(`system engine: thread-title, threadId: ${threadId}`);
 
     const result = streamText({
-      model: await customModelProvider.getModel(chatModel),
+      model: await customModelProvider.getEngineModel("thread-title"),
       instructions: CREATE_THREAD_TITLE_PROMPT,
       experimental_transform: smoothStream({ chunking: "word" }),
       prompt: message,

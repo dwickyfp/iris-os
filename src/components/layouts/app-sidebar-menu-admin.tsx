@@ -9,7 +9,7 @@ import {
 import { Tooltip } from "ui/tooltip";
 import { SidebarMenuItem } from "ui/sidebar";
 import { SidebarMenuButton } from "ui/sidebar";
-import { Shield, Users } from "lucide-react";
+import { Activity, Shield, Users } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
@@ -28,6 +28,13 @@ const AppSidebarAdmin = () => {
         url: "/admin",
         icon: Users,
         isActive: pathname.startsWith("/admin/users"),
+      },
+      {
+        id: "operations",
+        title: "Operations",
+        url: "/admin/operations",
+        icon: Activity,
+        isActive: pathname.startsWith("/admin/operations"),
       },
     ],
     [t, pathname],
@@ -57,6 +64,7 @@ const AppSidebarAdmin = () => {
                 }}
                 isActive={item.isActive}
               >
+                <item.icon className="size-4" />
                 {item.title}
               </SidebarMenuSubButton>
             </SidebarMenuSubItem>

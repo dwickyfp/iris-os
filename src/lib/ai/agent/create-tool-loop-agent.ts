@@ -72,9 +72,12 @@ export function createToolLoopAgent({
     },
     reasoning: reasoningMode === "auto" ? undefined : { effort: reasoningMode },
     toolApproval: ({ toolCall }) =>
-      requiresToolApproval(toolCall.toolName)
-        ? "user-approval"
-        : "not-applicable",
+      runtimeContext.approvalPolicy === "never"
+        ? "not-applicable"
+        : runtimeContext.approvalPolicy === "always" ||
+            requiresToolApproval(toolCall.toolName)
+          ? "user-approval"
+          : "not-applicable",
     onStepEnd: ({ stepNumber, finishReason, usage }) => {
       logger.info("agent step completed", {
         agentType: runtimeContext.agentType,

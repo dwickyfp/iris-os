@@ -24,6 +24,8 @@ import {
   agentRepository,
   chatRepository,
   skillRepository,
+  taskRepository,
+  workspaceRepository,
 } from "lib/db/repository";
 import globalLogger from "logger";
 
@@ -44,12 +46,38 @@ import {
   buildSkillManifestPrompt,
   createSkillsRuntime,
 } from "lib/ai/skill";
+import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
 import { ImageToolName } from "lib/ai/tools";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { serverFileStorage } from "lib/file-storage";
 import { generateUUID } from "lib/utils";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import {
+  buildWorkspaceInstructionsPrompt,
+  resolveThreadWorkspaceId,
+} from "lib/workspace/context";
+import { workspaceService } from "lib/workspace/server";
+import { buildTaskContextPrompt } from "lib/task/context";
+import { recordActivityEvent } from "lib/activity/service";
+import { isChatCorrection } from "lib/learning/policy";
+import { pgDb } from "lib/db/pg/db.pg";
+import { AgentRunTable } from "lib/db/pg/schema.pg";
+import { and, eq } from "drizzle-orm";
+import { isReadOnlyTool } from "lib/ai/agent/approval-policy";
+import {
+  createDelegateWorkTool,
+  DELEGATE_WORK_TOOL_NAME,
+} from "lib/ai/tools/delegation/delegate-work";
+import {
+  createManageLearningTool,
+  MANAGE_LEARNING_TOOL_NAME,
+} from "lib/ai/tools/background/manage-learning";
+import {
+  createManageAutomationTool,
+  MANAGE_AUTOMATION_TOOL_NAME,
+} from "lib/ai/tools/background/manage-automation";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -90,7 +118,11 @@ export async function POST(request: Request) {
       imageTool,
       mentions = [],
       attachments = [],
+      workspaceId: requestedWorkspaceId,
+      taskId: requestedTaskId,
     } = chatApiSchemaRequestBodySchema.parse(json);
+    const requestId = generateUUID();
+    const runId = generateUUID();
 
     const modelConfig =
       await customModelProvider.getModelConfiguration(chatModel);
@@ -108,13 +140,39 @@ export async function POST(request: Request) {
     }
 
     let thread = await chatRepository.selectThreadDetails(id);
+    const threadExists = Boolean(thread);
+    const resolvedWorkspaceId = resolveThreadWorkspaceId({
+      threadExists,
+      storedWorkspaceId: thread?.workspaceId,
+      requestedWorkspaceId: isV2FeatureEnabled("workspaces")
+        ? requestedWorkspaceId
+        : undefined,
+    });
 
+    const requestedTask = requestedTaskId
+      ? await taskRepository.select(requestedTaskId, session.user.id)
+      : null;
+    if (requestedTaskId && !requestedTask)
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    if (requestedTask && requestedTask.workspaceId !== resolvedWorkspaceId) {
+      return Response.json(
+        { error: "Task and workspace scopes do not match" },
+        { status: 409 },
+      );
+    }
     if (!thread) {
+      if (resolvedWorkspaceId)
+        await workspaceService.resolveRequestedWorkspace(
+          session.user.id,
+          resolvedWorkspaceId,
+        );
       logger.info(`create chat thread: ${id}`);
       const newThread = await chatRepository.insertThread({
         id,
         title: "",
         userId: session.user.id,
+        workspaceId: resolvedWorkspaceId,
+        taskId: requestedTask?.id,
       });
       thread = await chatRepository.selectThreadDetails(newThread.id);
     }
@@ -122,6 +180,16 @@ export async function POST(request: Request) {
     if (thread!.userId !== session.user.id) {
       return new Response("Forbidden", { status: 403 });
     }
+    const workspace =
+      isV2FeatureEnabled("workspaces") && thread?.workspaceId
+        ? await workspaceRepository.selectById(
+            thread.workspaceId,
+            session.user.id,
+          )
+        : null;
+    const task = thread?.taskId
+      ? await taskRepository.select(thread.taskId, session.user.id)
+      : null;
 
     const messages: UIMessage[] = (thread?.messages ?? []).map((m) => {
       return {
@@ -238,6 +306,28 @@ export async function POST(request: Request) {
       chatModel: chatModel,
     };
 
+    void recordActivityEvent(session.user.id, {
+      actorType: "user",
+      scopeType: task
+        ? "task"
+        : workspace
+          ? "workspace"
+          : agent
+            ? "agent"
+            : "global",
+      scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+      eventType: "chat.started",
+      subjectType: "thread",
+      subjectId: thread!.id,
+      payload: { userMessageId: message.id, model: chatModel },
+      requestId,
+      runId,
+      threadId: thread!.id,
+      taskId: task?.id,
+      agentId: agent?.id,
+      idempotencyKey: `chat.started:${message.id}`,
+    }).catch((error) => logger.warn("Unable to record activity", error));
+
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
         const MCP_TOOLS = await safe()
@@ -269,14 +359,46 @@ export async function POST(request: Request) {
             }),
           )
           .orElse({});
-        const skillsRuntime =
-          agent && supportToolCall
-            ? await createSkillsRuntime({
-                repository: skillRepository as AssignedSkillsRepository,
-                agentId: agent.id,
+        const userText = message.parts
+          .filter((part: any) => part.type === "text")
+          .map((part: any) => part.text)
+          .join(" ");
+        const BACKGROUND_CONTROL_TOOLS: Record<string, Tool> = {
+          ...(isV2FeatureEnabled("learning")
+            ? {
+                [MANAGE_LEARNING_TOOL_NAME]: createManageLearningTool({
+                  userId: session.user.id,
+                  userText,
+                }),
+              }
+            : {}),
+          ...(isV2FeatureEnabled("automation")
+            ? {
+                [MANAGE_AUTOMATION_TOOL_NAME]: createManageAutomationTool({
+                  userId: session.user.id,
+                  userText,
+                }),
+              }
+            : {}),
+        };
+        const scopedLearnedSkills =
+          supportToolCall && isV2FeatureEnabled("learning")
+            ? await selectScopedLearnedSkillSummaries({
                 userId: session.user.id,
+                query: userText,
+                workspaceId: workspace?.id,
+                taskId: task?.id,
+                agentId: agent?.id,
               })
-            : { manifest: [], tools: {} };
+            : [];
+        const skillsRuntime = supportToolCall
+          ? await createSkillsRuntime({
+              repository: skillRepository as AssignedSkillsRepository,
+              agentId: agent?.id,
+              userId: session.user.id,
+              additionalSkills: scopedLearnedSkills,
+            })
+          : { manifest: [], tools: {} };
         const inProgressToolParts = extractInProgressToolPart(message);
         if (inProgressToolParts.length) {
           await Promise.all(
@@ -288,6 +410,7 @@ export async function POST(request: Request) {
                     ...MCP_TOOLS,
                     ...WORKFLOW_TOOLS,
                     ...APP_DEFAULT_TOOLS,
+                    ...BACKGROUND_CONTROL_TOOLS,
                   },
                   skillsRuntime.tools,
                 ),
@@ -317,16 +440,20 @@ export async function POST(request: Request) {
 
         const memoryContext = await buildMemoryContext(
           session.user.id,
-          message.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" "),
+          userText,
+          {
+            agentId: agent?.id,
+            workspaceId: workspace?.id,
+            taskId: task?.id,
+          },
         );
         const systemPrompt = mergeSystemPrompt(
           !agent && buildBaseAgentSystemPrompt(),
           buildUserSystemPrompt(session.user, userPreferences, agent),
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
           buildSkillManifestPrompt(skillsRuntime.manifest),
+          workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
+          buildTaskContextPrompt(task),
           memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
@@ -337,6 +464,16 @@ export async function POST(request: Request) {
                 imageTool?.model === "google"
                   ? nanoBananaTool
                   : openaiImageTool,
+            }
+          : {};
+        const DELEGATION_TOOLS: Record<string, Tool> = isV2FeatureEnabled(
+          "delegation",
+        )
+          ? {
+              [DELEGATE_WORK_TOOL_NAME]: createDelegateWorkTool({
+                parentRunId: runId,
+                userId: session.user.id,
+              }),
             }
           : {};
         const vercelAITooles = safe({
@@ -354,12 +491,36 @@ export async function POST(request: Request) {
                 ...bindingTools,
                 ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
                 ...IMAGE_TOOL,
+                ...DELEGATION_TOOLS,
+                ...BACKGROUND_CONTROL_TOOLS,
               },
               skillsRuntime.tools,
             );
           })
           .unwrap();
         metadata.toolCount = Object.keys(vercelAITooles).length;
+        if (isV2FeatureEnabled("delegation")) {
+          await pgDb
+            .insert(AgentRunTable)
+            .values({
+              id: runId,
+              userId: session.user.id,
+              agentId: agent?.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
+              status: "running",
+              context: {
+                requestId,
+                threadId: thread!.id,
+                userMessageId: message.id,
+                approvedDelegationTools:
+                  Object.keys(vercelAITooles).filter(isReadOnlyTool),
+              },
+              allowedTools: Object.keys(vercelAITooles),
+              startedAt: new Date(),
+            })
+            .onConflictDoNothing();
+        }
 
         const allowedMcpTools = Object.values(allowedMcpServers ?? {})
           .map((t) => t.tools)
@@ -385,25 +546,34 @@ export async function POST(request: Request) {
           threadId: thread!.id,
           messages,
           contextWindow: modelConfig.contextWindow,
-          model,
         });
         const modelMessages = await convertToModelMessages(compactedMessages);
         const runtimeContext = agent
           ? createAgentRuntimeContext({
-              requestId: generateUUID(),
+              requestId,
+              runId,
               userId: session.user.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
               threadId: thread!.id,
               agent,
               userRole: (session.user as any).role,
-              toolChoice,
+              toolMode: toolChoice,
+              approvalPolicy:
+                toolChoice === "manual" ? "always" : "destructive_only",
               skills: skillsRuntime.manifest,
             })
           : createBaseAgentRuntimeContext({
-              requestId: generateUUID(),
+              requestId,
+              runId,
               userId: session.user.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
               threadId: thread!.id,
               userRole: (session.user as any).role,
-              toolChoice,
+              toolMode: toolChoice,
+              approvalPolicy:
+                toolChoice === "manual" ? "always" : "destructive_only",
             });
         const result = await createToolLoopAgent({
           profile: agent ? { type: "custom", agent } : { type: "base" },
@@ -432,7 +602,7 @@ export async function POST(request: Request) {
       },
 
       generateId: generateUUID,
-      onEnd: async ({ responseMessage }) => {
+      onEnd: async ({ responseMessage, isAborted, finishReason }) => {
         if (responseMessage.id == message.id) {
           await chatRepository.upsertMessage({
             threadId: thread!.id,
@@ -474,29 +644,133 @@ export async function POST(request: Request) {
             message: responseMessage,
           }),
         ]);
-        void enqueueMemoryReview({
-          id: `${thread!.id}:${responseMessage.id}`,
-          userId: session.user.id,
+        if (!isAborted && finishReason !== "error")
+          void enqueueMemoryReview({
+            id: `${thread!.id}:${responseMessage.id}`,
+            userId: session.user.id,
+            threadId: thread!.id,
+            workspaceId: workspace?.id,
+            taskId: task?.id,
+            assistantMessageId: responseMessage.id,
+            userMessageId: message.id,
+            agentId: agent?.id,
+          }).catch((error) =>
+            logger.warn("Unable to enqueue memory review", error),
+          );
+        const completedUserText = message.parts
+          .filter((part: any) => part.type === "text")
+          .map((part: any) => part.text)
+          .join(" ")
+          .slice(0, 2_000);
+        const chatEventType = isAborted
+          ? "chat.cancelled"
+          : finishReason === "error"
+            ? "chat.failed"
+            : isChatCorrection(completedUserText)
+              ? "chat.correction"
+              : "chat.completed";
+        void recordActivityEvent(session.user.id, {
+          actorType: agent ? "agent" : "system",
+          actorId: agent?.id,
+          scopeType: task
+            ? "task"
+            : workspace
+              ? "workspace"
+              : agent
+                ? "agent"
+                : "global",
+          scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+          eventType: chatEventType,
+          subjectType: "thread",
+          subjectId: thread!.id,
+          payload: {
+            userMessageId: message.id,
+            assistantMessageId: responseMessage.id,
+            model: chatModel,
+            userText: completedUserText,
+          },
+          requestId,
+          runId,
           threadId: thread!.id,
-          assistantMessageId: responseMessage.id,
-          userMessageId: message.id,
+          taskId: task?.id,
           agentId: agent?.id,
-          userText: message.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" ")
-            .slice(0, 8_000),
-          assistantText: responseMessage.parts
-            .filter((part: any) => part.type === "text")
-            .map((part: any) => part.text)
-            .join(" ")
-            .slice(0, 8_000),
-          chatModel,
-        }).catch((error) =>
-          logger.warn("Unable to enqueue memory review", error),
-        );
+          idempotencyKey: `${chatEventType}:${responseMessage.id}`,
+        }).catch((error) => logger.warn("Unable to record activity", error));
+        if (isV2FeatureEnabled("delegation")) {
+          const runStatus = isAborted
+            ? "cancelled"
+            : finishReason === "error"
+              ? "failed"
+              : "succeeded";
+          void pgDb
+            .update(AgentRunTable)
+            .set({
+              status: runStatus,
+              result:
+                runStatus === "succeeded"
+                  ? { assistantMessageId: responseMessage.id }
+                  : null,
+              error:
+                runStatus === "failed"
+                  ? "Chat stream finished with an error"
+                  : null,
+              completedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, runId),
+                eq(AgentRunTable.status, "running"),
+              ),
+            );
+        }
       },
-      onError: handleError,
+      onError: (error) => {
+        const errorMessage = handleError(error);
+        void recordActivityEvent(session.user.id, {
+          actorType: agent ? "agent" : "system",
+          actorId: agent?.id,
+          scopeType: task
+            ? "task"
+            : workspace
+              ? "workspace"
+              : agent
+                ? "agent"
+                : "global",
+          scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+          eventType: "chat.failed",
+          subjectType: "thread",
+          subjectId: thread!.id,
+          payload: {
+            userMessageId: message.id,
+            errorCode: "STREAM_ERROR",
+            message: errorMessage,
+          },
+          requestId,
+          runId,
+          threadId: thread!.id,
+          taskId: task?.id,
+          agentId: agent?.id,
+          idempotencyKey: `chat.failed:${runId}`,
+        }).catch((activityError) =>
+          logger.warn("Unable to record activity", activityError),
+        );
+        if (isV2FeatureEnabled("delegation")) {
+          void pgDb
+            .update(AgentRunTable)
+            .set({
+              status: "failed",
+              error: errorMessage.slice(0, 2_000),
+              completedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, runId),
+                eq(AgentRunTable.status, "running"),
+              ),
+            );
+        }
+        return errorMessage;
+      },
       originalMessages: messages,
     });
 
