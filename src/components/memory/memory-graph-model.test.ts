@@ -22,7 +22,12 @@ function node(
   };
 }
 
-function edge(id: string, sourceId: string, targetId: string): MemoryEdge {
+function edge(
+  id: string,
+  sourceId: string,
+  targetId: string,
+  type: MemoryEdge["type"] = "ABOUT",
+): MemoryEdge {
   return {
     id,
     userId: "user-1",
@@ -32,7 +37,7 @@ function edge(id: string, sourceId: string, targetId: string): MemoryEdge {
     sourceType: "claim",
     targetId,
     targetType: "topic",
-    type: "ABOUT",
+    type,
     weight: 1,
     confidence: 1,
     status: "active",
@@ -49,7 +54,7 @@ function graph(): MemoryGraphView {
     ],
     edges: [
       edge("edge-a", "claim-a", "topic-a"),
-      edge("edge-b", "claim-b", "topic-b"),
+      edge("edge-b", "claim-b", "topic-b", "RELATED_TO"),
     ],
     degradedSemanticSearch: false,
   };
@@ -83,6 +88,16 @@ describe("memory graph model", () => {
 
     expect(model.order).toBe(0);
     expect(model.size).toBe(0);
+  });
+
+  it("uses only Sigma's registered line program for every edge", () => {
+    const model = buildMemoryGraphModel(graph());
+    const edgeTypes = new Set<string>();
+
+    model.forEachEdge((_edge, attributes) => edgeTypes.add(attributes.type));
+
+    expect(edgeTypes).toEqual(new Set(["line"]));
+    expect(model.getEdgeAttribute("edge-b", "color")).toBe("#6ee7b7");
   });
 
   it("keeps direct neighbors when searching so relationship context remains", () => {
