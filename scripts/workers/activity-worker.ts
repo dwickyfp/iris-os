@@ -1,6 +1,17 @@
-import { createHash } from "node:crypto";
 import type PgBoss from "pg-boss";
-import { and, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
+import type { ActivityEventType } from "app-types/activity";
 import {
   ACTIVITY_PROCESS_QUEUE,
   ACTIVITY_SWEEP_QUEUE,
@@ -8,32 +19,22 @@ import {
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   IrisActivityEventTable,
+  LearningCandidateEvidenceTable,
   LearningCandidateTable,
   LearningObservationTable,
+  LearningSettingTable,
+  LearningSuppressionTable,
 } from "lib/db/pg/schema.pg";
+import {
+  extractLearningSignal,
+  isLearningAllowed,
+  learningConfidence,
+  learningSuppressionKey,
+} from "lib/learning/policy";
 import { generateUUID } from "lib/utils";
 
 const CLAIM_MS = 5 * 60 * 1_000;
 const MAX_ATTEMPTS = 8;
-
-function candidateFromEvent(event: typeof IrisActivityEventTable.$inferSelect) {
-  const text = String(event.payload.userText ?? "").trim();
-  if (!text || !/(aku|saya|gue|tolong|jangan|prefer|selalu)/i.test(text))
-    return null;
-  const summary = text.slice(0, 2_000);
-  const suppressionKey = createHash("sha256")
-    .update(
-      `${event.scopeType}:${event.scopeId ?? ""}:${summary.toLowerCase()}`,
-    )
-    .digest("hex");
-  const candidateType =
-    /\b(setiap|tiap|harian|mingguan|jam\s+\d|every)\b/i.test(text)
-      ? ("automation" as const)
-      : /\b(langkah|prosedur|workflow|selalu lakukan|cara untuk)\b/i.test(text)
-        ? ("skill" as const)
-        : ("memory" as const);
-  return { summary, suppressionKey, candidateType };
-}
 
 async function claimEvent(eventId: string) {
   const now = new Date();
@@ -80,8 +81,39 @@ async function processClaimedEvent(
   event: typeof IrisActivityEventTable.$inferSelect,
 ) {
   await pgDb.transaction(async (tx) => {
-    const candidate = candidateFromEvent(event);
-    if (candidate) {
+    const signal = extractLearningSignal({
+      eventType: event.eventType as ActivityEventType,
+      payload: event.payload,
+    });
+    if (signal) {
+      const [storedSettings] = await tx
+        .select()
+        .from(LearningSettingTable)
+        .where(eq(LearningSettingTable.userId, event.userId));
+      const settings = storedSettings ?? {
+        enabled: true,
+        allowedScopes: ["global", "workspace", "task", "agent"] as const,
+        allowedCategories: ["memory", "skill", "automation"] as const,
+      };
+      if (
+        !isLearningAllowed({
+          enabled: settings.enabled,
+          allowedScopes: [...settings.allowedScopes],
+          allowedCategories: [...settings.allowedCategories],
+          scopeType: event.scopeType,
+          candidateType: signal.candidateType,
+        })
+      ) {
+        await markProcessed(tx, event.id);
+        return;
+      }
+      const suppressionKey = learningSuppressionKey({
+        userId: event.userId,
+        scopeType: event.scopeType,
+        scopeId: event.scopeId,
+        candidateType: signal.candidateType,
+        normalizedPattern: signal.normalizedPattern,
+      });
       const [observation] = await tx
         .insert(LearningObservationTable)
         .values({
@@ -90,79 +122,145 @@ async function processClaimedEvent(
           userId: event.userId,
           scopeType: event.scopeType,
           scopeId: event.scopeId,
-          observationType: "durable_statement",
-          summary: candidate.summary,
+          observationType: signal.observationType,
+          summary: signal.summary,
           evidence: { eventId: event.id, threadId: event.threadId },
-          confidence: 72,
+          confidence: learningConfidence(1),
         })
         .onConflictDoUpdate({
           target: [
             LearningObservationTable.eventId,
             LearningObservationTable.observationType,
           ],
-          set: { summary: candidate.summary },
+          set: { summary: signal.summary, confidence: learningConfidence(1) },
         })
         .returning();
       const [suppressed] = await tx
-        .select({ id: LearningCandidateTable.id })
-        .from(LearningCandidateTable)
+        .select({ id: LearningSuppressionTable.id })
+        .from(LearningSuppressionTable)
         .where(
           and(
-            eq(LearningCandidateTable.userId, event.userId),
-            eq(LearningCandidateTable.suppressionKey, candidate.suppressionKey),
-            eq(LearningCandidateTable.status, "ignored"),
+            eq(LearningSuppressionTable.userId, event.userId),
+            eq(LearningSuppressionTable.scopeType, event.scopeType),
+            event.scopeId
+              ? eq(LearningSuppressionTable.scopeId, event.scopeId)
+              : isNull(LearningSuppressionTable.scopeId),
+            eq(LearningSuppressionTable.candidateType, signal.candidateType),
+            eq(LearningSuppressionTable.suppressionKey, suppressionKey),
+            or(
+              isNull(LearningSuppressionTable.expiresAt),
+              gt(LearningSuppressionTable.expiresAt, new Date()),
+            ),
           ),
         )
         .limit(1);
-      if (!suppressed)
+      if (!suppressed) {
+        const [existing] = await tx
+          .select()
+          .from(LearningCandidateTable)
+          .where(
+            and(
+              eq(LearningCandidateTable.userId, event.userId),
+              eq(LearningCandidateTable.suppressionKey, suppressionKey),
+              inArray(LearningCandidateTable.status, [
+                "collecting",
+                "pending",
+                "confirmed",
+              ]),
+            ),
+          )
+          .limit(1);
+        const candidate =
+          existing ??
+          (
+            await tx
+              .insert(LearningCandidateTable)
+              .values({
+                id: generateUUID(),
+                userId: event.userId,
+                observationId: observation.id,
+                scopeType: event.scopeType,
+                scopeId: event.scopeId,
+                candidateType: signal.candidateType,
+                title: signal.summary.slice(0, 240),
+                proposedPayload:
+                  signal.candidateType === "skill"
+                    ? {
+                        name: `learned-${suppressionKey.slice(0, 12)}`,
+                        description: signal.summary.slice(0, 1_024),
+                        body: `# Learned procedure\n\n${signal.summary}`,
+                        allowedTools: [],
+                      }
+                    : signal.candidateType === "automation"
+                      ? {
+                          name: signal.summary.slice(0, 160),
+                          triggerType: "schedule",
+                          cron: "0 9 * * *",
+                          timezone: "UTC",
+                          targetType: "agent",
+                        }
+                      : { kind: "semantic", content: signal.summary },
+                confidence: learningConfidence(1),
+                suppressionKey,
+                status: signal.threshold === 1 ? "pending" : "collecting",
+              })
+              .returning()
+          )[0];
         await tx
-          .insert(LearningCandidateTable)
+          .insert(LearningCandidateEvidenceTable)
           .values({
-            id: generateUUID(),
-            userId: event.userId,
+            candidateId: candidate.id,
             observationId: observation.id,
-            scopeType: event.scopeType,
-            scopeId: event.scopeId,
-            candidateType: candidate.candidateType,
-            title: candidate.summary.slice(0, 240),
-            proposedPayload:
-              candidate.candidateType === "skill"
-                ? {
-                    name: `learned-${candidate.suppressionKey.slice(0, 12)}`,
-                    description: candidate.summary.slice(0, 1_024),
-                    body: `# Learned procedure\n\n${candidate.summary}`,
-                    allowedTools: [],
-                  }
-                : candidate.candidateType === "automation"
-                  ? {
-                      name: candidate.summary.slice(0, 160),
-                      triggerType: "schedule",
-                      cron: "0 9 * * *",
-                      timezone: "UTC",
-                      targetType: "agent",
-                    }
-                  : { kind: "semantic", content: candidate.summary },
-            confidence: 72,
-            suppressionKey: candidate.suppressionKey,
           })
           .onConflictDoNothing();
+        const [{ total }] = await tx
+          .select({ total: count() })
+          .from(LearningCandidateEvidenceTable)
+          .where(eq(LearningCandidateEvidenceTable.candidateId, candidate.id));
+        await tx
+          .update(LearningCandidateTable)
+          .set({
+            evidenceCount: total,
+            confidence: learningConfidence({
+              evidenceCount: total,
+              ageDays: Math.floor(
+                (Date.now() - candidate.firstObservedAt.getTime()) / 86_400_000,
+              ),
+              consistency: 1,
+            }),
+            lastObservedAt: new Date(),
+            status:
+              candidate.status === "collecting" && total >= signal.threshold
+                ? "pending"
+                : candidate.status,
+            updatedAt: new Date(),
+          })
+          .where(eq(LearningCandidateTable.id, candidate.id));
+      }
     }
-    await tx
-      .update(IrisActivityEventTable)
-      .set({
-        processingStatus: "processed",
-        processedAt: new Date(),
-        claimExpiresAt: null,
-        nextAttemptAt: null,
-        lastError: null,
-      })
-      .where(
-        and(
-          eq(IrisActivityEventTable.id, event.id),
-          eq(IrisActivityEventTable.processingStatus, "processing"),
-        ),
-      );
+    await markProcessed(tx, event.id);
   });
+}
+
+async function markProcessed(
+  tx: Parameters<Parameters<typeof pgDb.transaction>[0]>[0],
+  eventId: string,
+) {
+  await tx
+    .update(IrisActivityEventTable)
+    .set({
+      processingStatus: "processed",
+      processedAt: new Date(),
+      claimExpiresAt: null,
+      nextAttemptAt: null,
+      lastError: null,
+    })
+    .where(
+      and(
+        eq(IrisActivityEventTable.id, eventId),
+        eq(IrisActivityEventTable.processingStatus, "processing"),
+      ),
+    );
 }
 
 async function processEvent(eventId: string) {

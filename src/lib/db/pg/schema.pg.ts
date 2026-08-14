@@ -566,7 +566,9 @@ export const MemoryEdgeTable = pgTable(
       .$type<MemoryEdgeType>(),
     weight: integer("weight").notNull().default(100),
     confidence: integer("confidence").notNull().default(80),
-    provenance: varchar("provenance", { enum: ["manual", "background_review"] })
+    provenance: varchar("provenance", {
+      enum: ["manual", "background_review", "generated", "learned"],
+    })
       .notNull()
       .default("background_review")
       .$type<MemoryProvenance>(),
@@ -909,11 +911,25 @@ export const LearningCandidateTable = pgTable(
       .$type<Record<string, unknown>>(),
     confidence: integer("confidence").notNull(),
     status: varchar("status", {
-      enum: ["pending", "processing", "confirmed", "ignored", "superseded"],
+      enum: [
+        "collecting",
+        "pending",
+        "processing",
+        "confirmed",
+        "ignored",
+        "superseded",
+      ],
     })
       .notNull()
       .default("pending"),
     suppressionKey: varchar("suppression_key", { length: 64 }).notNull(),
+    evidenceCount: integer("evidence_count").notNull().default(1),
+    firstObservedAt: timestamp("first_observed_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    lastObservedAt: timestamp("last_observed_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
     promotedType: varchar("promoted_type", { length: 40 }),
     promotedId: uuid("promoted_id"),
     reviewedAt: timestamp("reviewed_at"),
@@ -933,8 +949,83 @@ export const LearningCandidateTable = pgTable(
       "learning_candidate_confidence_check",
       sql`${table.confidence} BETWEEN 0 AND 100`,
     ),
+    check(
+      "learning_candidate_evidence_count_check",
+      sql`${table.evidenceCount} >= 1`,
+    ),
     unique().on(table.userId, table.suppressionKey, table.status),
     index("learning_candidate_inbox_idx").on(table.userId, table.status),
+  ],
+);
+
+export const LearningCandidateEvidenceTable = pgTable(
+  "learning_candidate_evidence",
+  {
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => LearningCandidateTable.id, { onDelete: "cascade" }),
+    observationId: uuid("observation_id")
+      .notNull()
+      .references(() => LearningObservationTable.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.candidateId, table.observationId),
+    index("learning_candidate_evidence_observation_idx").on(
+      table.observationId,
+    ),
+  ],
+);
+
+export const LearningSettingTable = pgTable("learning_setting", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => UserTable.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(true),
+  allowedScopes: json("allowed_scopes")
+    .notNull()
+    .$type<Array<"global" | "workspace" | "task" | "agent">>()
+    .default(["global", "workspace", "task", "agent"]),
+  allowedCategories: json("allowed_categories")
+    .notNull()
+    .$type<Array<"memory" | "skill" | "automation">>()
+    .default(["memory", "skill", "automation"]),
+  retentionDays: integer("retention_days").notNull().default(90),
+  autonomyLevel: integer("autonomy_level").notNull().default(1),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const LearningSuppressionTable = pgTable(
+  "learning_suppression",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    }).notNull(),
+    scopeId: uuid("scope_id"),
+    candidateType: varchar("candidate_type", {
+      enum: ["memory", "skill", "automation"],
+    }).notNull(),
+    suppressionKey: varchar("suppression_key", { length: 64 }).notNull(),
+    reason: varchar("reason", { length: 240 }),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.candidateType,
+      table.suppressionKey,
+    ),
   ],
 );
 
@@ -1294,6 +1385,36 @@ export const SkillFileTable = pgTable(
     unique().on(table.skillId, table.path),
     index("skill_file_skill_id_idx").on(table.skillId),
     check("skill_file_size_check", sql`${table.size} between 0 and 10485760`),
+  ],
+);
+
+export const SkillRevisionTable = pgTable(
+  "skill_revision",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    skillId: uuid("skill_id")
+      .notNull()
+      .references(() => SkillTable.id, { onDelete: "cascade" }),
+    sourceCandidateId: uuid("source_candidate_id").references(
+      () => LearningCandidateTable.id,
+      { onDelete: "set null" },
+    ),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    status: varchar("status", {
+      enum: ["proposed", "approved", "rejected"],
+    }).notNull(),
+    snapshot: json("snapshot").notNull().$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    reviewedAt: timestamp("reviewed_at"),
+  },
+  (table) => [
+    unique().on(table.skillId, table.version),
+    index("skill_revision_history_idx").on(table.skillId, table.version),
   ],
 );
 

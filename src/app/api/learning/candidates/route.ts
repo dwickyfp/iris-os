@@ -1,8 +1,9 @@
 import { getSession } from "auth/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   LearningCandidateTable,
+  LearningCandidateEvidenceTable,
   LearningObservationTable,
 } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
@@ -31,5 +32,31 @@ export async function GET(request: Request) {
       ),
     )
     .orderBy(desc(LearningCandidateTable.createdAt));
-  return Response.json(rows);
+  const candidateIds = rows.map(({ candidate }) => candidate.id);
+  const evidence = candidateIds.length
+    ? await pgDb
+        .select({
+          candidateId: LearningCandidateEvidenceTable.candidateId,
+          observation: LearningObservationTable,
+        })
+        .from(LearningCandidateEvidenceTable)
+        .innerJoin(
+          LearningObservationTable,
+          eq(
+            LearningCandidateEvidenceTable.observationId,
+            LearningObservationTable.id,
+          ),
+        )
+        .where(
+          inArray(LearningCandidateEvidenceTable.candidateId, candidateIds),
+        )
+    : [];
+  return Response.json(
+    rows.map((row) => ({
+      ...row,
+      evidence: evidence
+        .filter((item) => item.candidateId === row.candidate.id)
+        .map((item) => item.observation),
+    })),
+  );
 }

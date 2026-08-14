@@ -5,12 +5,16 @@ import { pgDb } from "lib/db/pg/db.pg";
 import {
   LearningCandidateTable,
   LearningFeedbackTable,
+  LearningSettingTable,
+  LearningSuppressionTable,
+  SkillRevisionTable,
   SkillTable,
   AutomationTable,
 } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
 import { generateUUID } from "lib/utils";
 import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 
 const ReviewSchema = z.object({
   action: z.enum(["confirm", "edit", "ignore", "change_scope"]),
@@ -24,6 +28,8 @@ export async function PATCH(
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isV2FeatureEnabled("learning"))
+    return Response.json({ error: "Not found" }, { status: 404 });
   const input = ReviewSchema.parse(await request.json());
   const candidateId = (await params).id;
   const [candidate] = await pgDb
@@ -142,6 +148,54 @@ export async function PATCH(
     }
 
     await pgDb.transaction(async (tx) => {
+      if (input.action === "ignore") {
+        const [settings] = await tx
+          .select({ retentionDays: LearningSettingTable.retentionDays })
+          .from(LearningSettingTable)
+          .where(eq(LearningSettingTable.userId, session.user.id));
+        const retentionDays = settings?.retentionDays ?? 90;
+        await tx
+          .insert(LearningSuppressionTable)
+          .values({
+            id: generateUUID(),
+            userId: session.user.id,
+            scopeType: candidate.scopeType,
+            scopeId: candidate.scopeId,
+            candidateType: candidate.candidateType,
+            suppressionKey: candidate.suppressionKey,
+            reason: "user_ignored",
+            expiresAt: new Date(Date.now() + retentionDays * 86_400_000),
+          })
+          .onConflictDoUpdate({
+            target: [
+              LearningSuppressionTable.userId,
+              LearningSuppressionTable.scopeType,
+              LearningSuppressionTable.scopeId,
+              LearningSuppressionTable.candidateType,
+              LearningSuppressionTable.suppressionKey,
+            ],
+            set: {
+              reason: "user_ignored",
+              expiresAt: new Date(Date.now() + retentionDays * 86_400_000),
+            },
+          });
+      }
+      if (
+        input.action === "confirm" &&
+        candidate.candidateType === "skill" &&
+        promotedId
+      ) {
+        await tx.insert(SkillRevisionTable).values({
+          id: generateUUID(),
+          skillId: promotedId,
+          sourceCandidateId: candidate.id,
+          userId: session.user.id,
+          version: 1,
+          status: "approved",
+          snapshot: proposed,
+          reviewedAt: new Date(),
+        });
+      }
       await tx.insert(LearningFeedbackTable).values({
         id: generateUUID(),
         candidateId: candidate.id,
