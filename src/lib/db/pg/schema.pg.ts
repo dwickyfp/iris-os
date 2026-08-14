@@ -393,6 +393,10 @@ export const UserMemoryTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "user_memory_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     index("user_memory_user_scope_status_idx").on(
       table.userId,
       table.scopeType,
@@ -455,6 +459,10 @@ export const MemoryTopicTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_topic_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     unique().on(
       table.userId,
       table.scopeType,
@@ -504,6 +512,10 @@ export const MemoryEntityTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_entity_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     unique().on(
       table.userId,
       table.scopeType,
@@ -577,6 +589,10 @@ export const MemoryEdgeTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_edge_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     unique().on(
       table.userId,
       table.scopeType,
@@ -622,6 +638,10 @@ export const MemoryEvidenceTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_evidence_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     index("memory_evidence_user_memory_idx").on(table.userId, table.memoryId),
     index("memory_evidence_user_topic_idx").on(table.userId, table.topicId),
   ],
@@ -657,6 +677,10 @@ export const MemoryEmbeddingTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_embedding_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     unique().on(
       table.userId,
       table.scopeType,
@@ -696,6 +720,10 @@ export const MemoryCuratorRunTable = pgTable(
     completedAt: timestamp("completed_at"),
   },
   (table) => [
+    check(
+      "memory_curator_run_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     index("memory_curator_run_user_idx").on(table.userId, table.createdAt),
   ],
 );
@@ -730,6 +758,10 @@ export const MemoryRetrievalAuditTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "memory_retrieval_audit_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     index("memory_retrieval_audit_user_idx").on(table.userId, table.createdAt),
   ],
 );
@@ -778,6 +810,10 @@ export const IrisActivityEventTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "iris_activity_event_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
     unique().on(table.userId, table.idempotencyKey),
     index("iris_activity_unprocessed_idx").on(
       table.processedAt,
@@ -817,7 +853,17 @@ export const LearningObservationTable = pgTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
   },
-  (table) => [unique().on(table.eventId, table.observationType)],
+  (table) => [
+    check(
+      "learning_observation_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
+    check(
+      "learning_observation_confidence_check",
+      sql`${table.confidence} BETWEEN 0 AND 100`,
+    ),
+    unique().on(table.eventId, table.observationType),
+  ],
 );
 
 export const LearningCandidateTable = pgTable(
@@ -859,6 +905,14 @@ export const LearningCandidateTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "learning_candidate_scope_check",
+      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
+    ),
+    check(
+      "learning_candidate_confidence_check",
+      sql`${table.confidence} BETWEEN 0 AND 100`,
+    ),
     unique().on(table.userId, table.suppressionKey, table.status),
     index("learning_candidate_inbox_idx").on(table.userId, table.status),
   ],

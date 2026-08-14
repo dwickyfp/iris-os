@@ -197,6 +197,13 @@
       "when": 1786698600000,
       "tag": "0027_workspace_purge",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786710000000,
+      "tag": "0028_v2_integrity_hardening",
+      "breakpoints": true
     }
   ]
 }
