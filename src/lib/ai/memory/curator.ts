@@ -51,7 +51,8 @@ export function inferMemoryTopic(kind: MemoryKind, content: string) {
   if (/jawab|respons|bahasa|singkat|detail|format|tone|gaya/.test(normalized))
     return { key: "communication", label: "Gaya komunikasi" };
   if (kind === "goal") return { key: "goals", label: "Tujuan" };
-  if (kind === "fact") return { key: "user-facts", label: "Tentang pengguna" };
+  if (kind === "semantic")
+    return { key: "user-facts", label: "Tentang pengguna" };
   return { key: "preferences", label: "Preferensi" };
 }
 

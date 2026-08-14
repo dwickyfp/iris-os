@@ -56,6 +56,7 @@ type Props = {
   initialMessages: Array<UIMessage>;
   selectedChatModel?: string;
   workspaceId?: string | null;
+  taskId?: string | null;
 };
 
 type ChatSessionProps = Props & {
@@ -81,6 +82,7 @@ export default function ChatBot({
   threadId,
   initialMessages,
   workspaceId,
+  taskId,
 }: Props) {
   const appStoreMutate = appStore((state) => state.mutate);
 
@@ -96,6 +98,9 @@ export default function ChatBot({
           ...(workspaceId !== undefined
             ? { activeWorkspaceId: workspaceId ?? undefined }
             : {}),
+          ...(taskId !== undefined
+            ? { activeTaskId: taskId ?? undefined }
+            : {}),
           chatSessions:
             initialMessages.length > current.initialMessages.length
               ? {
@@ -110,13 +115,14 @@ export default function ChatBot({
         ...(workspaceId !== undefined
           ? { activeWorkspaceId: workspaceId ?? undefined }
           : {}),
+        ...(taskId !== undefined ? { activeTaskId: taskId ?? undefined } : {}),
         chatSessions: {
           ...state.chatSessions,
           [threadId]: { initialMessages },
         },
       };
     });
-  }, [appStoreMutate, initialMessages, threadId, workspaceId]);
+  }, [appStoreMutate, initialMessages, taskId, threadId, workspaceId]);
 
   return null;
 }
@@ -151,6 +157,7 @@ export function ChatSession({
     pendingThreadMention,
     threadImageToolModel,
     activeWorkspaceId,
+    activeTaskId,
   ] = appStore(
     useShallow((state) => [
       state.mutate,
@@ -163,6 +170,7 @@ export function ChatSession({
       state.pendingThreadMention,
       state.threadImageToolModel,
       state.activeWorkspaceId,
+      state.activeTaskId,
     ]),
   );
 
@@ -291,6 +299,7 @@ export function ChatSession({
           },
           attachments,
           workspaceId: latestRef.current.activeWorkspaceId,
+          taskId: latestRef.current.activeTaskId,
         };
         return { body: requestBody };
       },
@@ -323,6 +332,7 @@ export function ChatSession({
     mentions: threadMentions[threadId],
     threadImageToolModel,
     activeWorkspaceId,
+    activeTaskId,
   });
 
   const isLoading = useMemo(

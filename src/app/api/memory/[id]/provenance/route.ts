@@ -1,6 +1,7 @@
 import { MemoryNodeTypeSchema } from "app-types/memory";
 import { getSession } from "auth/server";
 import { memoryGraphRepository } from "lib/db/repository";
+import { resolveMemoryScopeFromRequest } from "lib/ai/memory/scope-server";
 
 export async function GET(
   request: Request,
@@ -14,11 +15,13 @@ export async function GET(
   );
   if (!parsed.success)
     return Response.json({ error: "Invalid node type" }, { status: 400 });
+  const scope = await resolveMemoryScopeFromRequest(session.user.id, request);
   return Response.json(
     await memoryGraphRepository.provenance(
       session.user.id,
       (await params).id,
       parsed.data,
+      scope,
     ),
   );
 }

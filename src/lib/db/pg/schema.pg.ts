@@ -34,6 +34,7 @@ import type {
   MemoryStatus,
 } from "app-types/memory";
 import type { Workspace, WorkspaceStatus } from "app-types/workspace";
+import type { TaskPriority, TaskStatus } from "app-types/task";
 
 export const WorkspaceTable = pgTable(
   "workspace",
@@ -77,6 +78,134 @@ export const WorkspaceTable = pgTable(
   ],
 );
 
+export const WorkspaceDeletionTombstoneTable = pgTable(
+  "workspace_deletion_tombstone",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    workspaceIdHash: varchar("workspace_id_hash", { length: 64 }).notNull(),
+    userIdHash: varchar("user_id_hash", { length: 64 }).notNull(),
+    sanitizedCounts: json("sanitized_counts")
+      .notNull()
+      .$type<Record<string, number>>()
+      .default({}),
+    deletedAt: timestamp("deleted_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("workspace_tombstone_hash_idx").on(table.workspaceIdHash)],
+);
+
+export const TaskTable = pgTable(
+  "iris_task",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+      onDelete: "set null",
+    }),
+    parentTaskId: uuid("parent_task_id"),
+    assignedAgentId: uuid("assigned_agent_id").references(() => AgentTable.id, {
+      onDelete: "set null",
+    }),
+    title: varchar("title", { length: 240 }).notNull(),
+    description: text("description"),
+    status: varchar("status", {
+      enum: ["planned", "in_progress", "blocked", "completed", "cancelled"],
+    })
+      .notNull()
+      .default("planned")
+      .$type<TaskStatus>(),
+    priority: varchar("priority", {
+      enum: ["low", "normal", "high", "urgent"],
+    })
+      .notNull()
+      .default("normal")
+      .$type<TaskPriority>(),
+    nextAction: text("next_action"),
+    checkpoint: text("checkpoint"),
+    dueAt: timestamp("due_at"),
+    startedAt: timestamp("started_at"),
+    blockedAt: timestamp("blocked_at"),
+    completedAt: timestamp("completed_at"),
+    cancelledAt: timestamp("cancelled_at"),
+    metadata: json("metadata")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("iris_task_user_status_idx").on(table.userId, table.status),
+    index("iris_task_workspace_status_idx").on(table.workspaceId, table.status),
+  ],
+);
+
+export const TaskActivityTable = pgTable(
+  "task_activity",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => TaskTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 80 }).notNull(),
+    payload: json("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("task_activity_task_idx").on(table.taskId, table.createdAt),
+  ],
+);
+
+export const TaskResourceRefTable = pgTable(
+  "task_resource_ref",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => TaskTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    kind: varchar("kind", {
+      enum: [
+        "thread",
+        "file",
+        "artifact",
+        "workflow_run",
+        "tool_run",
+        "repository",
+        "url",
+        "decision",
+      ],
+    }).notNull(),
+    referenceId: text("reference_id").notNull(),
+    label: varchar("label", { length: 240 }),
+    metadata: json("metadata")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [unique().on(table.taskId, table.kind, table.referenceId)],
+);
+
 export const ChatThreadTable = pgTable("chat_thread", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
   title: text("title").notNull(),
@@ -84,6 +213,9 @@ export const ChatThreadTable = pgTable("chat_thread", {
     .notNull()
     .references(() => UserTable.id, { onDelete: "cascade" }),
   workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+    onDelete: "set null",
+  }),
+  taskId: uuid("task_id").references(() => TaskTable.id, {
     onDelete: "set null",
   }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -198,18 +330,45 @@ export const UserMemoryTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
-    kind: varchar("kind", { enum: ["preference", "fact", "goal"] })
+    kind: varchar("kind", {
+      enum: [
+        "identity",
+        "preference",
+        "semantic",
+        "episodic",
+        "decision",
+        "procedure",
+        "operational",
+        "relationship",
+        "goal",
+      ],
+    })
       .notNull()
       .$type<MemoryKind>(),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     content: text("content").notNull(),
     confidence: integer("confidence").notNull().default(100),
+    importance: integer("importance").notNull().default(50),
+    frequency: integer("frequency").notNull().default(1),
+    stability: integer("stability").notNull().default(50),
+    payload: json("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
     status: varchar("status", {
       enum: ["active", "pending", "superseded", "deleted"],
     })
       .notNull()
       .default("active")
       .$type<MemoryStatus>(),
-    provenance: varchar("provenance", { enum: ["manual", "background_review"] })
+    provenance: varchar("provenance", {
+      enum: ["manual", "background_review", "generated", "learned"],
+    })
       .notNull()
       .$type<MemoryProvenance>(),
     sourceThreadId: uuid("source_thread_id").references(
@@ -222,6 +381,9 @@ export const UserMemoryTable = pgTable(
     ),
     version: integer("version").notNull().default(1),
     expiresAt: timestamp("expires_at"),
+    validFrom: timestamp("valid_from"),
+    validTo: timestamp("valid_to"),
+    observedAt: timestamp("observed_at"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at")
       .notNull()
@@ -231,7 +393,12 @@ export const UserMemoryTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
-    index("user_memory_user_status_idx").on(table.userId, table.status),
+    index("user_memory_user_scope_status_idx").on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.status,
+    ),
   ],
 );
 
@@ -263,6 +430,12 @@ export const MemoryTopicTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     label: varchar("label", { length: 160 }).notNull(),
     normalizedKey: varchar("normalized_key", { length: 180 }).notNull(),
     summary: varchar("summary", { length: 600 }).notNull().default(""),
@@ -282,8 +455,18 @@ export const MemoryTopicTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
-    unique().on(table.userId, table.normalizedKey),
-    index("memory_topic_user_status_idx").on(table.userId, table.status),
+    unique().on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.normalizedKey,
+    ),
+    index("memory_topic_user_scope_status_idx").on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.status,
+    ),
   ],
 );
 
@@ -294,6 +477,12 @@ export const MemoryEntityTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     name: varchar("name", { length: 240 }).notNull(),
     normalizedKey: varchar("normalized_key", { length: 260 }).notNull(),
     entityType: varchar("entity_type", { length: 64 })
@@ -315,8 +504,18 @@ export const MemoryEntityTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
-    unique().on(table.userId, table.normalizedKey),
-    index("memory_entity_user_status_idx").on(table.userId, table.status),
+    unique().on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.normalizedKey,
+    ),
+    index("memory_entity_user_scope_status_idx").on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.status,
+    ),
   ],
 );
 
@@ -327,6 +526,12 @@ export const MemoryEdgeTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     sourceId: uuid("source_id").notNull(),
     sourceType: varchar("source_type", { enum: ["topic", "claim", "entity"] })
       .notNull()
@@ -372,7 +577,14 @@ export const MemoryEdgeTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
-    unique().on(table.userId, table.sourceId, table.targetId, table.type),
+    unique().on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.sourceId,
+      table.targetId,
+      table.type,
+    ),
     index("memory_edge_user_source_idx").on(table.userId, table.sourceId),
     index("memory_edge_user_target_idx").on(table.userId, table.targetId),
   ],
@@ -385,6 +597,12 @@ export const MemoryEvidenceTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     memoryId: uuid("memory_id").references(() => UserMemoryTable.id, {
       onDelete: "cascade",
     }),
@@ -417,6 +635,12 @@ export const MemoryEmbeddingTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     nodeId: uuid("node_id").notNull(),
     nodeType: varchar("node_type", { enum: ["topic", "claim", "entity"] })
       .notNull()
@@ -433,7 +657,13 @@ export const MemoryEmbeddingTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
-    unique().on(table.userId, table.nodeId, table.model),
+    unique().on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.nodeId,
+      table.model,
+    ),
     index("memory_embedding_user_idx").on(table.userId),
   ],
 );
@@ -445,6 +675,12 @@ export const MemoryCuratorRunTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     jobType: varchar("job_type", {
       enum: ["extract", "curate", "sweep", "reembed"],
     }).notNull(),
@@ -471,6 +707,12 @@ export const MemoryRetrievalAuditTable = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
     queryHash: varchar("query_hash", { length: 64 }).notNull(),
     seedNodes: json("seed_nodes").notNull().$type<string[]>().default([]),
     traversalPaths: json("traversal_paths")
@@ -490,6 +732,305 @@ export const MemoryRetrievalAuditTable = pgTable(
   (table) => [
     index("memory_retrieval_audit_user_idx").on(table.userId, table.createdAt),
   ],
+);
+
+export const IrisActivityEventTable = pgTable(
+  "iris_activity_event",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    actorType: varchar("actor_type", {
+      enum: ["user", "agent", "system"],
+    }).notNull(),
+    actorId: varchar("actor_id", { length: 160 }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    })
+      .notNull()
+      .default("global"),
+    scopeId: uuid("scope_id"),
+    eventType: varchar("event_type", { length: 120 }).notNull(),
+    subjectType: varchar("subject_type", { length: 80 }).notNull(),
+    subjectId: varchar("subject_id", { length: 200 }),
+    payload: json("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    requestId: varchar("request_id", { length: 160 }),
+    runId: varchar("run_id", { length: 160 }),
+    parentRunId: varchar("parent_run_id", { length: 160 }),
+    threadId: uuid("thread_id").references(() => ChatThreadTable.id, {
+      onDelete: "set null",
+    }),
+    taskId: uuid("task_id").references(() => TaskTable.id, {
+      onDelete: "set null",
+    }),
+    agentId: uuid("agent_id").references(() => AgentTable.id, {
+      onDelete: "set null",
+    }),
+    idempotencyKey: varchar("idempotency_key", { length: 240 }).notNull(),
+    processedAt: timestamp("processed_at"),
+    processingAttempts: integer("processing_attempts").notNull().default(0),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.idempotencyKey),
+    index("iris_activity_unprocessed_idx").on(
+      table.processedAt,
+      table.createdAt,
+    ),
+    index("iris_activity_scope_idx").on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const LearningObservationTable = pgTable(
+  "learning_observation",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => IrisActivityEventTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    }).notNull(),
+    scopeId: uuid("scope_id"),
+    observationType: varchar("observation_type", { length: 80 }).notNull(),
+    summary: text("summary").notNull(),
+    evidence: json("evidence")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    confidence: integer("confidence").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [unique().on(table.eventId, table.observationType)],
+);
+
+export const LearningCandidateTable = pgTable(
+  "learning_candidate",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    observationId: uuid("observation_id")
+      .notNull()
+      .references(() => LearningObservationTable.id, { onDelete: "cascade" }),
+    scopeType: varchar("scope_type", {
+      enum: ["global", "workspace", "task", "agent"],
+    }).notNull(),
+    scopeId: uuid("scope_id"),
+    candidateType: varchar("candidate_type", {
+      enum: ["memory", "skill", "automation"],
+    }).notNull(),
+    title: varchar("title", { length: 240 }).notNull(),
+    proposedPayload: json("proposed_payload")
+      .notNull()
+      .$type<Record<string, unknown>>(),
+    confidence: integer("confidence").notNull(),
+    status: varchar("status", {
+      enum: ["pending", "processing", "confirmed", "ignored", "superseded"],
+    })
+      .notNull()
+      .default("pending"),
+    suppressionKey: varchar("suppression_key", { length: 64 }).notNull(),
+    promotedType: varchar("promoted_type", { length: 40 }),
+    promotedId: uuid("promoted_id"),
+    reviewedAt: timestamp("reviewed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.suppressionKey, table.status),
+    index("learning_candidate_inbox_idx").on(table.userId, table.status),
+  ],
+);
+
+export const LearningFeedbackTable = pgTable(
+  "learning_feedback",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => LearningCandidateTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    action: varchar("action", {
+      enum: ["confirm", "edit", "ignore", "change_scope"],
+    }).notNull(),
+    payload: json("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("learning_feedback_candidate_idx").on(table.candidateId)],
+);
+
+export const AutomationTable = pgTable(
+  "automation",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+      onDelete: "set null",
+    }),
+    name: varchar("name", { length: 160 }).notNull(),
+    status: varchar("status", { enum: ["active", "paused", "archived"] })
+      .notNull()
+      .default("active"),
+    triggerType: varchar("trigger_type", {
+      enum: ["manual", "schedule"],
+    }).notNull(),
+    cron: varchar("cron", { length: 120 }),
+    timezone: varchar("timezone", { length: 80 }).notNull().default("UTC"),
+    missedRunPolicy: varchar("missed_run_policy", {
+      enum: ["skip", "run_once"],
+    })
+      .notNull()
+      .default("skip"),
+    targetType: varchar("target_type", {
+      enum: ["workflow", "skill", "agent"],
+    }).notNull(),
+    targetId: uuid("target_id").notNull(),
+    approvalPolicy: varchar("approval_policy", {
+      enum: ["always", "destructive_only", "never"],
+    }).notNull(),
+    input: json("input").notNull().$type<Record<string, unknown>>().default({}),
+    retryLimit: integer("retry_limit").notNull().default(3),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("automation_user_status_idx").on(table.userId, table.status),
+  ],
+);
+
+export const AutomationRunTable = pgTable(
+  "automation_run",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    automationId: uuid("automation_id")
+      .notNull()
+      .references(() => AutomationTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    idempotencyKey: varchar("idempotency_key", { length: 64 }).notNull(),
+    status: varchar("status", {
+      enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    scheduledFor: timestamp("scheduled_for").notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    result: json("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.automationId, table.idempotencyKey),
+    index("automation_run_history_idx").on(table.automationId, table.createdAt),
+  ],
+);
+
+export const AgentRunTable = pgTable(
+  "agent_run",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").references(() => AgentTable.id, {
+      onDelete: "set null",
+    }),
+    parentRunId: uuid("parent_run_id"),
+    workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+      onDelete: "set null",
+    }),
+    taskId: uuid("task_id").references(() => TaskTable.id, {
+      onDelete: "set null",
+    }),
+    status: varchar("status", {
+      enum: [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    context: json("context")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    allowedTools: json("allowed_tools").notNull().$type<string[]>().default([]),
+    timeoutMs: integer("timeout_ms").notNull().default(300000),
+    result: json("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+    cancelRequestedAt: timestamp("cancel_requested_at"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("agent_run_parent_idx").on(table.parentRunId)],
+);
+
+export const DelegationRunTable = pgTable(
+  "delegation_run",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    parentRunId: uuid("parent_run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    childRunId: uuid("child_run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    objective: text("objective").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [unique().on(table.parentRunId, table.childRunId)],
 );
 
 export const AgentTable = pgTable("agent", {
@@ -524,6 +1065,11 @@ export const SkillTable = pgTable(
       .notNull()
       .default("manual")
       .$type<SkillProvenance>(),
+    sourceCandidateId: uuid("source_candidate_id").references(
+      () => LearningCandidateTable.id,
+      { onDelete: "set null" },
+    ),
+    version: integer("version").notNull().default(1),
     allowedTools: json("allowed_tools").$type<string[]>(),
     userId: uuid("user_id")
       .notNull()

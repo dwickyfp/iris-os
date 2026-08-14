@@ -30,6 +30,7 @@ export interface AppState {
   currentThreadId: ChatThread["id"] | null;
   activeChatSessionId: string | null;
   activeWorkspaceId?: string;
+  activeTaskId?: string;
   toolChoice: "auto" | "none" | "manual";
   allowedMcpServers?: Record<string, AllowedMCPServer>;
   allowedAppDefaultToolkit?: AppDefaultToolkit[];
@@ -93,6 +94,7 @@ const initialState: AppState = {
   currentThreadId: null,
   activeChatSessionId: null,
   activeWorkspaceId: undefined,
+  activeTaskId: undefined,
   toolChoice: "auto",
   allowedMcpServers: undefined,
   openUserSettings: false,
@@ -133,6 +135,7 @@ export const appStore = create<AppState & AppDispatch>()(
         chatModel: state.chatModel || initialState.chatModel,
         toolChoice: state.toolChoice || initialState.toolChoice,
         activeWorkspaceId: state.activeWorkspaceId,
+        activeTaskId: state.activeTaskId,
         allowedMcpServers:
           state.allowedMcpServers || initialState.allowedMcpServers,
         allowedAppDefaultToolkit: (

@@ -37,6 +37,7 @@
     "db:studio": "drizzle-kit studio",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "worker:memory": "node --conditions=react-server --import tsx scripts/memory-worker.ts",
+    "worker:iris": "node --conditions=react-server --import tsx scripts/iris-worker.ts",
     "db:pull": "drizzle-kit pull",
     "db:check": "drizzle-kit check",
     "docker-compose:up": "docker-compose -f docker/compose.yml up -d --build",

@@ -32,6 +32,7 @@ export type ChatThread = {
   title: string;
   userId: string;
   workspaceId?: string | null;
+  taskId?: string | null;
   createdAt: Date;
 };
 
@@ -111,6 +112,7 @@ export const chatApiSchemaRequestBodySchema = z.object({
   allowedAppDefaultToolkit: z.array(z.string()).optional(),
   attachments: z.array(ChatAttachmentSchema).optional(),
   workspaceId: z.string().uuid().optional(),
+  taskId: z.string().uuid().optional(),
 });
 
 export type ChatApiSchemaRequestBody = z.infer<

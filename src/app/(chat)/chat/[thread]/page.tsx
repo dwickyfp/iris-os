@@ -24,6 +24,7 @@ export default async function Page({
       threadId={threadId}
       initialMessages={thread.messages}
       workspaceId={thread.workspaceId ?? null}
+      taskId={thread.taskId ?? null}
     />
   );
 }

@@ -2,9 +2,11 @@ import "load-env";
 import PgBoss from "pg-boss";
 import { embed, generateObject } from "ai";
 import { z } from "zod";
+import type { MemoryScope } from "app-types/memory";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { customModelProvider } from "lib/ai/models";
 import { memoryContentHash } from "lib/ai/memory/curator";
+import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
 import {
   isSafeMemoryContent,
   sanitizeMemoryContent,
@@ -26,7 +28,17 @@ import { memoryGraphRepository } from "lib/db/repository";
 import { generateUUID } from "lib/utils";
 
 const CandidateSchema = z.object({
-  kind: z.enum(["preference", "fact", "goal"]),
+  kind: z.enum([
+    "identity",
+    "preference",
+    "semantic",
+    "episodic",
+    "decision",
+    "procedure",
+    "operational",
+    "relationship",
+    "goal",
+  ]),
   content: z.string().min(1).max(2_000),
   confidence: z.number().min(0).max(1),
 });
@@ -36,6 +48,7 @@ type CurateJob = {
   id: string;
   userId: string;
   threadId: string;
+  workspaceId?: string;
   messageId?: string;
   candidate: Candidate;
 };
@@ -54,12 +67,17 @@ function extractDurableFallback(text: string): Candidate[] {
 async function startRun(
   userId: string,
   jobType: "extract" | "curate" | "sweep" | "reembed",
+  scope: MemoryScope = {
+    scopeType: "global",
+    scopeId: null,
+  },
 ) {
   const [run] = await pgDb
     .insert(MemoryCuratorRunTable)
     .values({
       id: generateUUID(),
       userId,
+      ...scope,
       jobType,
       status: "running",
       stats: {},
@@ -120,6 +138,7 @@ async function extract(job: MemoryReviewJob, boss: PgBoss) {
         id: `${job.id}:${candidate.content}`,
         userId: job.userId,
         threadId: job.threadId,
+        workspaceId: job.workspaceId,
         messageId: job.userMessageId,
         candidate,
       };
@@ -138,7 +157,11 @@ async function extract(job: MemoryReviewJob, boss: PgBoss) {
 }
 
 async function curate(job: CurateJob) {
-  const runId = await startRun(job.userId, "curate");
+  const scope = await resolveOwnedMemoryScope(job.userId, {
+    scopeType: job.workspaceId ? "workspace" : "global",
+    scopeId: job.workspaceId,
+  });
+  const runId = await startRun(job.userId, "curate", scope);
   try {
     const result = await memoryGraphRepository.curateClaim({
       ...job.candidate,
@@ -146,9 +169,10 @@ async function curate(job: CurateJob) {
       provenance: "background_review",
       threadId: job.threadId,
       messageId: job.messageId,
+      scope,
     });
-    await embedNode(job.userId, result.memoryId, job.candidate.content);
-    await memoryGraphRepository.sweep(job.userId);
+    await embedNode(job.userId, result.memoryId, job.candidate.content, scope);
+    await memoryGraphRepository.sweep(job.userId, scope);
     await completeRun(runId, { [result.action]: 1 });
   } catch (error) {
     await completeRun(runId, {}, error);
@@ -156,7 +180,12 @@ async function curate(job: CurateJob) {
   }
 }
 
-async function embedNode(userId: string, nodeId: string, content: string) {
+async function embedNode(
+  userId: string,
+  nodeId: string,
+  content: string,
+  scope: MemoryScope,
+) {
   try {
     const configured = await customModelProvider.getEmbeddingModel();
     if (!configured) return false;
@@ -167,6 +196,7 @@ async function embedNode(userId: string, nodeId: string, content: string) {
       .values({
         id: generateUUID(),
         userId,
+        ...scope,
         nodeId,
         nodeType: "claim",
         model: configured.modelId,
@@ -177,6 +207,8 @@ async function embedNode(userId: string, nodeId: string, content: string) {
       .onConflictDoUpdate({
         target: [
           MemoryEmbeddingTable.userId,
+          MemoryEmbeddingTable.scopeType,
+          MemoryEmbeddingTable.scopeId,
           MemoryEmbeddingTable.nodeId,
           MemoryEmbeddingTable.model,
         ],
@@ -211,6 +243,8 @@ async function reembedAll() {
       id: UserMemoryTable.id,
       userId: UserMemoryTable.userId,
       content: UserMemoryTable.content,
+      scopeType: UserMemoryTable.scopeType,
+      scopeId: UserMemoryTable.scopeId,
     })
     .from(UserMemoryTable)
     .where(
@@ -220,17 +254,25 @@ async function reembedAll() {
       ),
     );
   for (const claim of claims)
-    await embedNode(claim.userId, claim.id, claim.content);
+    await embedNode(claim.userId, claim.id, claim.content, {
+      scopeType: claim.scopeType,
+      scopeId: claim.scopeId,
+    });
 }
 
 async function sweepAll() {
   const users = await pgDb
-    .selectDistinct({ userId: UserMemoryTable.userId })
+    .selectDistinct({
+      userId: UserMemoryTable.userId,
+      scopeType: UserMemoryTable.scopeType,
+      scopeId: UserMemoryTable.scopeId,
+    })
     .from(UserMemoryTable);
-  for (const { userId } of users) {
-    const runId = await startRun(userId, "sweep");
+  for (const { userId, scopeType, scopeId } of users) {
+    const scope = { scopeType, scopeId };
+    const runId = await startRun(userId, "sweep", scope);
     try {
-      await memoryGraphRepository.sweep(userId);
+      await memoryGraphRepository.sweep(userId, scope);
       await completeRun(runId, { topicsUpdated: 1 });
     } catch (error) {
       await completeRun(runId, {}, error);

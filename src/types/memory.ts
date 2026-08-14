@@ -1,6 +1,43 @@
 import { z } from "zod";
 
-export const MemoryKindSchema = z.enum(["preference", "fact", "goal"]);
+export const MemoryKindSchema = z.enum([
+  "identity",
+  "preference",
+  "semantic",
+  "episodic",
+  "decision",
+  "procedure",
+  "operational",
+  "relationship",
+  "goal",
+]);
+export const MemoryScopeTypeSchema = z.enum([
+  "global",
+  "workspace",
+  "task",
+  "agent",
+]);
+export const MemoryScopeSchema = z
+  .object({
+    scopeType: MemoryScopeTypeSchema.default("global"),
+    scopeId: z.string().uuid().nullable().optional(),
+  })
+  .superRefine((scope, context) => {
+    if (scope.scopeType === "global" && scope.scopeId) {
+      context.addIssue({
+        code: "custom",
+        message: "Global memory cannot have a scopeId",
+        path: ["scopeId"],
+      });
+    }
+    if (scope.scopeType !== "global" && !scope.scopeId) {
+      context.addIssue({
+        code: "custom",
+        message: `${scope.scopeType} memory requires a scopeId`,
+        path: ["scopeId"],
+      });
+    }
+  });
 export const MemoryStatusSchema = z.enum([
   "active",
   "pending",
@@ -9,14 +46,29 @@ export const MemoryStatusSchema = z.enum([
 ]);
 export const MemoryProvenanceSchema = z.enum(["manual", "background_review"]);
 
-export const UserMemoryInputSchema = z.object({
+export const UserMemoryBaseInputSchema = z.object({
   kind: MemoryKindSchema,
   content: z.string().min(1).max(2_000),
   confidence: z.number().min(0).max(1).default(1),
+  importance: z.number().min(0).max(1).default(0.5),
+  frequency: z.number().int().min(1).default(1),
+  stability: z.number().min(0).max(1).default(0.5),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  validFrom: z.coerce.date().optional(),
+  validTo: z.coerce.date().optional(),
+  observedAt: z.coerce.date().optional(),
   expiresAt: z.coerce.date().optional(),
 });
+export const UserMemoryInputSchema =
+  UserMemoryBaseInputSchema.and(MemoryScopeSchema);
+export const UserMemoryUpdateSchema = UserMemoryBaseInputSchema.partial();
 
 export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+export type MemoryScopeType = z.infer<typeof MemoryScopeTypeSchema>;
+export type MemoryScope = {
+  scopeType: MemoryScopeType;
+  scopeId: string | null;
+};
 export type MemoryStatus = z.infer<typeof MemoryStatusSchema>;
 export type MemoryProvenance = z.infer<typeof MemoryProvenanceSchema>;
 export type UserMemory = z.infer<typeof UserMemoryInputSchema> & {
@@ -52,7 +104,7 @@ export type MemoryNodeType = z.infer<typeof MemoryNodeTypeSchema>;
 export type MemoryEdgeType = z.infer<typeof MemoryEdgeTypeSchema>;
 export type MemoryGraphStatus = z.infer<typeof MemoryGraphStatusSchema>;
 
-export type MemoryTopic = {
+export type MemoryTopic = MemoryScope & {
   id: string;
   userId: string;
   label: string;
@@ -64,7 +116,7 @@ export type MemoryTopic = {
   updatedAt: Date;
 };
 
-export type MemoryEntity = {
+export type MemoryEntity = MemoryScope & {
   id: string;
   userId: string;
   name: string;
@@ -74,7 +126,7 @@ export type MemoryEntity = {
   status: MemoryGraphStatus;
 };
 
-export type MemoryEdge = {
+export type MemoryEdge = MemoryScope & {
   id: string;
   userId: string;
   sourceId: string;
@@ -88,7 +140,7 @@ export type MemoryEdge = {
   reason?: string;
 };
 
-export type MemoryEvidence = {
+export type MemoryEvidence = MemoryScope & {
   id: string;
   userId: string;
   memoryId?: string;

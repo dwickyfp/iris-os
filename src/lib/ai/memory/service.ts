@@ -1,9 +1,10 @@
 import "server-only";
 
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
-import { ChatMessageSearchTable } from "lib/db/pg/schema.pg";
+import { ChatMessageSearchTable, ChatThreadTable } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
+import { buildRecallScopes } from "./scope";
 import type { UIMessage } from "ai";
 
 const MAX_MEMORY_CHARS = 3_200;
@@ -30,8 +31,25 @@ ${memories}${priorChats ? `\n\nPotentially relevant earlier conversation:\n${pri
 }
 
 /** Retrieves data only. Its output is explicitly marked as untrusted reference material. */
-export async function buildMemoryContext(userId: string, query: string) {
-  const graph = await memoryGraphRepository.hybridRecall(userId, query, 10);
+export async function buildMemoryContext(
+  userId: string,
+  query: string,
+  context: { taskId?: string; agentId?: string; workspaceId?: string } = {},
+) {
+  const recalled = await Promise.all(
+    buildRecallScopes(context).map((scope) =>
+      memoryGraphRepository.hybridRecall(userId, query, 10, scope),
+    ),
+  );
+  const graph = {
+    nodes: recalled
+      .flatMap((result) => result.nodes)
+      .filter(
+        (node, index, nodes) =>
+          nodes.findIndex((candidate) => candidate.id === node.id) === index,
+      )
+      .slice(0, 10),
+  };
 
   const term = query.trim().replace(/[%_]/g, "").slice(0, 160);
   const excerpts =
@@ -42,9 +60,16 @@ export async function buildMemoryContext(userId: string, query: string) {
             threadId: ChatMessageSearchTable.threadId,
           })
           .from(ChatMessageSearchTable)
+          .innerJoin(
+            ChatThreadTable,
+            eq(ChatMessageSearchTable.threadId, ChatThreadTable.id),
+          )
           .where(
             and(
               eq(ChatMessageSearchTable.userId, userId),
+              context.workspaceId
+                ? eq(ChatThreadTable.workspaceId, context.workspaceId)
+                : isNull(ChatThreadTable.workspaceId),
               ilike(ChatMessageSearchTable.content, `%${term}%`),
             ),
           )

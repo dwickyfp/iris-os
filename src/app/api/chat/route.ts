@@ -24,6 +24,7 @@ import {
   agentRepository,
   chatRepository,
   skillRepository,
+  taskRepository,
   workspaceRepository,
 } from "lib/db/repository";
 import globalLogger from "logger";
@@ -57,6 +58,11 @@ import {
   resolveThreadWorkspaceId,
 } from "lib/workspace/context";
 import { workspaceService } from "lib/workspace/server";
+import { buildTaskContextPrompt } from "lib/task/context";
+import { recordActivityEvent } from "lib/activity/service";
+import { pgDb } from "lib/db/pg/db.pg";
+import { AgentRunTable } from "lib/db/pg/schema.pg";
+import { and, eq } from "drizzle-orm";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -98,7 +104,10 @@ export async function POST(request: Request) {
       mentions = [],
       attachments = [],
       workspaceId: requestedWorkspaceId,
+      taskId: requestedTaskId,
     } = chatApiSchemaRequestBodySchema.parse(json);
+    const requestId = generateUUID();
+    const runId = generateUUID();
 
     const modelConfig =
       await customModelProvider.getModelConfiguration(chatModel);
@@ -125,6 +134,17 @@ export async function POST(request: Request) {
         : undefined,
     });
 
+    const requestedTask = requestedTaskId
+      ? await taskRepository.select(requestedTaskId, session.user.id)
+      : null;
+    if (requestedTaskId && !requestedTask)
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    if (requestedTask && requestedTask.workspaceId !== resolvedWorkspaceId) {
+      return Response.json(
+        { error: "Task and workspace scopes do not match" },
+        { status: 409 },
+      );
+    }
     if (!thread) {
       if (resolvedWorkspaceId)
         await workspaceService.resolveRequestedWorkspace(
@@ -137,6 +157,7 @@ export async function POST(request: Request) {
         title: "",
         userId: session.user.id,
         workspaceId: resolvedWorkspaceId,
+        taskId: requestedTask?.id,
       });
       thread = await chatRepository.selectThreadDetails(newThread.id);
     }
@@ -151,6 +172,9 @@ export async function POST(request: Request) {
             session.user.id,
           )
         : null;
+    const task = thread?.taskId
+      ? await taskRepository.select(thread.taskId, session.user.id)
+      : null;
 
     const messages: UIMessage[] = (thread?.messages ?? []).map((m) => {
       return {
@@ -350,6 +374,11 @@ export async function POST(request: Request) {
             .filter((part: any) => part.type === "text")
             .map((part: any) => part.text)
             .join(" "),
+          {
+            agentId: agent?.id,
+            workspaceId: workspace?.id,
+            taskId: task?.id,
+          },
         );
         const systemPrompt = mergeSystemPrompt(
           !agent && buildBaseAgentSystemPrompt(),
@@ -357,6 +386,7 @@ export async function POST(request: Request) {
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
           buildSkillManifestPrompt(skillsRuntime.manifest),
           workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
+          buildTaskContextPrompt(task),
           memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
@@ -390,6 +420,26 @@ export async function POST(request: Request) {
           })
           .unwrap();
         metadata.toolCount = Object.keys(vercelAITooles).length;
+        if (isV2FeatureEnabled("delegation")) {
+          await pgDb
+            .insert(AgentRunTable)
+            .values({
+              id: runId,
+              userId: session.user.id,
+              agentId: agent?.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
+              status: "running",
+              context: {
+                requestId,
+                threadId: thread!.id,
+                userMessageId: message.id,
+              },
+              allowedTools: Object.keys(vercelAITooles),
+              startedAt: new Date(),
+            })
+            .onConflictDoNothing();
+        }
 
         const allowedMcpTools = Object.values(allowedMcpServers ?? {})
           .map((t) => t.tools)
@@ -418,14 +468,13 @@ export async function POST(request: Request) {
           model,
         });
         const modelMessages = await convertToModelMessages(compactedMessages);
-        const requestId = generateUUID();
-        const runId = generateUUID();
         const runtimeContext = agent
           ? createAgentRuntimeContext({
               requestId,
               runId,
               userId: session.user.id,
               workspaceId: workspace?.id,
+              taskId: task?.id,
               threadId: thread!.id,
               agent,
               userRole: (session.user as any).role,
@@ -439,6 +488,7 @@ export async function POST(request: Request) {
               runId,
               userId: session.user.id,
               workspaceId: workspace?.id,
+              taskId: task?.id,
               threadId: thread!.id,
               userRole: (session.user as any).role,
               toolMode: toolChoice,
@@ -472,7 +522,7 @@ export async function POST(request: Request) {
       },
 
       generateId: generateUUID,
-      onEnd: async ({ responseMessage }) => {
+      onEnd: async ({ responseMessage, isAborted, finishReason }) => {
         if (responseMessage.id == message.id) {
           await chatRepository.upsertMessage({
             threadId: thread!.id,
@@ -536,8 +586,84 @@ export async function POST(request: Request) {
         }).catch((error) =>
           logger.warn("Unable to enqueue memory review", error),
         );
+        void recordActivityEvent(session.user.id, {
+          actorType: agent ? "agent" : "system",
+          actorId: agent?.id,
+          scopeType: task
+            ? "task"
+            : workspace
+              ? "workspace"
+              : agent
+                ? "agent"
+                : "global",
+          scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+          eventType: "chat.completed",
+          subjectType: "thread",
+          subjectId: thread!.id,
+          payload: {
+            userMessageId: message.id,
+            assistantMessageId: responseMessage.id,
+            model: chatModel,
+            userText: message.parts
+              .filter((part: any) => part.type === "text")
+              .map((part: any) => part.text)
+              .join(" ")
+              .slice(0, 8_000),
+          },
+          requestId,
+          runId,
+          threadId: thread!.id,
+          taskId: task?.id,
+          agentId: agent?.id,
+          idempotencyKey: `chat.completed:${responseMessage.id}`,
+        }).catch((error) => logger.warn("Unable to record activity", error));
+        if (isV2FeatureEnabled("delegation")) {
+          const runStatus = isAborted
+            ? "cancelled"
+            : finishReason === "error"
+              ? "failed"
+              : "succeeded";
+          void pgDb
+            .update(AgentRunTable)
+            .set({
+              status: runStatus,
+              result:
+                runStatus === "succeeded"
+                  ? { assistantMessageId: responseMessage.id }
+                  : null,
+              error:
+                runStatus === "failed"
+                  ? "Chat stream finished with an error"
+                  : null,
+              completedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, runId),
+                eq(AgentRunTable.status, "running"),
+              ),
+            );
+        }
       },
-      onError: handleError,
+      onError: (error) => {
+        const message = handleError(error);
+        if (isV2FeatureEnabled("delegation")) {
+          void pgDb
+            .update(AgentRunTable)
+            .set({
+              status: "failed",
+              error: message.slice(0, 2_000),
+              completedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, runId),
+                eq(AgentRunTable.status, "running"),
+              ),
+            );
+        }
+        return message;
+      },
       originalMessages: messages,
     });
 
