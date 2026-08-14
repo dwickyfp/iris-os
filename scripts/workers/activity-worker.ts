@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type PgBoss from "pg-boss";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
   ACTIVITY_PROCESS_QUEUE,
   ACTIVITY_SWEEP_QUEUE,
@@ -12,6 +12,9 @@ import {
   LearningObservationTable,
 } from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
+
+const CLAIM_MS = 5 * 60 * 1_000;
+const MAX_ATTEMPTS = 8;
 
 function candidateFromEvent(event: typeof IrisActivityEventTable.$inferSelect) {
   const text = String(event.payload.userText ?? "").trim();
@@ -32,14 +35,51 @@ function candidateFromEvent(event: typeof IrisActivityEventTable.$inferSelect) {
   return { summary, suppressionKey, candidateType };
 }
 
-async function processEvent(eventId: string) {
+async function claimEvent(eventId: string) {
+  const now = new Date();
+  const [event] = await pgDb
+    .update(IrisActivityEventTable)
+    .set({
+      processingStatus: "processing",
+      claimedAt: now,
+      claimExpiresAt: new Date(now.getTime() + CLAIM_MS),
+      processingAttempts: sql`${IrisActivityEventTable.processingAttempts} + 1`,
+      lastError: null,
+    })
+    .where(
+      and(
+        eq(IrisActivityEventTable.id, eventId),
+        lt(IrisActivityEventTable.processingAttempts, MAX_ATTEMPTS),
+        or(
+          and(
+            eq(IrisActivityEventTable.processingStatus, "pending"),
+            or(
+              isNull(IrisActivityEventTable.nextAttemptAt),
+              lte(IrisActivityEventTable.nextAttemptAt, now),
+            ),
+          ),
+          and(
+            eq(IrisActivityEventTable.processingStatus, "failed"),
+            or(
+              isNull(IrisActivityEventTable.nextAttemptAt),
+              lte(IrisActivityEventTable.nextAttemptAt, now),
+            ),
+          ),
+          and(
+            eq(IrisActivityEventTable.processingStatus, "processing"),
+            lt(IrisActivityEventTable.claimExpiresAt, now),
+          ),
+        ),
+      ),
+    )
+    .returning();
+  return event;
+}
+
+async function processClaimedEvent(
+  event: typeof IrisActivityEventTable.$inferSelect,
+) {
   await pgDb.transaction(async (tx) => {
-    const [event] = await tx
-      .select()
-      .from(IrisActivityEventTable)
-      .where(eq(IrisActivityEventTable.id, eventId))
-      .limit(1);
-    if (!event || event.processedAt) return;
     const candidate = candidateFromEvent(event);
     if (candidate) {
       const [observation] = await tx
@@ -101,10 +141,7 @@ async function processEvent(eventId: string) {
                       timezone: "UTC",
                       targetType: "agent",
                     }
-                  : {
-                      kind: "semantic",
-                      content: candidate.summary,
-                    },
+                  : { kind: "semantic", content: candidate.summary },
             confidence: 72,
             suppressionKey: candidate.suppressionKey,
           })
@@ -113,11 +150,45 @@ async function processEvent(eventId: string) {
     await tx
       .update(IrisActivityEventTable)
       .set({
+        processingStatus: "processed",
         processedAt: new Date(),
-        processingAttempts: sql`${IrisActivityEventTable.processingAttempts} + 1`,
+        claimExpiresAt: null,
+        nextAttemptAt: null,
+        lastError: null,
+      })
+      .where(
+        and(
+          eq(IrisActivityEventTable.id, event.id),
+          eq(IrisActivityEventTable.processingStatus, "processing"),
+        ),
+      );
+  });
+}
+
+async function processEvent(eventId: string) {
+  const event = await claimEvent(eventId);
+  if (!event) return;
+  try {
+    await processClaimedEvent(event);
+  } catch (error) {
+    const delaySeconds = Math.min(
+      3_600,
+      30 * 2 ** Math.max(0, event.processingAttempts - 1),
+    );
+    await pgDb
+      .update(IrisActivityEventTable)
+      .set({
+        processingStatus: "failed",
+        claimExpiresAt: null,
+        nextAttemptAt: new Date(Date.now() + delaySeconds * 1_000),
+        lastError: (error instanceof Error
+          ? error.message
+          : String(error)
+        ).slice(0, 2_000),
       })
       .where(eq(IrisActivityEventTable.id, event.id));
-  });
+    throw error;
+  }
 }
 
 export async function registerActivityWorkers(boss: PgBoss) {
@@ -143,11 +214,30 @@ export async function registerActivityWorkers(boss: PgBoss) {
           ),
         ),
       );
+    const now = new Date();
     const events = await pgDb
       .select({ id: IrisActivityEventTable.id })
       .from(IrisActivityEventTable)
-      .where(isNull(IrisActivityEventTable.processedAt))
-      .limit(500);
+      .where(
+        and(
+          lt(IrisActivityEventTable.processingAttempts, MAX_ATTEMPTS),
+          or(
+            eq(IrisActivityEventTable.processingStatus, "pending"),
+            and(
+              eq(IrisActivityEventTable.processingStatus, "failed"),
+              or(
+                isNull(IrisActivityEventTable.nextAttemptAt),
+                lte(IrisActivityEventTable.nextAttemptAt, now),
+              ),
+            ),
+            and(
+              eq(IrisActivityEventTable.processingStatus, "processing"),
+              lt(IrisActivityEventTable.claimExpiresAt, now),
+            ),
+          ),
+        ),
+      )
+      .limit(200);
     for (const event of events)
       await boss.send(
         ACTIVITY_PROCESS_QUEUE,

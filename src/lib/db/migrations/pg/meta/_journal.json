@@ -204,6 +204,13 @@
       "when": 1786710000000,
       "tag": "0028_v2_integrity_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786711200000,
+      "tag": "0029_activity_delivery",
+      "breakpoints": true
     }
   ]
 }

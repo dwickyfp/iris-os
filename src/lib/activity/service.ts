@@ -6,16 +6,20 @@ import {
 } from "app-types/activity";
 import { pgDb } from "lib/db/pg/db.pg";
 import { IrisActivityEventTable } from "lib/db/pg/schema.pg";
+import logger from "logger";
 import { generateUUID } from "lib/utils";
 import { enqueueActivityEvent } from "./queue";
 import { sanitizeActivityPayload } from "./sanitize";
 
-export async function recordActivityEvent(
+type ActivityDatabase = Pick<typeof pgDb, "insert">;
+
+export async function insertActivityEvent(
+  database: ActivityDatabase,
   userId: string,
   raw: ActivityEventInput,
 ) {
   const input = ActivityEventInputSchema.parse(raw);
-  const [event] = await pgDb
+  const [event] = await database
     .insert(IrisActivityEventTable)
     .values({
       ...input,
@@ -35,6 +39,23 @@ export async function recordActivityEvent(
       set: { idempotencyKey: input.idempotencyKey },
     })
     .returning();
-  void enqueueActivityEvent(event.id);
+  return event;
+}
+
+export function publishActivityEvent(eventId: string) {
+  void enqueueActivityEvent(eventId).catch((error) =>
+    logger.warn("Unable to enqueue durable activity event", {
+      eventId,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
+
+export async function recordActivityEvent(
+  userId: string,
+  raw: ActivityEventInput,
+) {
+  const event = await insertActivityEvent(pgDb, userId, raw);
+  publishActivityEvent(event.id);
   return event;
 }

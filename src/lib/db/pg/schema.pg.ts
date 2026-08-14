@@ -770,6 +770,7 @@ export const IrisActivityEventTable = pgTable(
   "iris_activity_event",
   {
     id: uuid("id").primaryKey().notNull().defaultRandom(),
+    schemaVersion: integer("schema_version").notNull().default(1),
     userId: uuid("user_id")
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
@@ -803,6 +804,15 @@ export const IrisActivityEventTable = pgTable(
       onDelete: "set null",
     }),
     idempotencyKey: varchar("idempotency_key", { length: 240 }).notNull(),
+    processingStatus: varchar("processing_status", {
+      enum: ["pending", "processing", "processed", "failed"],
+    })
+      .notNull()
+      .default("pending"),
+    claimedAt: timestamp("claimed_at"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    nextAttemptAt: timestamp("next_attempt_at"),
+    lastError: text("last_error"),
     processedAt: timestamp("processed_at"),
     processingAttempts: integer("processing_attempts").notNull().default(0),
     createdAt: timestamp("created_at")
@@ -814,9 +824,19 @@ export const IrisActivityEventTable = pgTable(
       "iris_activity_event_scope_check",
       sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
     ),
+    check(
+      "iris_activity_schema_version_check",
+      sql`${table.schemaVersion} BETWEEN 1 AND 20`,
+    ),
     unique().on(table.userId, table.idempotencyKey),
     index("iris_activity_unprocessed_idx").on(
       table.processedAt,
+      table.createdAt,
+    ),
+    index("iris_activity_delivery_idx").on(
+      table.processingStatus,
+      table.nextAttemptAt,
+      table.claimExpiresAt,
       table.createdAt,
     ),
     index("iris_activity_scope_idx").on(

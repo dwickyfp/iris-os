@@ -6,6 +6,10 @@ import type {
   TaskUpdateData,
 } from "app-types/task";
 import { assertTaskTransition } from "lib/task/state";
+import {
+  insertActivityEvent,
+  publishActivityEvent,
+} from "lib/activity/service";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import {
@@ -57,24 +61,38 @@ export const pgTaskRepository = {
   },
 
   async create(userId: string, input: TaskCreateData) {
-    return db.transaction(async (tx) => {
+    const created = await db.transaction(async (tx) => {
       const [row] = await tx
         .insert(TaskTable)
         .values({ ...input, id: generateUUID(), userId })
         .returning();
+      const activityId = generateUUID();
       await tx.insert(TaskActivityTable).values({
-        id: generateUUID(),
+        id: activityId,
         taskId: row.id,
         userId,
         type: "created",
         payload: { status: row.status },
       });
-      return toTask(row);
+      const event = await insertActivityEvent(tx, userId, {
+        actorType: "user",
+        scopeType: "task",
+        scopeId: row.id,
+        eventType: "task.created",
+        subjectType: "task",
+        subjectId: row.id,
+        taskId: row.id,
+        payload: { toStatus: row.status },
+        idempotencyKey: `task.created:${activityId}`,
+      });
+      return { task: toTask(row), eventId: event.id };
     });
+    publishActivityEvent(created.eventId);
+    return created.task;
   },
 
   async update(id: string, userId: string, input: TaskUpdateData) {
-    return db.transaction(async (tx) => {
+    const updated = await db.transaction(async (tx) => {
       const [current] = await tx
         .select()
         .from(TaskTable)
@@ -98,23 +116,48 @@ export const pgTaskRepository = {
         .set({ ...input, ...timestamps, updatedAt: now })
         .where(and(eq(TaskTable.id, id), eq(TaskTable.userId, userId)))
         .returning();
+      const activityId = generateUUID();
+      const activityType = input.checkpoint
+        ? "checkpointed"
+        : input.status && input.status !== current.status
+          ? "status_changed"
+          : "updated";
       await tx.insert(TaskActivityTable).values({
-        id: generateUUID(),
+        id: activityId,
         taskId: id,
         userId,
-        type: input.checkpoint
-          ? "checkpointed"
-          : input.status && input.status !== current.status
-            ? "status_changed"
-            : "updated",
+        type: activityType,
         payload: {
           fromStatus: current.status,
           toStatus: row.status,
           nextAction: row.nextAction,
         },
       });
-      return toTask(row);
+      const eventType =
+        row.status === "completed"
+          ? "task.completed"
+          : activityType === "checkpointed"
+            ? "task.checkpointed"
+            : "task.status_changed";
+      const event = await insertActivityEvent(tx, userId, {
+        actorType: "user",
+        scopeType: "task",
+        scopeId: row.id,
+        eventType,
+        subjectType: "task",
+        subjectId: row.id,
+        taskId: row.id,
+        payload: {
+          fromStatus: current.status,
+          toStatus: row.status,
+        },
+        idempotencyKey: `${eventType}:${activityId}`,
+      });
+      return { task: toTask(row), eventId: event.id };
     });
+    if (!updated) return null;
+    publishActivityEvent(updated.eventId);
+    return updated.task;
   },
 
   async detail(id: string, userId: string) {
@@ -146,18 +189,34 @@ export const pgTaskRepository = {
 
   async addResource(id: string, userId: string, input: ResourceRefCreateData) {
     if (!(await this.select(id, userId))) return null;
-    const [resource] = await db
-      .insert(TaskResourceRefTable)
-      .values({ ...input, id: generateUUID(), taskId: id, userId })
-      .onConflictDoUpdate({
-        target: [
-          TaskResourceRefTable.taskId,
-          TaskResourceRefTable.kind,
-          TaskResourceRefTable.referenceId,
-        ],
-        set: { label: input.label, metadata: input.metadata },
-      })
-      .returning();
-    return resource;
+    const created = await db.transaction(async (tx) => {
+      const resourceId = generateUUID();
+      const [resource] = await tx
+        .insert(TaskResourceRefTable)
+        .values({ ...input, id: resourceId, taskId: id, userId })
+        .onConflictDoUpdate({
+          target: [
+            TaskResourceRefTable.taskId,
+            TaskResourceRefTable.kind,
+            TaskResourceRefTable.referenceId,
+          ],
+          set: { label: input.label, metadata: input.metadata },
+        })
+        .returning();
+      const event = await insertActivityEvent(tx, userId, {
+        actorType: "user",
+        scopeType: "task",
+        scopeId: id,
+        eventType: "resource.attached",
+        subjectType: "resource",
+        subjectId: resource.id,
+        taskId: id,
+        payload: { kind: input.kind },
+        idempotencyKey: `resource.attached:${resource.id}`,
+      });
+      return { resource, eventId: event.id };
+    });
+    publishActivityEvent(created.eventId);
+    return created.resource;
   },
 };

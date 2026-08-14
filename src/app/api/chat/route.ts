@@ -291,6 +291,28 @@ export async function POST(request: Request) {
       chatModel: chatModel,
     };
 
+    void recordActivityEvent(session.user.id, {
+      actorType: "user",
+      scopeType: task
+        ? "task"
+        : workspace
+          ? "workspace"
+          : agent
+            ? "agent"
+            : "global",
+      scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+      eventType: "chat.started",
+      subjectType: "thread",
+      subjectId: thread!.id,
+      payload: { userMessageId: message.id, model: chatModel },
+      requestId,
+      runId,
+      threadId: thread!.id,
+      taskId: task?.id,
+      agentId: agent?.id,
+      idempotencyKey: `chat.started:${message.id}`,
+    }).catch((error) => logger.warn("Unable to record activity", error));
+
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
         const MCP_TOOLS = await safe()
@@ -586,6 +608,11 @@ export async function POST(request: Request) {
         }).catch((error) =>
           logger.warn("Unable to enqueue memory review", error),
         );
+        const chatEventType = isAborted
+          ? "chat.cancelled"
+          : finishReason === "error"
+            ? "chat.failed"
+            : "chat.completed";
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
           actorId: agent?.id,
@@ -597,7 +624,7 @@ export async function POST(request: Request) {
                 ? "agent"
                 : "global",
           scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
-          eventType: "chat.completed",
+          eventType: chatEventType,
           subjectType: "thread",
           subjectId: thread!.id,
           payload: {
@@ -615,7 +642,7 @@ export async function POST(request: Request) {
           threadId: thread!.id,
           taskId: task?.id,
           agentId: agent?.id,
-          idempotencyKey: `chat.completed:${responseMessage.id}`,
+          idempotencyKey: `${chatEventType}:${responseMessage.id}`,
         }).catch((error) => logger.warn("Unable to record activity", error));
         if (isV2FeatureEnabled("delegation")) {
           const runStatus = isAborted
@@ -646,13 +673,41 @@ export async function POST(request: Request) {
         }
       },
       onError: (error) => {
-        const message = handleError(error);
+        const errorMessage = handleError(error);
+        void recordActivityEvent(session.user.id, {
+          actorType: agent ? "agent" : "system",
+          actorId: agent?.id,
+          scopeType: task
+            ? "task"
+            : workspace
+              ? "workspace"
+              : agent
+                ? "agent"
+                : "global",
+          scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+          eventType: "chat.failed",
+          subjectType: "thread",
+          subjectId: thread!.id,
+          payload: {
+            userMessageId: message.id,
+            errorCode: "STREAM_ERROR",
+            message: errorMessage,
+          },
+          requestId,
+          runId,
+          threadId: thread!.id,
+          taskId: task?.id,
+          agentId: agent?.id,
+          idempotencyKey: `chat.failed:${runId}`,
+        }).catch((activityError) =>
+          logger.warn("Unable to record activity", activityError),
+        );
         if (isV2FeatureEnabled("delegation")) {
           void pgDb
             .update(AgentRunTable)
             .set({
               status: "failed",
-              error: message.slice(0, 2_000),
+              error: errorMessage.slice(0, 2_000),
               completedAt: new Date(),
             })
             .where(
@@ -662,7 +717,7 @@ export async function POST(request: Request) {
               ),
             );
         }
-        return message;
+        return errorMessage;
       },
       originalMessages: messages,
     });

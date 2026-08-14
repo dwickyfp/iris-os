@@ -18,7 +18,7 @@ describe("IRIS V2 PostgreSQL migrations", () => {
   test("applies every migration to an empty database", async () => {
     await recreatePublicSchema(client);
     const applied = await applyMigrations(client);
-    expect(applied.at(-1)).toMatch(/^0028_/);
+    expect(applied).toContain("0028_v2_integrity_hardening.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );
