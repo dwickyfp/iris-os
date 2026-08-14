@@ -7,7 +7,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { LanguageModel } from "ai";
+import type { EmbeddingModel, LanguageModel } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import { createOllama } from "ollama-ai-provider-v2";
 
@@ -27,6 +27,10 @@ type ConfiguredModel = ModelCatalogItem & {
   providerType: string;
   baseUrl: string | null;
   encryptedApiKey: string | null;
+  modelKind: "chat" | "embedding";
+  isCurator: boolean;
+  isEmbeddingDefault: boolean;
+  embeddingDimensions: number | null;
 };
 
 const capabilityDefaults: ModelCapabilities = {
@@ -35,13 +39,21 @@ const capabilityDefaults: ModelCapabilities = {
   structuredOutput: true,
 };
 
-async function configuredModels(activeOnly = true): Promise<ConfiguredModel[]> {
+async function configuredModels(
+  activeOnly = true,
+  modelKind?: "chat" | "embedding",
+): Promise<ConfiguredModel[]> {
   const conditions = activeOnly
     ? and(
         eq(ModelProviderTable.enabled, true),
         eq(ModelConfigurationTable.enabled, true),
+        modelKind
+          ? eq(ModelConfigurationTable.modelKind, modelKind)
+          : undefined,
       )
-    : undefined;
+    : modelKind
+      ? eq(ModelConfigurationTable.modelKind, modelKind)
+      : undefined;
   const rows = await pgDb
     .select({ provider: ModelProviderTable, model: ModelConfigurationTable })
     .from(ModelConfigurationTable)
@@ -61,6 +73,10 @@ async function configuredModels(activeOnly = true): Promise<ConfiguredModel[]> {
     providerType: provider.type,
     baseUrl: provider.baseUrl,
     encryptedApiKey: provider.encryptedApiKey,
+    modelKind: model.modelKind,
+    isCurator: model.isCurator,
+    isEmbeddingDefault: model.isEmbeddingDefault,
+    embeddingDimensions: model.embeddingDimensions,
     contextWindow: model.contextWindow,
     capabilities: {
       ...capabilityDefaults,
@@ -71,7 +87,7 @@ async function configuredModels(activeOnly = true): Promise<ConfiguredModel[]> {
 }
 
 export async function getModelCatalog() {
-  const models = await configuredModels();
+  const models = await configuredModels(true, "chat");
   return models
     .sort(
       (a, b) =>
@@ -130,7 +146,7 @@ export async function getModelCatalog() {
 }
 
 export async function getModelConfiguration(model?: ChatModel) {
-  const models = await configuredModels();
+  const models = await configuredModels(true, "chat");
   const configured = model
     ? models.find(
         (item) =>
@@ -139,6 +155,17 @@ export async function getModelConfiguration(model?: ChatModel) {
     : (models.find((item) => item.isDefault) ?? models[0]);
   if (!configured) throw new Error("No enabled model has been configured");
   return configured;
+}
+
+export async function getCuratorModelConfiguration() {
+  const models = await configuredModels(true, "chat");
+  const configured = models.find((item) => item.isCurator);
+  return configured ?? models.find((item) => item.isDefault) ?? models[0];
+}
+
+export async function getEmbeddingModelConfiguration() {
+  const models = await configuredModels(true, "embedding");
+  return models.find((item) => item.isEmbeddingDefault) ?? models[0];
 }
 
 function createLanguageModel(config: ConfiguredModel): LanguageModel {
@@ -188,9 +215,55 @@ function createLanguageModel(config: ConfiguredModel): LanguageModel {
   }
 }
 
+function createEmbeddingModel(config: ConfiguredModel): EmbeddingModel {
+  const apiKey = config.encryptedApiKey
+    ? decryptSecret(config.encryptedApiKey)
+    : undefined;
+  const options = {
+    apiKey,
+    ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
+  };
+  switch (config.providerType) {
+    case "openai":
+      return createOpenAI(options).textEmbeddingModel(config.apiModelId);
+    case "google":
+      return createGoogle(options).textEmbeddingModel(config.apiModelId);
+    case "ollama":
+      return createOllama({
+        baseURL: config.baseUrl || "http://localhost:11434/api",
+      }).textEmbeddingModel(config.apiModelId);
+    case "openai-compatible":
+      if (!config.baseUrl)
+        throw new Error("OpenAI-compatible providers require an endpoint");
+      return createOpenAICompatible({
+        name: config.provider,
+        apiKey: apiKey || "",
+        baseURL: config.baseUrl,
+      }).textEmbeddingModel(config.apiModelId);
+    default:
+      throw new Error(
+        `Provider ${config.providerType} does not support memory embeddings`,
+      );
+  }
+}
+
 export const customModelProvider = {
   getModel: async (model?: ChatModel) =>
     createLanguageModel(await getModelConfiguration(model)),
+  getCuratorModel: async () => {
+    const config = await getCuratorModelConfiguration();
+    if (!config) throw new Error("No enabled curator model configured");
+    return createLanguageModel(config);
+  },
+  getEmbeddingModel: async () => {
+    const config = await getEmbeddingModelConfiguration();
+    if (!config) return undefined;
+    return {
+      model: createEmbeddingModel(config),
+      modelId: config.apiModelId,
+      dimensions: config.embeddingDimensions,
+    };
+  },
   getModelConfiguration,
   getModelCatalog,
 };

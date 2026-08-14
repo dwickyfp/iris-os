@@ -11,6 +11,7 @@ import { pgBookmarkRepository } from "./pg/repositories/bookmark-repository.pg";
 import { pgChatExportRepository } from "./pg/repositories/chat-export-repository.pg";
 import { pgSkillRepository } from "./pg/repositories/skill-repository.pg";
 import { pgMemoryRepository } from "./pg/repositories/memory-repository.pg";
+import { pgMemoryGraphRepository } from "./pg/repositories/memory-graph-repository.pg";
 
 export const chatRepository = pgChatRepository;
 export const userRepository = pgUserRepository;
@@ -28,3 +29,4 @@ export const archiveRepository = pgArchiveRepository;
 export const bookmarkRepository = pgBookmarkRepository;
 export const chatExportRepository = pgChatExportRepository;
 export const memoryRepository = pgMemoryRepository;
+export const memoryGraphRepository = pgMemoryGraphRepository;

@@ -26,7 +26,10 @@ import type {
   SkillVisibility,
 } from "app-types/skill";
 import type {
+  MemoryEdgeType,
+  MemoryGraphStatus,
   MemoryKind,
+  MemoryNodeType,
   MemoryProvenance,
   MemoryStatus,
 } from "app-types/memory";
@@ -88,6 +91,14 @@ export const ModelConfigurationTable = pgTable(
       .default({ toolCalls: true, vision: false, structuredOutput: true }),
     enabled: boolean("enabled").notNull().default(true),
     isDefault: boolean("is_default").notNull().default(false),
+    modelKind: varchar("model_kind", { enum: ["chat", "embedding"] })
+      .notNull()
+      .default("chat"),
+    isCurator: boolean("is_curator").notNull().default(false),
+    isEmbeddingDefault: boolean("is_embedding_default")
+      .notNull()
+      .default(false),
+    embeddingDimensions: integer("embedding_dimensions"),
     createdAt: timestamp("created_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -197,6 +208,242 @@ export const UserMemoryEventTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("user_memory_event_memory_idx").on(table.memoryId)],
+);
+
+export const MemoryTopicTable = pgTable(
+  "memory_topic",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    label: varchar("label", { length: 160 }).notNull(),
+    normalizedKey: varchar("normalized_key", { length: 180 }).notNull(),
+    summary: varchar("summary", { length: 600 }).notNull().default(""),
+    detail: varchar("detail", { length: 4000 }).notNull().default(""),
+    confidence: integer("confidence").notNull().default(80),
+    status: varchar("status", {
+      enum: ["active", "pending", "superseded", "deleted"],
+    })
+      .notNull()
+      .default("active")
+      .$type<MemoryGraphStatus>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.normalizedKey),
+    index("memory_topic_user_status_idx").on(table.userId, table.status),
+  ],
+);
+
+export const MemoryEntityTable = pgTable(
+  "memory_entity",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 240 }).notNull(),
+    normalizedKey: varchar("normalized_key", { length: 260 }).notNull(),
+    entityType: varchar("entity_type", { length: 64 })
+      .notNull()
+      .default("concept"),
+    aliases: json("aliases").notNull().$type<string[]>().default([]),
+    confidence: integer("confidence").notNull().default(80),
+    status: varchar("status", {
+      enum: ["active", "pending", "superseded", "deleted"],
+    })
+      .notNull()
+      .default("active")
+      .$type<MemoryGraphStatus>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.normalizedKey),
+    index("memory_entity_user_status_idx").on(table.userId, table.status),
+  ],
+);
+
+export const MemoryEdgeTable = pgTable(
+  "memory_edge",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id").notNull(),
+    sourceType: varchar("source_type", { enum: ["topic", "claim", "entity"] })
+      .notNull()
+      .$type<MemoryNodeType>(),
+    targetId: uuid("target_id").notNull(),
+    targetType: varchar("target_type", { enum: ["topic", "claim", "entity"] })
+      .notNull()
+      .$type<MemoryNodeType>(),
+    type: varchar("type", {
+      enum: [
+        "ABOUT",
+        "SUPPORTS",
+        "REFINES",
+        "RELATED_TO",
+        "CONTRADICTS",
+        "SUPERSEDES",
+      ],
+    })
+      .notNull()
+      .$type<MemoryEdgeType>(),
+    weight: integer("weight").notNull().default(100),
+    confidence: integer("confidence").notNull().default(80),
+    provenance: varchar("provenance", { enum: ["manual", "background_review"] })
+      .notNull()
+      .default("background_review")
+      .$type<MemoryProvenance>(),
+    reason: text("reason"),
+    validFrom: timestamp("valid_from")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    validTo: timestamp("valid_to"),
+    status: varchar("status", {
+      enum: ["active", "pending", "superseded", "deleted"],
+    })
+      .notNull()
+      .default("active")
+      .$type<MemoryGraphStatus>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.sourceId, table.targetId, table.type),
+    index("memory_edge_user_source_idx").on(table.userId, table.sourceId),
+    index("memory_edge_user_target_idx").on(table.userId, table.targetId),
+  ],
+);
+
+export const MemoryEvidenceTable = pgTable(
+  "memory_evidence",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    memoryId: uuid("memory_id").references(() => UserMemoryTable.id, {
+      onDelete: "cascade",
+    }),
+    topicId: uuid("topic_id").references(() => MemoryTopicTable.id, {
+      onDelete: "cascade",
+    }),
+    threadId: uuid("thread_id").references(() => ChatThreadTable.id, {
+      onDelete: "set null",
+    }),
+    messageId: text("message_id").references(() => ChatMessageTable.id, {
+      onDelete: "set null",
+    }),
+    excerpt: text("excerpt").notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("memory_evidence_user_memory_idx").on(table.userId, table.memoryId),
+    index("memory_evidence_user_topic_idx").on(table.userId, table.topicId),
+  ],
+);
+
+/** JSON is the portable source; deployments with pgvector also get vector_value via migration. */
+export const MemoryEmbeddingTable = pgTable(
+  "memory_embedding",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    nodeId: uuid("node_id").notNull(),
+    nodeType: varchar("node_type", { enum: ["topic", "claim", "entity"] })
+      .notNull()
+      .$type<MemoryNodeType>(),
+    model: varchar("model", { length: 180 }).notNull(),
+    dimensions: integer("dimensions").notNull(),
+    values: json("values").notNull().$type<number[]>(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.nodeId, table.model),
+    index("memory_embedding_user_idx").on(table.userId),
+  ],
+);
+
+export const MemoryCuratorRunTable = pgTable(
+  "memory_curator_run",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    jobType: varchar("job_type", {
+      enum: ["extract", "curate", "sweep", "reembed"],
+    }).notNull(),
+    status: varchar("status", {
+      enum: ["running", "completed", "failed"],
+    }).notNull(),
+    stats: json("stats").notNull().$type<Record<string, number>>().default({}),
+    error: text("error"),
+    rollbackSnapshot: json("rollback_snapshot"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => [
+    index("memory_curator_run_user_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const MemoryRetrievalAuditTable = pgTable(
+  "memory_retrieval_audit",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    queryHash: varchar("query_hash", { length: 64 }).notNull(),
+    seedNodes: json("seed_nodes").notNull().$type<string[]>().default([]),
+    traversalPaths: json("traversal_paths")
+      .notNull()
+      .$type<string[][]>()
+      .default([]),
+    finalNodes: json("final_nodes").notNull().$type<string[]>().default([]),
+    ranking: json("ranking")
+      .notNull()
+      .$type<Record<string, number>>()
+      .default({}),
+    tokenCount: integer("token_count").notNull().default(0),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("memory_retrieval_audit_user_idx").on(table.userId, table.createdAt),
+  ],
 );
 
 export const AgentTable = pgTable("agent", {

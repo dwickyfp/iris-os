@@ -134,6 +134,20 @@
       "when": 1786723200000,
       "tag": "0018_learning_memory",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786726800000,
+      "tag": "0019_hierarchical_memory_graph",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786730400000,
+      "tag": "0020_memory_models",
+      "breakpoints": true
     }
   ]
 }

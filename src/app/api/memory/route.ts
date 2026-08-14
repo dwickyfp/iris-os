@@ -1,5 +1,5 @@
 import { getSession } from "auth/server";
-import { memoryRepository } from "lib/db/repository";
+import { memoryGraphRepository, memoryRepository } from "lib/db/repository";
 import { UserMemoryInputSchema } from "app-types/memory";
 import {
   isSafeMemoryContent,
@@ -26,12 +26,15 @@ export async function POST(request: Request) {
         { error: "Sensitive or unsafe content cannot be stored automatically" },
         { status: 422 },
       );
-    const memory = await memoryRepository.create({
+    const result = await memoryGraphRepository.curateClaim({
       ...input,
       content,
       userId: session.user.id,
       provenance: "manual",
     });
+    const memory = (await memoryRepository.list(session.user.id)).find(
+      (item) => item.id === result.memoryId,
+    );
     return Response.json(memory, { status: 201 });
   } catch (error) {
     return Response.json(

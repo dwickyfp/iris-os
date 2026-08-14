@@ -38,6 +38,10 @@ export const ModelInputSchema = z.object({
   contextWindow: z.number().int().min(1024).max(2_000_000).default(128_000),
   enabled: z.boolean().default(true),
   isDefault: z.boolean().default(false),
+  modelKind: z.enum(["chat", "embedding"]).default("chat"),
+  isCurator: z.boolean().default(false),
+  isEmbeddingDefault: z.boolean().default(false),
+  embeddingDimensions: z.number().int().min(1).max(65535).optional(),
   capabilities: ModelCapabilitiesSchema.default({
     toolCalls: true,
     vision: false,

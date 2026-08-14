@@ -67,6 +67,14 @@ export async function POST(request: Request) {
     await pgDb
       .update(ModelConfigurationTable)
       .set({ isDefault: false, updatedAt: new Date() });
+  if (input.isCurator)
+    await pgDb
+      .update(ModelConfigurationTable)
+      .set({ isCurator: false, updatedAt: new Date() });
+  if (input.isEmbeddingDefault)
+    await pgDb
+      .update(ModelConfigurationTable)
+      .set({ isEmbeddingDefault: false, updatedAt: new Date() });
   const [model] = await pgDb
     .insert(ModelConfigurationTable)
     .values({
@@ -78,6 +86,10 @@ export async function POST(request: Request) {
       capabilities: input.capabilities,
       enabled: input.enabled,
       isDefault: input.isDefault,
+      modelKind: input.modelKind,
+      isCurator: input.isCurator,
+      isEmbeddingDefault: input.isEmbeddingDefault,
+      embeddingDimensions: input.embeddingDimensions,
       updatedAt: new Date(),
     })
     .returning();

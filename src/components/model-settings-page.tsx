@@ -38,6 +38,10 @@ type Model = {
   contextWindow: number;
   enabled: boolean;
   isDefault: boolean;
+  modelKind: "chat" | "embedding";
+  isCurator: boolean;
+  isEmbeddingDefault: boolean;
+  embeddingDimensions: number | null;
   capabilities: {
     toolCalls: boolean;
     vision: boolean;
@@ -98,6 +102,10 @@ export function ModelSettingsPage() {
     structuredOutput: true,
     enabled: true,
     isDefault: false,
+    modelKind: "chat" as "chat" | "embedding",
+    isCurator: false,
+    isEmbeddingDefault: false,
+    embeddingDimensions: 1536,
   });
   const load = async () => {
     setLoading(true);
@@ -262,6 +270,10 @@ export function ModelSettingsPage() {
       structuredOutput: model.capabilities.structuredOutput,
       enabled: model.enabled,
       isDefault: model.isDefault,
+      modelKind: model.modelKind,
+      isCurator: model.isCurator,
+      isEmbeddingDefault: model.isEmbeddingDefault,
+      embeddingDimensions: model.embeddingDimensions || 1536,
     });
   };
   if (loading)
@@ -509,6 +521,21 @@ export function ModelSettingsPage() {
                     required
                   />
                 </Field>
+                <Field label="Model role">
+                  <select
+                    className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                    value={modelForm.modelKind}
+                    onChange={(event) =>
+                      setModelForm({
+                        ...modelForm,
+                        modelKind: event.target.value as "chat" | "embedding",
+                      })
+                    }
+                  >
+                    <option value="chat">Chat / Curator</option>
+                    <option value="embedding">Memory embedding</option>
+                  </select>
+                </Field>
                 <Field label="API model ID / deployment">
                   <Input
                     value={modelForm.apiModelId}
@@ -550,6 +577,21 @@ export function ModelSettingsPage() {
                     required
                   />
                 </Field>
+                {modelForm.modelKind === "embedding" && (
+                  <Field label="Embedding dimensions">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={modelForm.embeddingDimensions}
+                      onChange={(event) =>
+                        setModelForm({
+                          ...modelForm,
+                          embeddingDimensions: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </Field>
+                )}
                 <div className="flex flex-wrap gap-4">
                   <Toggle
                     label="Enabled"
@@ -586,6 +628,24 @@ export function ModelSettingsPage() {
                       setModelForm({ ...modelForm, isDefault })
                     }
                   />
+                  {modelForm.modelKind === "chat" && (
+                    <Toggle
+                      label="Dedicated curator"
+                      checked={modelForm.isCurator}
+                      onChange={(isCurator) =>
+                        setModelForm({ ...modelForm, isCurator })
+                      }
+                    />
+                  )}
+                  {modelForm.modelKind === "embedding" && (
+                    <Toggle
+                      label="Default embedding"
+                      checked={modelForm.isEmbeddingDefault}
+                      onChange={(isEmbeddingDefault) =>
+                        setModelForm({ ...modelForm, isEmbeddingDefault })
+                      }
+                    />
+                  )}
                 </div>
                 <div className="flex justify-end gap-2">
                   {editingModelId && (
@@ -628,6 +688,16 @@ export function ModelSettingsPage() {
                       {model.isDefault && (
                         <span className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">
                           Default
+                        </span>
+                      )}
+                      {model.isCurator && (
+                        <span className="rounded bg-violet-500/10 px-2 py-0.5 text-xs text-violet-500">
+                          Curator
+                        </span>
+                      )}
+                      {model.isEmbeddingDefault && (
+                        <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-500">
+                          Embedding
                         </span>
                       )}
                     </div>

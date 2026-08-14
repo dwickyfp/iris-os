@@ -32,6 +32,14 @@ export async function PATCH(
     await pgDb
       .update(ModelConfigurationTable)
       .set({ isDefault: false, updatedAt: new Date() });
+  if (input.isCurator)
+    await pgDb
+      .update(ModelConfigurationTable)
+      .set({ isCurator: false, updatedAt: new Date() });
+  if (input.isEmbeddingDefault)
+    await pgDb
+      .update(ModelConfigurationTable)
+      .set({ isEmbeddingDefault: false, updatedAt: new Date() });
   const [model] = await pgDb
     .update(ModelConfigurationTable)
     .set({
@@ -45,6 +53,14 @@ export async function PATCH(
       ...(input.capabilities && { capabilities: input.capabilities }),
       ...(input.enabled !== undefined && { enabled: input.enabled }),
       ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
+      ...(input.modelKind !== undefined && { modelKind: input.modelKind }),
+      ...(input.isCurator !== undefined && { isCurator: input.isCurator }),
+      ...(input.isEmbeddingDefault !== undefined && {
+        isEmbeddingDefault: input.isEmbeddingDefault,
+      }),
+      ...(input.embeddingDimensions !== undefined && {
+        embeddingDimensions: input.embeddingDimensions,
+      }),
       updatedAt: new Date(),
     })
     .where(eq(ModelConfigurationTable.id, id))

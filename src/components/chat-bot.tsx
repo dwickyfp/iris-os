@@ -82,7 +82,20 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
   useEffect(() => {
     appStoreMutate((state) => {
       if (state.chatSessions[threadId]) {
-        return { activeChatSessionId: threadId };
+        const current = state.chatSessions[threadId];
+        // The shared host keeps sessions mounted. When a user returns to a
+        // thread, refresh its server snapshot so a stale empty session cannot
+        // hide messages that were already persisted.
+        return {
+          activeChatSessionId: threadId,
+          chatSessions:
+            initialMessages.length > current.initialMessages.length
+              ? {
+                  ...state.chatSessions,
+                  [threadId]: { initialMessages },
+                }
+              : state.chatSessions,
+        };
       }
       return {
         activeChatSessionId: threadId,
@@ -175,6 +188,23 @@ export function ChatSession({
   }, []);
 
   const [input, setInput] = useState("");
+  const draftStorage = useMemo(
+    () => getStorageManager<string>(`CHAT_DRAFT_${threadId}`, "session"),
+    [threadId],
+  );
+
+  useEffect(() => {
+    setInput(draftStorage.get("") ?? "");
+  }, [draftStorage]);
+
+  const setDraftInput = useCallback(
+    (value: string) => {
+      setInput(value);
+      if (value) draftStorage.set(value);
+      else draftStorage.remove();
+    },
+    [draftStorage],
+  );
 
   const {
     messages,
@@ -284,6 +314,15 @@ export function ChatSession({
     () => status === "streaming" || status === "submitted",
     [status],
   );
+
+  useEffect(() => {
+    // useChat consumes its initial messages only on mount. Hydrate an existing
+    // idle session after navigating back to a thread, but never replace a
+    // response that is still being streamed locally.
+    if (!isLoading && initialMessages.length > messages.length) {
+      setMessages(initialMessages);
+    }
+  }, [initialMessages, isLoading, messages.length, setMessages]);
 
   useEffect(() => {
     appStoreMutate((state) => {
@@ -555,7 +594,7 @@ export function ChatSession({
             input={input}
             threadId={threadId}
             sendMessage={sendMessage}
-            setInput={setInput}
+            setInput={setDraftInput}
             isLoading={isLoading || isPendingToolCall}
             onStop={stop}
             onFocus={isFirstTime ? undefined : handleFocus}

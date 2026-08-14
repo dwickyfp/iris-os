@@ -201,6 +201,15 @@ export async function POST(request: Request) {
 
     messages.push(message);
 
+    // Persist the incoming message before starting the streamed response. A browser
+    // reload, network abort, or dev HMR must not discard a message the user sent.
+    await chatRepository.upsertMessage({
+      threadId: thread!.id,
+      id: message.id,
+      role: message.role,
+      parts: message.parts.map(convertToSavePart),
+    });
+
     const supportToolCall = modelConfig.capabilities.toolCalls;
 
     const agentId = (
@@ -470,6 +479,7 @@ export async function POST(request: Request) {
           userId: session.user.id,
           threadId: thread!.id,
           assistantMessageId: responseMessage.id,
+          userMessageId: message.id,
           agentId: agent?.id,
           userText: message.parts
             .filter((part: any) => part.type === "text")

@@ -1,8 +1,12 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { generateUUID } from "lib/utils";
 import type { UserMemory } from "app-types/memory";
 import { pgDb as db } from "../db.pg";
-import { UserMemoryEventTable, UserMemoryTable } from "../schema.pg";
+import {
+  MemoryEdgeTable,
+  UserMemoryEventTable,
+  UserMemoryTable,
+} from "../schema.pg";
 
 function toMemory(row: typeof UserMemoryTable.$inferSelect): UserMemory {
   return {
@@ -78,7 +82,7 @@ export const pgMemoryRepository = {
         ...(values.confidence === undefined
           ? {}
           : { confidence: Math.round(values.confidence * 100) }),
-        version: values.status === "active" ? undefined : undefined,
+        version: sql`${UserMemoryTable.version} + 1`,
         updatedAt: new Date(),
       })
       .where(
@@ -99,6 +103,18 @@ export const pgMemoryRepository = {
       .returning();
     if (!memory) throw new Error("Memory not found");
     await event(memory, "delete");
+    await db
+      .update(MemoryEdgeTable)
+      .set({ status: "deleted", validTo: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(MemoryEdgeTable.userId, userId),
+          or(
+            eq(MemoryEdgeTable.sourceId, id),
+            eq(MemoryEdgeTable.targetId, id),
+          ),
+        ),
+      );
   },
   async restore(id: string, userId: string) {
     const [memory] = await db
@@ -106,7 +122,7 @@ export const pgMemoryRepository = {
       .set({
         status: "active",
         deletedAt: null,
-        version: 1,
+        version: sql`${UserMemoryTable.version} + 1`,
         updatedAt: new Date(),
       })
       .where(
@@ -115,6 +131,18 @@ export const pgMemoryRepository = {
       .returning();
     if (!memory) throw new Error("Memory not found");
     await event(memory, "restore");
+    await db
+      .update(MemoryEdgeTable)
+      .set({ status: "active", validTo: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(MemoryEdgeTable.userId, userId),
+          or(
+            eq(MemoryEdgeTable.sourceId, id),
+            eq(MemoryEdgeTable.targetId, id),
+          ),
+        ),
+      );
     return toMemory(memory);
   },
   async clear(userId: string) {
