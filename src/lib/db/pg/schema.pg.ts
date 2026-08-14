@@ -33,6 +33,49 @@ import type {
   MemoryProvenance,
   MemoryStatus,
 } from "app-types/memory";
+import type { Workspace, WorkspaceStatus } from "app-types/workspace";
+
+export const WorkspaceTable = pgTable(
+  "workspace",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 120 }).notNull(),
+    slug: varchar("slug", { length: 80 }).notNull(),
+    description: text("description"),
+    instructions: text("instructions"),
+    status: varchar("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active")
+      .$type<WorkspaceStatus>(),
+    defaultModelId: uuid("default_model_id").references(
+      () => ModelConfigurationTable.id,
+      { onDelete: "set null" },
+    ),
+    defaultAgentId: uuid("default_agent_id").references(() => AgentTable.id, {
+      onDelete: "set null",
+    }),
+    defaultToolMode: varchar("default_tool_mode", {
+      enum: ["auto", "manual", "none"],
+    })
+      .notNull()
+      .default("auto")
+      .$type<Workspace["defaultToolMode"]>(),
+    metadata: json("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.slug),
+    index("workspace_user_status_idx").on(table.userId, table.status),
+  ],
+);
 
 export const ChatThreadTable = pgTable("chat_thread", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -40,6 +83,9 @@ export const ChatThreadTable = pgTable("chat_thread", {
   userId: uuid("user_id")
     .notNull()
     .references(() => UserTable.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 

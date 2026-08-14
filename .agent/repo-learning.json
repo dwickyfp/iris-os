@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "plugin_version": "1.0.1",
+  "checkpoint_storage": "local",
+  "stop_gate": {
+    "require_checkpoint_for_active_workstream": true,
+    "require_learning_review_on_repo_change": true
+  },
+  "workstream": {
+    "suggest_when_steps_at_least": 3,
+    "lease_minutes": 30
+  },
+  "retention": {
+    "completed_archive_days": 0,
+    "completed_trash_days": 30,
+    "abandoned_trash_days": 14,
+    "superseded_trash_days": 14,
+    "trash_delete_days": 7
+  },
+  "smart_erase": {
+    "enabled": true,
+    "require_durable_review": true,
+    "hard_delete": true
+  }
+}

@@ -278,6 +278,12 @@ export function AppSidebarThreads() {
                                   <Link
                                     href={`/chat/${thread.id}`}
                                     className="flex items-center gap-2"
+                                    onClick={() =>
+                                      storeMutate({
+                                        activeWorkspaceId:
+                                          thread.workspaceId ?? undefined,
+                                      })
+                                    }
                                   >
                                     {runningThreadIds.includes(thread.id) && (
                                       <LoaderCircle

@@ -55,6 +55,7 @@ type Props = {
   threadId: string;
   initialMessages: Array<UIMessage>;
   selectedChatModel?: string;
+  workspaceId?: string | null;
 };
 
 type ChatSessionProps = Props & {
@@ -76,7 +77,11 @@ const isFirstTime = firstTimeStorage.get() ?? true;
 firstTimeStorage.set(false);
 
 /** Registers the server-provided session with the persistent client-side host. */
-export default function ChatBot({ threadId, initialMessages }: Props) {
+export default function ChatBot({
+  threadId,
+  initialMessages,
+  workspaceId,
+}: Props) {
   const appStoreMutate = appStore((state) => state.mutate);
 
   useEffect(() => {
@@ -88,6 +93,9 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
         // hide messages that were already persisted.
         return {
           activeChatSessionId: threadId,
+          ...(workspaceId !== undefined
+            ? { activeWorkspaceId: workspaceId ?? undefined }
+            : {}),
           chatSessions:
             initialMessages.length > current.initialMessages.length
               ? {
@@ -99,13 +107,16 @@ export default function ChatBot({ threadId, initialMessages }: Props) {
       }
       return {
         activeChatSessionId: threadId,
+        ...(workspaceId !== undefined
+          ? { activeWorkspaceId: workspaceId ?? undefined }
+          : {}),
         chatSessions: {
           ...state.chatSessions,
           [threadId]: { initialMessages },
         },
       };
     });
-  }, [appStoreMutate, initialMessages, threadId]);
+  }, [appStoreMutate, initialMessages, threadId, workspaceId]);
 
   return null;
 }
@@ -139,6 +150,7 @@ export function ChatSession({
     threadMentions,
     pendingThreadMention,
     threadImageToolModel,
+    activeWorkspaceId,
   ] = appStore(
     useShallow((state) => [
       state.mutate,
@@ -150,6 +162,7 @@ export function ChatSession({
       state.threadMentions,
       state.pendingThreadMention,
       state.threadImageToolModel,
+      state.activeWorkspaceId,
     ]),
   );
 
@@ -277,6 +290,7 @@ export function ChatSession({
             model: latestRef.current.threadImageToolModel[threadId],
           },
           attachments,
+          workspaceId: latestRef.current.activeWorkspaceId,
         };
         return { body: requestBody };
       },
@@ -308,6 +322,7 @@ export function ChatSession({
     threadId,
     mentions: threadMentions[threadId],
     threadImageToolModel,
+    activeWorkspaceId,
   });
 
   const isLoading = useMemo(

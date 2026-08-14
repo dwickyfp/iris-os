@@ -11,6 +11,7 @@ export type MemoryReviewJob = {
   id: string;
   userId: string;
   threadId: string;
+  workspaceId?: string;
   assistantMessageId: string;
   userMessageId?: string;
   agentId?: string;

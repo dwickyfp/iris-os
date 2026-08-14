@@ -31,6 +31,7 @@ export type ChatThread = {
   id: string;
   title: string;
   userId: string;
+  workspaceId?: string | null;
   createdAt: Date;
 };
 
@@ -109,6 +110,7 @@ export const chatApiSchemaRequestBodySchema = z.object({
   allowedMcpServers: z.record(z.string(), AllowedMCPServerZodSchema).optional(),
   allowedAppDefaultToolkit: z.array(z.string()).optional(),
   attachments: z.array(ChatAttachmentSchema).optional(),
+  workspaceId: z.string().uuid().optional(),
 });
 
 export type ChatApiSchemaRequestBody = z.infer<

@@ -24,6 +24,7 @@ import {
   agentRepository,
   chatRepository,
   skillRepository,
+  workspaceRepository,
 } from "lib/db/repository";
 import globalLogger from "logger";
 
@@ -50,6 +51,12 @@ import { serverFileStorage } from "lib/file-storage";
 import { generateUUID } from "lib/utils";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import {
+  buildWorkspaceInstructionsPrompt,
+  resolveThreadWorkspaceId,
+} from "lib/workspace/context";
+import { workspaceService } from "lib/workspace/server";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -90,6 +97,7 @@ export async function POST(request: Request) {
       imageTool,
       mentions = [],
       attachments = [],
+      workspaceId: requestedWorkspaceId,
     } = chatApiSchemaRequestBodySchema.parse(json);
 
     const modelConfig =
@@ -108,13 +116,27 @@ export async function POST(request: Request) {
     }
 
     let thread = await chatRepository.selectThreadDetails(id);
+    const threadExists = Boolean(thread);
+    const resolvedWorkspaceId = resolveThreadWorkspaceId({
+      threadExists,
+      storedWorkspaceId: thread?.workspaceId,
+      requestedWorkspaceId: isV2FeatureEnabled("workspaces")
+        ? requestedWorkspaceId
+        : undefined,
+    });
 
     if (!thread) {
+      if (resolvedWorkspaceId)
+        await workspaceService.resolveRequestedWorkspace(
+          session.user.id,
+          resolvedWorkspaceId,
+        );
       logger.info(`create chat thread: ${id}`);
       const newThread = await chatRepository.insertThread({
         id,
         title: "",
         userId: session.user.id,
+        workspaceId: resolvedWorkspaceId,
       });
       thread = await chatRepository.selectThreadDetails(newThread.id);
     }
@@ -122,6 +144,13 @@ export async function POST(request: Request) {
     if (thread!.userId !== session.user.id) {
       return new Response("Forbidden", { status: 403 });
     }
+    const workspace =
+      isV2FeatureEnabled("workspaces") && thread?.workspaceId
+        ? await workspaceRepository.selectById(
+            thread.workspaceId,
+            session.user.id,
+          )
+        : null;
 
     const messages: UIMessage[] = (thread?.messages ?? []).map((m) => {
       return {
@@ -327,6 +356,7 @@ export async function POST(request: Request) {
           buildUserSystemPrompt(session.user, userPreferences, agent),
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
           buildSkillManifestPrompt(skillsRuntime.manifest),
+          workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
           memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
@@ -388,22 +418,32 @@ export async function POST(request: Request) {
           model,
         });
         const modelMessages = await convertToModelMessages(compactedMessages);
+        const requestId = generateUUID();
+        const runId = generateUUID();
         const runtimeContext = agent
           ? createAgentRuntimeContext({
-              requestId: generateUUID(),
+              requestId,
+              runId,
               userId: session.user.id,
+              workspaceId: workspace?.id,
               threadId: thread!.id,
               agent,
               userRole: (session.user as any).role,
-              toolChoice,
+              toolMode: toolChoice,
+              approvalPolicy:
+                toolChoice === "manual" ? "always" : "destructive_only",
               skills: skillsRuntime.manifest,
             })
           : createBaseAgentRuntimeContext({
-              requestId: generateUUID(),
+              requestId,
+              runId,
               userId: session.user.id,
+              workspaceId: workspace?.id,
               threadId: thread!.id,
               userRole: (session.user as any).role,
-              toolChoice,
+              toolMode: toolChoice,
+              approvalPolicy:
+                toolChoice === "manual" ? "always" : "destructive_only",
             });
         const result = await createToolLoopAgent({
           profile: agent ? { type: "custom", agent } : { type: "base" },
@@ -478,6 +518,7 @@ export async function POST(request: Request) {
           id: `${thread!.id}:${responseMessage.id}`,
           userId: session.user.id,
           threadId: thread!.id,
+          workspaceId: workspace?.id,
           assistantMessageId: responseMessage.id,
           userMessageId: message.id,
           agentId: agent?.id,

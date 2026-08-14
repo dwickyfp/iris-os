@@ -11,11 +11,14 @@ import { SidebarHeaderShared } from "./sidebar-header";
 import { isShortcutEvent, Shortcuts } from "lib/keyboard-shortcuts";
 import { AppSidebarUser } from "./app-sidebar-user";
 import { BasicUser } from "app-types/user";
+import { WorkspaceSwitcher } from "../workspace/workspace-switcher";
 
 export function AppSidebar({
   user,
+  workspacesEnabled = false,
 }: {
   user?: BasicUser;
+  workspacesEnabled?: boolean;
 }) {
   const userRole = user?.role;
   const router = useRouter();
@@ -50,6 +53,7 @@ export function AppSidebar({
 
       <SidebarContent className="mt-2 overflow-hidden relative">
         <div className="flex flex-col overflow-y-auto">
+          {workspacesEnabled && <WorkspaceSwitcher />}
           <AppSidebarMenus user={user} />
           <AppSidebarAgents userRole={userRole} />
           <AppSidebarThreads />

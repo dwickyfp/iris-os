@@ -148,6 +148,13 @@
       "when": 1786730400000,
       "tag": "0020_memory_models",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786734000000,
+      "tag": "0021_workspace_foundation",
+      "breakpoints": true
     }
   ]
 }

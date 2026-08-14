@@ -19,6 +19,7 @@ export const pgChatRepository: ChatRepository = {
       .values({
         title: thread.title,
         userId: thread.userId,
+        workspaceId: thread.workspaceId,
         id: thread.id,
       })
       .returning();
@@ -56,6 +57,7 @@ export const pgChatRepository: ChatRepository = {
       id: thread.chat_thread.id,
       title: thread.chat_thread.title,
       userId: thread.chat_thread.userId,
+      workspaceId: thread.chat_thread.workspaceId ?? undefined,
       createdAt: thread.chat_thread.createdAt,
       userPreferences: thread.user?.preferences ?? undefined,
       messages,
@@ -86,6 +88,7 @@ export const pgChatRepository: ChatRepository = {
         title: ChatThreadTable.title,
         createdAt: ChatThreadTable.createdAt,
         userId: ChatThreadTable.userId,
+        workspaceId: ChatThreadTable.workspaceId,
         lastMessageAt: sql<string>`MAX(${ChatMessageTable.createdAt})`.as(
           "last_message_at",
         ),
@@ -104,6 +107,7 @@ export const pgChatRepository: ChatRepository = {
         id: row.threadId,
         title: row.title,
         userId: row.userId,
+        workspaceId: row.workspaceId ?? undefined,
         createdAt: row.createdAt,
         lastMessageAt: row.lastMessageAt
           ? new Date(row.lastMessageAt).getTime()
@@ -120,6 +124,7 @@ export const pgChatRepository: ChatRepository = {
       .update(ChatThreadTable)
       .set({
         title: thread.title,
+        workspaceId: thread.workspaceId,
       })
       .where(eq(ChatThreadTable.id, id))
       .returning();
@@ -135,6 +140,7 @@ export const pgChatRepository: ChatRepository = {
         target: [ChatThreadTable.id],
         set: {
           title: thread.title,
+          workspaceId: thread.workspaceId,
         },
       })
       .returning();
