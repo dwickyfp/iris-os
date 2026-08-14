@@ -4,6 +4,10 @@ import { useEffect, useRef } from "react";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import Sigma from "sigma";
 import type { MemoryGraphView, MemoryNode } from "app-types/memory";
+import {
+  drawMemoryNodeHover,
+  MEMORY_GRAPH_LABEL_COLOR,
+} from "./memory-graph-draw";
 import { buildMemoryGraphModel } from "./memory-graph-model";
 
 export function MemoryGraph({
@@ -36,7 +40,7 @@ export function MemoryGraph({
       });
     const renderer = new Sigma(model, container.current, {
       renderEdgeLabels: false,
-      labelColor: { color: "#e2e8f0" },
+      labelColor: { color: MEMORY_GRAPH_LABEL_COLOR },
       labelSize: 13,
       labelWeight: "500",
       labelDensity: 0.85,
@@ -46,6 +50,7 @@ export function MemoryGraph({
       minEdgeThickness: 1,
       stagePadding: 48,
       zIndex: true,
+      defaultDrawNodeHover: drawMemoryNodeHover,
     });
     renderer.on("clickNode", ({ node }) => {
       const memoryNode = model.getNodeAttribute(node, "node") as
