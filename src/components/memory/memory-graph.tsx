@@ -1,65 +1,83 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import Graph from "graphology";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import Sigma from "sigma";
 import type { MemoryGraphView, MemoryNode } from "app-types/memory";
-
-const colors = {
-  topic: "#8b5cf6",
-  claim: "#3b82f6",
-  entity: "#22c55e",
-};
+import { buildMemoryGraphModel } from "./memory-graph-model";
 
 export function MemoryGraph({
   graph,
   onNodeClick,
-}: { graph: MemoryGraphView; onNodeClick: (node: MemoryNode) => void }) {
+  scopeLabel = "Memory",
+}: {
+  graph: MemoryGraphView;
+  onNodeClick: (node: MemoryNode) => void;
+  scopeLabel?: string;
+}) {
   const container = useRef<HTMLDivElement>(null);
+  const onNodeClickRef = useRef(onNodeClick);
+  useEffect(() => {
+    onNodeClickRef.current = onNodeClick;
+  }, [onNodeClick]);
   useEffect(() => {
     if (!container.current) return;
-    const model = new Graph();
-    graph.nodes.forEach((node, index) => {
-      const angle = (index / Math.max(1, graph.nodes.length)) * Math.PI * 2;
-      model.addNode(node.id, {
-        label: node.label,
-        x: Math.cos(angle),
-        y: Math.sin(angle),
-        size: node.type === "topic" ? 14 : node.type === "claim" ? 8 : 5,
-        color: node.status === "superseded" ? "#64748b" : colors[node.type],
-        node,
-      });
-    });
-    graph.edges.forEach((edge) => {
-      if (!model.hasNode(edge.sourceId) || !model.hasNode(edge.targetId))
-        return;
-      model.addEdgeWithKey(edge.id, edge.sourceId, edge.targetId, {
-        color: edge.type === "CONTRADICTS" ? "#ef4444" : "#64748b",
-        size: Math.max(0.5, edge.weight * 2),
-        type: edge.type === "RELATED_TO" ? "dashed" : "line",
-        label: edge.type,
-      });
-    });
+    const model = buildMemoryGraphModel(graph, scopeLabel);
     if (model.order > 1)
       forceAtlas2.assign(model, {
-        iterations: Math.min(150, 30 + model.order),
-        settings: { gravity: 1, scalingRatio: 4, slowDown: 5 },
+        iterations: Math.min(400, Math.max(120, model.order * 8)),
+        settings: {
+          gravity: 1.5,
+          scalingRatio: 2.5,
+          slowDown: 4,
+          strongGravityMode: true,
+          barnesHutOptimize: model.order > 100,
+        },
       });
     const renderer = new Sigma(model, container.current, {
       renderEdgeLabels: false,
-      labelDensity: 0.12,
-      labelGridCellSize: 100,
+      labelColor: { color: "#e2e8f0" },
+      labelSize: 13,
+      labelWeight: "500",
+      labelDensity: 0.85,
+      labelGridCellSize: 80,
+      labelRenderedSizeThreshold: 4,
+      defaultEdgeColor: "#94a3b8",
+      minEdgeThickness: 1,
+      stagePadding: 48,
+      zIndex: true,
     });
-    renderer.on("clickNode", ({ node }) =>
-      onNodeClick(model.getNodeAttribute(node, "node") as MemoryNode),
-    );
+    renderer.on("clickNode", ({ node }) => {
+      const memoryNode = model.getNodeAttribute(node, "node") as
+        | MemoryNode
+        | undefined;
+      if (memoryNode) onNodeClickRef.current(memoryNode);
+    });
+    renderer.on("enterNode", ({ node }) => {
+      renderer.setSetting("nodeReducer", (candidate, data) => {
+        if (candidate === node || model.areNeighbors(candidate, node))
+          return { ...data, highlighted: candidate === node, zIndex: 1 };
+        return { ...data, color: "#1e293b", label: "", zIndex: 0 };
+      });
+      renderer.setSetting("edgeReducer", (edge, data) => {
+        const [source, target] = model.extremities(edge);
+        return source === node || target === node
+          ? { ...data, zIndex: 1 }
+          : { ...data, hidden: true };
+      });
+      renderer.refresh();
+    });
+    renderer.on("leaveNode", () => {
+      renderer.setSetting("nodeReducer", null);
+      renderer.setSetting("edgeReducer", null);
+      renderer.refresh();
+    });
     return () => renderer.kill();
-  }, [graph, onNodeClick]);
+  }, [graph, scopeLabel]);
   return (
     <div
       ref={container}
-      className="h-[560px] w-full rounded-xl bg-slate-950"
+      className="h-[560px] w-full rounded-xl border border-slate-800 bg-slate-950 text-slate-100 shadow-inner"
       aria-label="Interactive memory graph"
     />
   );

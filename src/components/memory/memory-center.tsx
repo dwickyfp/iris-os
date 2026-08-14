@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "ui/tabs";
 import { MemoryGraph } from "./memory-graph";
 import { appStore } from "@/app/store";
 import { useWorkspaces } from "@/hooks/queries/use-workspaces";
+import { filterMemoryGraph } from "./memory-graph-model";
 
 const emptyGraph: MemoryGraphView = {
   nodes: [],
@@ -65,20 +66,7 @@ export function MemoryCenter() {
   }, [load]);
 
   const visibleGraph = useMemo(() => {
-    const query = search.toLocaleLowerCase("id-ID");
-    const nodes = graph.nodes.filter(
-      (node) =>
-        node.confidence >= minimumConfidence &&
-        (!query || node.label.toLocaleLowerCase("id-ID").includes(query)),
-    );
-    const ids = new Set(nodes.map((node) => node.id));
-    return {
-      ...graph,
-      nodes,
-      edges: graph.edges.filter(
-        (edge) => ids.has(edge.sourceId) && ids.has(edge.targetId),
-      ),
-    };
+    return filterMemoryGraph(graph, search, minimumConfidence);
   }, [graph, minimumConfidence, search]);
 
   async function add() {
@@ -209,7 +197,23 @@ export function MemoryCenter() {
             )}
           </div>
           <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-            <MemoryGraph graph={visibleGraph} onNodeClick={inspect} />
+            <div className="space-y-2">
+              <MemoryGraph
+                graph={visibleGraph}
+                onNodeClick={inspect}
+                scopeLabel={activeWorkspace?.name ?? "Global Memory"}
+              />
+              <div
+                className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
+                aria-label="Memory graph legend"
+              >
+                <Legend color="#f8fafc" label="Scope" />
+                <Legend color="#a78bfa" label="Topic" />
+                <Legend color="#38bdf8" label="Claim" />
+                <Legend color="#34d399" label="Entity" />
+                <Legend color="#fb7185" label="Conflict" />
+              </div>
+            </div>
             <aside className="rounded-xl border p-4">
               <h2 className="font-medium">
                 {selected?.label ?? "Select a topic"}
@@ -355,5 +359,18 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="text-sm text-muted-foreground">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
     </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className="size-2.5 rounded-full border border-black/20"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
   );
 }

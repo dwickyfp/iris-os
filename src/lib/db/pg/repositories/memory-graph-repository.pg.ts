@@ -204,20 +204,11 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
   sweep(userId: string, scope?: MemoryScope): Promise<void>;
 } = {
   async overview(userId, scope = GLOBAL_SCOPE) {
-    const topics = await db
-      .select()
-      .from(MemoryTopicTable)
-      .where(
-        and(
-          eq(MemoryTopicTable.userId, userId),
-          exactScope(MemoryTopicTable, scope),
-          eq(MemoryTopicTable.status, "active"),
-        ),
-      )
-      .orderBy(desc(MemoryTopicTable.updatedAt))
-      .limit(100);
-    const topicIds = topics.map((topic) => topic.id);
-    const edges = topicIds.length
+    const nodes = (await nodesByIds(userId, scope))
+      .filter((node) => node.status === "active")
+      .slice(0, 500);
+    const nodeIds = nodes.map((node) => node.id);
+    const edges = nodeIds.length
       ? await db
           .select()
           .from(MemoryEdgeTable)
@@ -226,25 +217,14 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
               eq(MemoryEdgeTable.userId, userId),
               exactScope(MemoryEdgeTable, scope),
               eq(MemoryEdgeTable.status, "active"),
-              or(
-                inArray(MemoryEdgeTable.sourceId, topicIds),
-                inArray(MemoryEdgeTable.targetId, topicIds),
-              ),
+              inArray(MemoryEdgeTable.sourceId, nodeIds),
+              inArray(MemoryEdgeTable.targetId, nodeIds),
             ),
           )
-          .limit(500)
+          .limit(1000)
       : [];
     return {
-      nodes: topics.map((row) => ({
-        id: row.id,
-        type: "topic",
-        label: row.label,
-        status: row.status,
-        confidence: row.confidence / 100,
-        evidenceCount: 0,
-        summary: row.summary,
-        detail: row.detail,
-      })),
+      nodes,
       edges: edges.map(toEdge),
       degradedSemanticSearch: !(await vectorAvailable()),
     };
