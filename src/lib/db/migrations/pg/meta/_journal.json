@@ -218,6 +218,13 @@
       "when": 1786712400000,
       "tag": "0030_automation_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786713600000,
+      "tag": "0031_delegation_execution",
+      "breakpoints": true
     }
   ]
 }

@@ -37,6 +37,7 @@ export type AutomationExecutionRequest = {
   targetType: AutomationTarget;
   targetId: string;
   input: Record<string, unknown>;
+  allowedTools?: string[];
   timeoutMs: number;
   signal: AbortSignal;
 };
@@ -168,11 +169,15 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           message: "Automation skill is no longer accessible",
           retryable: false,
         };
+      const allowed = skill.allowedTools ?? [];
+      const effective = request.allowedTools
+        ? allowed.filter((tool) => request.allowedTools?.includes(tool))
+        : allowed;
       return runHeadlessAgent({
         request,
         profile: { type: "base" },
         instructions: `${skill.description}\n\n${skill.body}`,
-        allowedTools: skill.allowedTools ?? [],
+        allowedTools: effective,
       });
     },
     agent: async (request) => {
@@ -191,13 +196,17 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
         agent.id,
         request.userId,
       );
+      const allowed = skills.flatMap((skill) => skill.allowedTools ?? []);
+      const effective = request.allowedTools
+        ? allowed.filter((tool) => request.allowedTools?.includes(tool))
+        : allowed;
       return runHeadlessAgent({
         request,
         profile: { type: "custom", agent },
         instructions: [agent.instructions.role, agent.instructions.systemPrompt]
           .filter(Boolean)
           .join("\n\n"),
-        allowedTools: skills.flatMap((skill) => skill.allowedTools ?? []),
+        allowedTools: effective,
       });
     },
   };

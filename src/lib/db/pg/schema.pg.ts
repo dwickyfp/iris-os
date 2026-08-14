@@ -1127,8 +1127,11 @@ export const AgentRunTable = pgTable(
       .default({}),
     allowedTools: json("allowed_tools").notNull().$type<string[]>().default([]),
     timeoutMs: integer("timeout_ms").notNull().default(300000),
+    depth: integer("depth").notNull().default(0),
+    tokenBudget: integer("token_budget").notNull().default(50000),
     result: json("result").$type<Record<string, unknown>>(),
     error: text("error"),
+    errorCode: varchar("error_code", { length: 120 }),
     cancelRequestedAt: timestamp("cancel_requested_at"),
     startedAt: timestamp("started_at"),
     completedAt: timestamp("completed_at"),
@@ -1136,7 +1139,14 @@ export const AgentRunTable = pgTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
   },
-  (table) => [index("agent_run_parent_idx").on(table.parentRunId)],
+  (table) => [
+    check("agent_run_depth_check", sql`${table.depth} BETWEEN 0 AND 3`),
+    check(
+      "agent_run_token_budget_check",
+      sql`${table.tokenBudget} BETWEEN 1000 AND 200000`,
+    ),
+    index("agent_run_parent_idx").on(table.parentRunId),
+  ],
 );
 
 export const DelegationRunTable = pgTable(
@@ -1153,11 +1163,35 @@ export const DelegationRunTable = pgTable(
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
     objective: text("objective").notNull(),
+    status: varchar("status", {
+      enum: [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    result: json("result").$type<Record<string, unknown>>(),
+    errorCode: varchar("error_code", { length: 120 }),
+    error: text("error"),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
     createdAt: timestamp("created_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
   },
-  (table) => [unique().on(table.parentRunId, table.childRunId)],
+  (table) => [
+    unique().on(table.parentRunId, table.childRunId),
+    index("delegation_run_status_idx").on(
+      table.parentRunId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
 );
 
 export const AgentTable = pgTable("agent", {

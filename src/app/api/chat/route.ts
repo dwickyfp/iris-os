@@ -63,6 +63,11 @@ import { recordActivityEvent } from "lib/activity/service";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable } from "lib/db/pg/schema.pg";
 import { and, eq } from "drizzle-orm";
+import { isReadOnlyTool } from "lib/ai/agent/approval-policy";
+import {
+  createDelegateWorkTool,
+  DELEGATE_WORK_TOOL_NAME,
+} from "lib/ai/tools/delegation/delegate-work";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -421,6 +426,16 @@ export async function POST(request: Request) {
                   : openaiImageTool,
             }
           : {};
+        const DELEGATION_TOOLS: Record<string, Tool> = isV2FeatureEnabled(
+          "delegation",
+        )
+          ? {
+              [DELEGATE_WORK_TOOL_NAME]: createDelegateWorkTool({
+                parentRunId: runId,
+                userId: session.user.id,
+              }),
+            }
+          : {};
         const vercelAITooles = safe({
           ...MCP_TOOLS,
           ...WORKFLOW_TOOLS,
@@ -436,6 +451,7 @@ export async function POST(request: Request) {
                 ...bindingTools,
                 ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
                 ...IMAGE_TOOL,
+                ...DELEGATION_TOOLS,
               },
               skillsRuntime.tools,
             );
@@ -456,6 +472,8 @@ export async function POST(request: Request) {
                 requestId,
                 threadId: thread!.id,
                 userMessageId: message.id,
+                approvedDelegationTools:
+                  Object.keys(vercelAITooles).filter(isReadOnlyTool),
               },
               allowedTools: Object.keys(vercelAITooles),
               startedAt: new Date(),
