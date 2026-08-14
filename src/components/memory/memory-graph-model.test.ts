@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import type { MemoryEdge, MemoryGraphView, MemoryNode } from "app-types/memory";
+import { describe, expect, it } from "vitest";
 import {
+  MEMORY_SCOPE_ROOT_ID,
   buildMemoryGraphModel,
   filterMemoryGraph,
-  MEMORY_SCOPE_ROOT_ID,
 } from "./memory-graph-model";
 
 function node(
@@ -97,7 +97,7 @@ describe("memory graph model", () => {
     model.forEachEdge((_edge, attributes) => edgeTypes.add(attributes.type));
 
     expect(edgeTypes).toEqual(new Set(["line"]));
-    expect(model.getEdgeAttribute("edge-b", "color")).toBe("#6ee7b7");
+    expect(model.getEdgeAttribute("edge-b", "colorRole")).toBe("related");
   });
 
   it("keeps direct neighbors when searching so relationship context remains", () => {

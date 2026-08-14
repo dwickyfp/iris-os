@@ -1,425 +1,295 @@
 # Iris OS
 
-**The open operating system for AI agents, tools, and workflows.**
+**An open, self-hostable operating layer for AI work.**
 
-Iris OS is an open-source AI workspace where models can reason, agents can
-specialize, tools can act, and workflows can coordinate the work. It provides
-one interface for conversations, automation, voice, code execution, content
-generation, and Model Context Protocol (MCP) integrations.
+Iris OS brings conversations, specialized agents, durable memory, tools,
+workflows, and background execution into one workspace. Choose the model for
+the job, connect external systems through the Model Context Protocol (MCP), and
+keep ownership of your deployment, credentials, and data.
 
 [![MCP Supported](https://img.shields.io/badge/MCP-Supported-00c853)](https://modelcontextprotocol.io/introduction)
-[![Local First](https://img.shields.io/badge/Local-First-blue)](https://localfirstweb.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Self-hostable](https://img.shields.io/badge/Self--hostable-Yes-2563eb)](docs/tips-guides/docker.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [![Deploy with Vercel](https://vercel.com/button)](<https://vercel.com/new/clone?repository-url=https://github.com/dwickyfp/iris-os&env=BETTER_AUTH_SECRET&env=OPENAI_API_KEY&env=GOOGLE_GENERATIVE_AI_API_KEY&env=ANTHROPIC_API_KEY&envDescription=BETTER_AUTH_SECRET+is+required+(enter+any+secret+value).+At+least+one+LLM+provider+API+key+(OpenAI,+Claude,+or+Google)+is+required,+but+you+can+add+all+of+them.+See+the+link+below+for+details.&envLink=https://github.com/dwickyfp/iris-os/blob/main/.env.example&demo-title=Iris+OS&demo-description=The+open+operating+system+for+AI+agents,+tools,+and+workflows.&products=[{"type":"integration","protocol":"storage","productSlug":"neon","integrationSlug":"neon"},{"type":"integration","protocol":"storage","productSlug":"upstash-kv","integrationSlug":"upstash"},{"type":"blob"}]>)
 
-## Why Iris OS?
+## What Iris OS does
 
-In Greek mythology, **Iris** is the messenger who connects worlds. That idea is
-the foundation of this project: intelligence becomes more useful when it can
-connect people, models, knowledge, and software.
-
-Iris is also associated with the rainbow: many distinct colors forming one
-bridge. In Iris OS, those colors represent different models, providers, tools,
-and ways of working. The goal is not to hide their differences, but to make
-them interoperable through one coherent experience.
-
-The **OS** does not mean Iris OS replaces your device operating system. It means
-Iris OS acts as an operating layer for AI work:
-
-- **Models are the intelligence.** Use the provider best suited to each task.
-- **Agents are the specialists.** Give each agent a role, context, and tools.
-- **Tools are the capabilities.** Connect external systems through MCP and
-  built-in integrations.
-- **Workflows are the coordination layer.** Turn repeatable processes into
-  reusable automation.
-- **Iris is the interface.** Keep human intent, control, and visibility at the
-  center of every action.
-
-### Product Principles
-
-- **Open by design:** Self-hostable, extensible, and not tied to one model
-  provider.
-- **Action over answers:** AI should be able to complete work, not only produce
-  text.
-- **Human control:** Tool modes let users choose autonomous, approval-based, or
-  tool-free operation.
-- **Composable systems:** Agents, tools, presets, and workflows should work
-  independently and together.
-- **Local ownership:** Your deployment, configuration, credentials, and data
-  remain under your control.
-
-## Capabilities
-
-| Layer | What Iris OS provides |
+| Area | Capabilities |
 | --- | --- |
-| **Iris Chat** | Multi-model conversations, attachments, temporary chats, and `@mention` invocation |
-| **Iris Agents** | Specialized assistants with custom instructions, context, and tool access |
-| **Iris Tools** | MCP integrations, web search, HTTP requests, code execution, and data visualization |
-| **Iris Flow** | Visual workflows that can be published and invoked as reusable tools |
-| **Iris Voice** | Realtime voice conversations with MCP tool access |
-| **Iris Studio** | Image generation, artifacts, structured output, and rich content rendering |
+| **Chat** | Multi-model streaming conversations, attachments, temporary chats, exports, voice, and tool approval modes |
+| **Agents** | Reusable specialists with custom instructions, skills, model selection, and scoped tool access |
+| **Memory** | Durable claims, topics, entities, provenance, conflict resolution, scoped recall, and an interactive 3D memory globe |
+| **Tools** | MCP servers and apps, web search, HTTP requests, JavaScript/Python execution, image generation, and interactive data views |
+| **Workflows** | A visual flow builder whose published workflows can be invoked as tools from chat |
+| **Skills** | Versioned skill packages that agents can use, restore, and improve from observed work |
+| **Workspaces** | Optional isolated instructions, chats, tasks, and memory scopes for different contexts |
+| **Operations** | Optional durable tasks, scheduled automation, delegated agent runs, approvals, retries, and admin diagnostics |
 
-Iris OS supports OpenAI, Anthropic, Google, xAI, OpenRouter, Ollama, and other
-compatible providers. It is built with Next.js, the Vercel AI SDK, PostgreSQL,
-and MCP.
+Iris OS supports OpenAI, Anthropic, Google, xAI, OpenRouter, Ollama, Groq, and
+OpenAI-compatible providers. Model providers and internal system engines can be
+configured independently from the admin settings.
 
-## Quick Start
+> [!NOTE]
+> Workspace, learning, automation, and delegation capabilities are V2 features
+> controlled by environment flags. They are disabled by default so existing
+> installations can migrate and enable each subsystem deliberately.
 
-You need PostgreSQL and at least one AI provider API key. For a managed setup,
-use the Vercel deployment flow. For full ownership, run Iris OS locally or with
-Docker.
+## Product principles
 
-[Open the Vercel deployment guide](docs/tips-guides/vercel.md), or continue to
-[Getting Started](#getting-started) for local installation.
+- **Open by design.** Self-hostable, extensible, and not tied to one model
+  provider.
+- **Action over answers.** Agents can use tools and execute multi-step work,
+  not only generate text.
+- **Human control.** Tool permissions, approvals, audit records, and explicit
+  feature flags keep operators in charge.
+- **Composable systems.** Models, agents, skills, tools, workflows, and memory
+  remain useful independently and become more capable together.
+- **Scoped context.** Workspace, task, agent, and global memory stay isolated
+  and are enforced on the server.
+- **Data ownership.** Your deployment controls its database, file storage,
+  provider credentials, and retention policy.
 
-## Table of Contents
+## Quick start
 
-- [Why Iris OS?](#why-iris-os)
-  - [Product Principles](#product-principles)
-- [Capabilities](#capabilities)
-- [Quick Start](#quick-start)
-- [How Iris OS Works](#how-iris-os-works)
-  - [Browser Automation with Playwright MCP](#browser-automation-with-playwright-mcp)
-  - [Visual Workflows as Custom Tools](#visual-workflows-as-custom-tools)
-  - [Custom Agents](#custom-agents)
-  - [Realtime Voice and MCP Tools](#realtime-voice-and-mcp-tools)
-  - [Quick Tool Mentions and Presets](#quick-tool-mentions-and-presets)
-  - [Tool Choice Mode](#tool-choice-mode)
-  - [Default Tools](#default-tools)
-- [Getting Started](#getting-started)
-  - [Docker Compose](#docker-compose)
-  - [Local Development](#local-development)
-  - [Environment Variables](#environment-variables)
-- [Guides](#guides)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [Credits](#credits)
+### Prerequisites
 
-## How Iris OS Works
+- [Node.js](https://nodejs.org/) 18 or newer
+- [pnpm](https://pnpm.io/) 10
+- PostgreSQL with the `pgvector` extension
+- At least one supported AI provider API key
 
-The following examples show how the layers of Iris OS work together.
-
-### Browser Automation with Playwright MCP
-
-**Example:** Control a web browser using Microsoft's [playwright-mcp](https://github.com/microsoft/playwright-mcp) tool.
-
-- The LLM autonomously decides how to use tools from the MCP server, calling them multiple times to complete a multi-step task and return a final message.
-
-Sample prompt:
-
-```prompt
-1. Use the @tool('web-search') to look up information about
-   "Model Context Protocol."
-
-2. Then, using : @mcp("playwright")
-   - navigate to Google (https://www.google.com)
-   - click the "Login" button
-   - enter the email address provided in the prompt
-   - click the "Next" button
-   - Close the browser
-```
-
-### Visual Workflows as Custom Tools
-
-**Example:** Create custom workflows that become callable tools in your chat conversations.
-
-- Build visual workflows by connecting LLM nodes (for AI reasoning) and Tool nodes (for MCP tool execution)
-- Publish workflows to make them available as `@workflow_name` tools in chat
-- Chain complex multi-step processes into reusable, automated sequences
-
-### Custom Agents
-
-**Example:** Create specialized AI agents with custom instructions and tool access.
-
-- Define custom agents with specific system prompts and available tools
-- Easily invoke agents in chat using `@agent_name`
-- Build task-specific assistants like a GitHub Manager agent with issue/PR tools and project context
-
-For instance, create a GitHub Manager agent by:
-
-- Providing GitHub tools (issue/PR creation, comments, queries)
-- Adding project details to the system prompt
-- Calling it with `@github_manager` to manage your repository
-
-### Realtime Voice and MCP Tools
-
-Iris Voice provides realtime conversations through OpenAI's Realtime API with
-full MCP tool integration. Talk naturally while Iris OS executes tools and
-reports progress in real time.
-
-### Quick Tool Mentions and Presets
-
-Quickly call tool during chat by typing `@toolname`.
-No need to memorize — just type `@` and pick from the list!
-
-**Tool Selection vs. Mentions (`@`) — When to Use What:**
-
-- **Tool Selection**: Make frequently used tools always available to the LLM across all chats. Great for convenience and maintaining consistent context over time.
-- **Mentions (`@`)**: Temporarily bind only the mentioned tools for that specific response. Since only the mentioned tools are sent to the LLM, this saves tokens and can improve speed and accuracy.
-
-Each method has its own strengths — use them together to balance efficiency and performance.
-
-You can also create **tool presets** by selecting only the MCP servers or tools you need.
-Switch between presets instantly with a click — perfect for organizing tools by task or workflow.
-
-### Tool Choice Mode
-
-Control how tools are used in each chat with **Tool Choice Mode** — switch anytime with `⌘P`.
-
-- **Auto:** The model automatically calls tools when needed.
-- **Manual:** The model will ask for your permission before calling a tool.
-- **None:** Tool usage is disabled completely.
-
-This lets you flexibly choose between autonomous, guided, or tool-free interaction depending on the situation.
-
-### Default Tools
-
-#### Web Search
-
-Built-in web search powered by [Exa AI](https://exa.ai). Search the web with semantic AI and extract content from URLs directly in your chats.
-
-- **Optional:** Add `EXA_API_KEY` to `.env` to enable web search
-- **Free Tier:** 1,000 requests/month at no cost, no credit card required
-- **Easy Setup:** Get your API key instantly at [dashboard.exa.ai](https://dashboard.exa.ai)
-
-#### Image Generation
-
-Built-in image generation and editing capabilities powered by AI models. Create, edit, and modify images directly in your chats.
-
-- **Supported Operations:** Image generation, editing, and composition
-- **Current Models:** Gemini Nano Banana, OpenAI
-
-#### JavaScript and Python Execution
-
-Run JavaScript or Python for calculations, data transformation, prototyping,
-and tool-assisted reasoning directly within a conversation.
-
-#### Data Visualization
-
-**Interactive Tables**: Create feature-rich data tables with advanced functionality:
-
-- **Sorting & Filtering**: Sort by any column, filter data in real-time
-- **Search & Highlighting**: Global search with automatic text highlighting
-- **Export Options**: Export to CSV or Excel format with lazy-loaded libraries
-- **Column Management**: Show/hide columns with visibility controls
-- **Pagination**: Handle large datasets with built-in pagination
-- **Data Type Support**: Proper formatting for strings, numbers, dates, and booleans
-
-**Chart Generation**: Visualize data with various chart types (bar, line, pie charts)
-
-> Additionally, many other tools are provided, such as an HTTP client for API requests and more.
-
-These capabilities are designed to compose: an agent can search the web, run
-code, transform the result, and pass it into a reusable workflow without
-leaving Iris OS.
-
-## Getting Started
-
-> This project uses [pnpm](https://pnpm.io/) as the recommended package manager.
+### Local development
 
 ```bash
-# If you don't have pnpm:
-npm install -g pnpm
-```
+git clone https://github.com/dwickyfp/iris-os.git
+cd iris-os
+pnpm install
 
-### Docker Compose
+# pnpm install creates .env from .env.example when it does not exist.
+# Set POSTGRES_URL, BETTER_AUTH_SECRET, and at least one provider API key.
 
-```bash
-# 1. Install dependencies
-pnpm i
-
-# 2. Enter only the LLM PROVIDER API key(s) you want to use in the .env file at the project root.
-# Example: The app works with just OPENAI_API_KEY filled in.
-# (The .env file is automatically created when you run pnpm i.)
-
-# 3. Build and start all services (including PostgreSQL) with Docker Compose
-pnpm docker-compose:up
-
-```
-
-### Local Development
-
-```bash
-pnpm i
-
-#(Optional) Start a local PostgreSQL instance
-# If you already have your own PostgreSQL running, you can skip this step.
-# In that case, make sure to update the PostgreSQL URL in your .env file.
-pnpm docker:pg
-
-# Enter required information in the .env file
-# The .env file is created automatically. Just fill in the required values.
-# For the fastest setup, provide at least one LLM provider's API key (e.g., OPENAI_API_KEY, CLAUDE_API_KEY, GEMINI_API_KEY, etc.) and the PostgreSQL URL you want to use.
-
-pnpm build:local && pnpm start
-
-# (Recommended for most cases. Ensures correct cookie settings.)
-# For development mode with hot-reloading and debugging, you can use:
-# pnpm dev
-```
-
-Alternative: Use Docker Compose for DB only (run app via pnpm)
-
-```bash
-# Start Postgres only via compose
-# Ensure your .env includes: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB matching POSTGRES_URL
+# Start the repository's pgvector-enabled PostgreSQL service.
 docker compose -f docker/compose.yml up -d postgres
 
-# Apply migrations
 pnpm db:migrate
-
-
-# Run app locally
-pnpm dev   # or: pnpm build && pnpm start
+pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to get started.
+Open [http://localhost:3000](http://localhost:3000).
 
-### Environment Variables
+For a local production build, set `NO_HTTPS=1` or use:
 
-The `pnpm i` command generates a `.env` file. Add your API keys there.
+```bash
+pnpm build:local
+pnpm start
+```
+
+### Full Docker stack
+
+The Compose stack starts the web application, PostgreSQL, the memory worker,
+and the Iris operations worker:
+
+```bash
+pnpm install
+# Configure provider keys in docker/.env before starting the services.
+pnpm docker-compose:up
+pnpm docker-compose:logs
+```
+
+Stop the stack with `pnpm docker-compose:down`. See the
+[Docker hosting guide](docs/tips-guides/docker.md) for production setup.
+
+### Vercel
+
+Use the deployment button above or follow the
+[Vercel hosting guide](docs/tips-guides/vercel.md). A managed PostgreSQL
+database, authentication secret, and at least one model provider are required.
+Background V2 processing also needs a suitable long-running worker deployment;
+the Docker stack includes both workers by default.
+
+## Configuration
+
+[`.env.example`](.env.example) is the source of truth for configuration. The
+main groups are:
+
+| Group | Variables |
+| --- | --- |
+| **Required** | `POSTGRES_URL`, `BETTER_AUTH_SECRET`, and at least one provider API key |
+| **Providers** | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_BASE_URL` |
+| **Tools** | `EXA_API_KEY`, MCP configuration, OAuth, restrictions, and timeout settings |
+| **Storage** | Vercel Blob or S3-compatible storage settings |
+| **Authentication** | Better Auth URL, sign-up policy, and Google, GitHub, or Microsoft OAuth credentials |
+| **Optional infrastructure** | Redis for features that use shared cache or pub/sub |
+| **Security** | `MODEL_SETTINGS_ENCRYPTION_KEY` for encrypted model-provider settings |
+
+Generate a Better Auth secret with:
+
+```bash
+npx @better-auth/cli@latest secret
+```
+
+### V2 feature flags
+
+Enable V2 capabilities incrementally after applying the latest database
+migrations:
 
 ```dotenv
-# === LLM Provider API Keys ===
-# You only need to enter the keys for the providers you plan to use
-GOOGLE_GENERATIVE_AI_API_KEY=****
-OPENAI_API_KEY=****
-XAI_API_KEY=****
-ANTHROPIC_API_KEY=****
-OPENROUTER_API_KEY=****
-OLLAMA_BASE_URL=http://localhost:11434/api
+IRIS_WORKSPACES_V2=1
+IRIS_LEARNING_V2=1
+IRIS_AUTOMATION_V2=1
+IRIS_DELEGATION_V2=1
 
+# Keep agentic memory review non-mutating until its model and output have been
+# verified in your environment. Change to write only after that review.
+IRIS_MEMORY_CURATOR_MODE=shadow
+```
 
+| Flag | Enables | Runtime requirement |
+| --- | --- | --- |
+| `IRIS_WORKSPACES_V2` | Workspaces, scoped chat context, and task ledger | Web application |
+| `IRIS_LEARNING_V2` | Background observations and safe learned-skill promotion | `worker:iris` |
+| `IRIS_AUTOMATION_V2` | Durable schedules, runs, approvals, and retries | `worker:iris` |
+| `IRIS_DELEGATION_V2` | Parent/child agent runs with bounded permissions | `worker:iris` |
+| `IRIS_MEMORY_CURATOR_MODE` | `shadow` evaluation or reviewed memory writes | `worker:memory` |
 
-# Secret for Better Auth (generate with: npx @better-auth/cli@latest secret)
-BETTER_AUTH_SECRET=****
+Do not enable production flags before reviewing the
+[V2 migration verification guide](docs/iris-v2/migration-verification.md).
 
-# (Optional)
-# URL for Better Auth (the URL you access the app from)
-BETTER_AUTH_URL=
+## How the pieces fit together
 
-# === Database ===
-# If you don't have PostgreSQL running locally, start it with: pnpm docker:pg
-POSTGRES_URL=postgres://your_username:your_password@localhost:5432/your_database_name
+```mermaid
+flowchart LR
+    U["User"] --> UI["Next.js app"]
+    UI --> C["Chat runtime"]
+    C --> M["Model providers"]
+    C --> A["Agents and skills"]
+    C --> T["Built-in and MCP tools"]
+    C --> W["Visual workflows"]
+    C --> DB[("PostgreSQL + pgvector")]
+    C --> Q["Durable jobs"]
+    Q --> MW["Memory worker"]
+    Q --> IW["Iris worker"]
+    MW --> DB
+    IW --> DB
+```
 
-# (Optional)
-# === Tools ===
-# Exa AI for web search and content extraction (optional, but recommended for @web and research features)
-EXA_API_KEY=your_exa_api_key_here
+The foreground chat runtime streams responses while composing agents, tools,
+workflows, skills, and scoped memory. Durable jobs move memory review,
+learning, automation, and delegated execution out of the request path. Both
+workers use the same PostgreSQL-backed ownership, audit, and idempotency
+boundaries as the web application.
 
+## Highlights
 
-# Whether to use file-based MCP config (default: false)
-FILE_BASED_MCP_CONFIG=false
+### Scoped, agentic memory
 
-# === File Storage ===
-# Vercel Blob is the default storage driver (works in both local dev and production)
-# Pull the token locally with `vercel env pull`
-FILE_STORAGE_TYPE=vercel-blob
-FILE_STORAGE_PREFIX=uploads
-BLOB_READ_WRITE_TOKEN=
+Iris can recall durable knowledge across global, workspace, task, and agent
+scopes. The Memory Center exposes provenance, confidence filtering, conflicts,
+and related concepts in a theme-aware 3D globe. Memory review runs
+asynchronously and preserves evidence and correction lineage instead of
+silently replacing prior claims.
 
-# -- S3 (coming soon) --
-# FILE_STORAGE_TYPE=s3
-# FILE_STORAGE_PREFIX=uploads
-# FILE_STORAGE_S3_BUCKET=
-# FILE_STORAGE_S3_REGION=
+### MCP tools and tool control
 
-# (Optional)
-# === OAuth Settings ===
-# Fill in these values only if you want to enable Google/GitHub/Microsoft login
+Connect MCP servers, inspect their tools, and invoke tools with `@mentions` or
+presets. Chat supports three tool modes:
 
-#GitHub
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
+- **Auto:** the model can call available tools when needed.
+- **Manual:** the user approves tool calls before execution.
+- **None:** tools are disabled for the response.
 
-#Google
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-# Set to 1 to force account selection
-GOOGLE_FORCE_ACCOUNT_SELECTION=
+See [MCP server setup and tool testing](docs/tips-guides/mcp-server-setup-and-tool-testing.md).
 
+### Agents, skills, and visual workflows
 
-# Microsoft
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
-# Optional Tenant Id
-MICROSOFT_TENANT_ID=
-# Set to 1 to force account selection
-MICROSOFT_FORCE_ACCOUNT_SELECTION=
+Agents combine instructions, tools, and skills into reusable specialists.
+Visual workflows connect model and tool nodes into repeatable processes, then
+publish those flows as callable chat tools. Learned procedures reuse the same
+skill repository and runtime rather than introducing a separate execution
+system.
 
-# Set this to 1 to disable user sign-ups.
-DISABLE_SIGN_UP=
+### Built-in creative and compute tools
 
-# Set this to 1 to disallow adding MCP servers.
-NOT_ALLOW_ADD_MCP_SERVERS=
+- Semantic web search and URL extraction through Exa
+- Image generation and editing with supported provider models
+- JavaScript and Python execution for calculation and transformation
+- Interactive tables with search, filtering, pagination, and CSV/Excel export
+- Bar, line, and pie chart generation
+- Realtime voice through OpenAI's Realtime API with MCP access
+
+## Development
+
+### Common commands
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm dev` | Start the development server |
+| `pnpm build` / `pnpm start` | Build and run the production application |
+| `pnpm lint` | Run Biome lint checks |
+| `pnpm check-types` | Run TypeScript without emitting files |
+| `pnpm test` | Run the Vitest unit suite |
+| `pnpm test:integration:db` | Run PostgreSQL integration tests |
+| `pnpm test:e2e` | Run Playwright end-to-end tests |
+| `pnpm db:migrate` | Apply checked-in Drizzle migrations |
+| `pnpm db:studio` | Open Drizzle Studio |
+| `pnpm worker:memory` | Run asynchronous memory review and consolidation |
+| `pnpm worker:iris` | Run learning, automation, and delegation jobs |
+
+`pnpm check` runs an auto-fixing lint pass before types and tests. Use the three
+read-only commands below when you only want verification:
+
+```bash
+pnpm lint
+pnpm check-types
+pnpm test
+```
+
+### Repository structure
+
+```text
+src/app/          Next.js pages, route handlers, authentication, and middleware
+src/components/   Product and reusable UI components
+src/hooks/        Client data and application hooks
+src/lib/          AI runtimes, repositories, memory, jobs, and shared helpers
+scripts/          Migrations, workers, benchmarks, and maintenance commands
+tests/            Playwright and larger integration suites
+docs/             Deployment, configuration, and architecture guides
+docker/           Application image and local/full-stack Compose services
 ```
 
 ## Guides
 
-Step-by-step setup guides for running and configuring Iris OS.
+- [Docker hosting](docs/tips-guides/docker.md)
+- [Vercel hosting](docs/tips-guides/vercel.md)
+- [MCP server setup and tool testing](docs/tips-guides/mcp-server-setup-and-tool-testing.md)
+- [MCP OAuth flow](docs/tips-guides/mcp-oauth-flow.md)
+- [File storage drivers](docs/tips-guides/file-storage.md)
+- [System prompts and customization](docs/tips-guides/system-prompts-and-customization.md)
+- [OAuth sign-in](docs/tips-guides/oauth.md)
+- [OpenAI-compatible providers](docs/tips-guides/adding-openAI-like-providers.md)
+- [Temporary chat windows](docs/tips-guides/temporary_chat.md)
+- [End-to-end testing](docs/tips-guides/e2e-testing-guide.md)
+- [V2 migration verification](docs/iris-v2/migration-verification.md)
 
-### [MCP Server Setup and Tool Testing](./docs/tips-guides/mcp-server-setup-and-tool-testing.md)
+## Rollout status
 
-- How to add and configure MCP servers in your environment
+The V2 storage, scoped memory, task, learning, automation, delegation, system
+engine, and operations foundations are implemented behind flags. Local unit,
+type, lint, migration, integration, production-build, and targeted browser
+gates are in place. Before broad production enablement, each operator should
+still complete a staging migration rehearsal, representative load and security
+review, observability checks, and a rollback drill for their environment.
 
-### [Docker Hosting Guide](./docs/tips-guides/docker.md)
-
-- Self-host Iris OS with Docker, including environment configuration.
-
-### [Vercel Hosting Guide](./docs/tips-guides/vercel.md)
-
-- Deploy Iris OS to Vercel with a guided production setup.
-
-### [File Storage Drivers](./docs/tips-guides/file-storage.md)
-
-- Cloud-based file storage with Vercel Blob (default) for seamless uploads in both development and production. S3 support coming soon.
-
-### [System Prompts and Workspace Customization](./docs/tips-guides/system-prompts-and-customization.md)
-
-- Personalize Iris OS with system prompts, user preferences, and MCP tool instructions.
-
-### [OAuth Sign-In Setup](./docs/tips-guides/oauth.md)
-
-- Configure Google, GitHub, and Microsoft OAuth for secure user login support.
-
-### [Adding OpenAI-Compatible Providers](docs/tips-guides/adding-openAI-like-providers.md)
-
-- Connect providers that implement an OpenAI-compatible API.
-
-### [End-to-End Testing Guide](./docs/tips-guides/e2e-testing-guide.md)
-
-- Run Playwright tests for multi-user scenarios, agent visibility, and CI/CD.
-
-### [Temporary Chat Windows](./docs/tips-guides/temporary_chat.md)
-
-- Open lightweight popup conversations for side questions or testing without
-  affecting the main thread.
-
-## Roadmap
-
-Planned features coming soon to Iris OS:
-
-- [x] **File Upload & Storage** (Vercel Blob integration)
-- [x] **Image Generation**
-- [ ] **Collaborative Document Editing** (like OpenAI Canvas: user & assistant co-editing)
-- [ ] **RAG (Retrieval-Augmented Generation)**
-- [ ] **Web-based Compute** (with [WebContainers](https://webcontainers.io) integration)
-
-Have an idea for the next Iris OS capability? Open a
-[feature request](https://github.com/dwickyfp/iris-os/issues/new).
+See [`ROADMAP.md`](ROADMAP.md) for the current engineering status and remaining
+rollout work.
 
 ## Contributing
 
-Bug reports, feature ideas, documentation, translations, and code contributions
-are welcome. The goal is to build an open AI operating layer that remains
-useful, understandable, and under its users' control.
-
-Read the [Contributing Guide](./CONTRIBUTING.md) before opening a pull request or
-proposing a major change.
-
-For language contributions, see the
-[translation guide](./messages/language.md).
+Bug reports, feature ideas, documentation, translations, and code
+contributions are welcome. Read the [Contributing Guide](CONTRIBUTING.md) before
+opening a pull request or proposing a major change. For language contributions,
+see the [translation guide](messages/language.md).
 
 ## Credits
 
@@ -429,4 +299,4 @@ on the open-source project originally created by
 contributors. The upstream history and attribution are preserved in this
 repository.
 
-Iris OS is released under the [MIT License](./LICENSE).
+Iris OS is released under the [MIT License](LICENSE).

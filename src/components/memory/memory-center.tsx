@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { appStore } from "@/app/store";
+import { useWorkspaces } from "@/hooks/queries/use-workspaces";
 import type {
   MemoryConflict,
   MemoryCuratorRun,
@@ -8,12 +9,11 @@ import type {
   MemoryNode,
   UserMemory,
 } from "app-types/memory";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "ui/button";
 import { Input } from "ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "ui/tabs";
 import { MemoryGraph } from "./memory-graph";
-import { appStore } from "@/app/store";
-import { useWorkspaces } from "@/hooks/queries/use-workspaces";
 import { filterMemoryGraph } from "./memory-graph-model";
 
 const emptyGraph: MemoryGraphView = {
@@ -207,11 +207,11 @@ export function MemoryCenter() {
                 className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
                 aria-label="Memory graph legend"
               >
-                <Legend color="#f8fafc" label="Scope" />
-                <Legend color="#a78bfa" label="Topic" />
-                <Legend color="#38bdf8" label="Claim" />
-                <Legend color="#34d399" label="Entity" />
-                <Legend color="#fb7185" label="Conflict" />
+                <Legend color="var(--foreground)" label="Scope" />
+                <Legend color="var(--chart-1)" label="Topic" />
+                <Legend color="var(--chart-2)" label="Claim" />
+                <Legend color="var(--chart-3)" label="Entity" />
+                <Legend color="var(--destructive)" label="Conflict" />
               </div>
             </div>
             <aside className="rounded-xl border p-4">
@@ -366,7 +366,7 @@ function Legend({ color, label }: { color: string; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
-        className="size-2.5 rounded-full border border-black/20"
+        className="size-2.5 rounded-full border border-border"
         style={{ backgroundColor: color }}
         aria-hidden="true"
       />

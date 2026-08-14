@@ -1,23 +1,43 @@
+import type { MemoryGraphView, MemoryNode } from "app-types/memory";
 import Graph from "graphology";
+import type { Point3D } from "./memory-graph-globe";
 import type {
-  MemoryGraphView,
-  MemoryNode,
-  MemoryNodeType,
-} from "app-types/memory";
+  MemoryEdgeColorRole,
+  MemoryNodeColorRole,
+} from "./memory-graph-theme";
 
 export const MEMORY_SCOPE_ROOT_ID = "__memory_scope_root__";
 
-const nodeColors: Record<MemoryNodeType, string> = {
-  topic: "#a78bfa",
-  claim: "#38bdf8",
-  entity: "#34d399",
-};
+export interface MemoryGraphNodeAttributes {
+  x: number;
+  y: number;
+  size: number;
+  label: string;
+  baseLabel: string;
+  baseSize: number;
+  colorRole: MemoryNodeColorRole;
+  color?: string;
+  depth?: number;
+  node?: MemoryNode;
+  sphere?: Point3D;
+  virtual: boolean;
+  zIndex?: number;
+}
 
-const edgeColors = {
-  CONTRADICTS: "#fb7185",
-  RELATED_TO: "#6ee7b7",
-  default: "#94a3b8",
-};
+export interface MemoryGraphEdgeAttributes {
+  colorRole: MemoryEdgeColorRole;
+  color?: string;
+  label: string;
+  size: number;
+  type: "line";
+  virtual: boolean;
+  zIndex?: number;
+}
+
+export type MemoryGraphModel = Graph<
+  MemoryGraphNodeAttributes,
+  MemoryGraphEdgeAttributes
+>;
 
 export function filterMemoryGraph(
   graph: MemoryGraphView,
@@ -69,15 +89,18 @@ export function buildMemoryGraphModel(
   graph: MemoryGraphView,
   scopeLabel = "Memory",
 ) {
-  const model = new Graph();
+  const model: MemoryGraphModel = new Graph();
   graph.nodes.forEach((node, index) => {
     const angle = (index / Math.max(1, graph.nodes.length)) * Math.PI * 2;
+    const baseSize = node.type === "topic" ? 13 : node.type === "claim" ? 8 : 6;
     model.addNode(node.id, {
       label: node.label,
+      baseLabel: node.label,
       x: Math.cos(angle),
       y: Math.sin(angle),
-      size: node.type === "topic" ? 13 : node.type === "claim" ? 8 : 6,
-      color: node.status === "superseded" ? "#64748b" : nodeColors[node.type],
+      size: baseSize,
+      baseSize,
+      colorRole: node.status === "superseded" ? "superseded" : node.type,
       node,
       virtual: false,
     });
@@ -85,12 +108,12 @@ export function buildMemoryGraphModel(
   graph.edges.forEach((edge) => {
     if (!model.hasNode(edge.sourceId) || !model.hasNode(edge.targetId)) return;
     model.addEdgeWithKey(edge.id, edge.sourceId, edge.targetId, {
-      color:
+      colorRole:
         edge.type === "CONTRADICTS"
-          ? edgeColors.CONTRADICTS
+          ? "conflict"
           : edge.type === "RELATED_TO"
-            ? edgeColors.RELATED_TO
-            : edgeColors.default,
+            ? "related"
+            : "default",
       size: Math.max(1, edge.weight * 2.2),
       type: "line",
       label: edge.type,
@@ -120,10 +143,12 @@ export function buildMemoryGraphModel(
 
   model.addNode(MEMORY_SCOPE_ROOT_ID, {
     label: scopeLabel,
+    baseLabel: scopeLabel,
     x: 0,
     y: 0,
     size: 17,
-    color: "#f8fafc",
+    baseSize: 17,
+    colorRole: "scope",
     virtual: true,
   });
   components.forEach((component, index) => {
@@ -138,7 +163,7 @@ export function buildMemoryGraphModel(
       MEMORY_SCOPE_ROOT_ID,
       representative,
       {
-        color: "#475569",
+        colorRole: "scope",
         size: 0.8,
         type: "line",
         label: "SCOPE",
