@@ -267,7 +267,7 @@ export function ChatMentionInputSuggestion({
       )
       .map((agent, i) => {
         const id = JSON.stringify({
-          type: "agent",
+          type: "peerAgent",
           name: agent.name,
           agentId: agent.id,
           description: agent.description,

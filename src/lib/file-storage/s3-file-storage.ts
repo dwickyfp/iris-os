@@ -98,6 +98,7 @@ export const createS3FileStorage = (): FileStorage => {
           Key: key,
           Body: buffer,
           ContentType: options.contentType,
+          Metadata: options.sha256 ? { sha256: options.sha256 } : undefined,
           ACL: undefined, // rely on bucket policy for public/private
         }),
       );

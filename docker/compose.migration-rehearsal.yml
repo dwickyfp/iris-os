@@ -1,0 +1,32 @@
+services:
+  migration-source:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: iris_rehearsal
+      POSTGRES_PASSWORD: rehearsal-only
+      POSTGRES_USER: iris
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iris -d iris_rehearsal"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migration-restore:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: iris_restore_drill
+      POSTGRES_PASSWORD: restore-only
+      POSTGRES_USER: iris
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iris -d iris_restore_drill"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

@@ -1,12 +1,13 @@
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { join } from "path";
-import { pgDb } from "lib/db/pg/db.pg";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 
-export const runMigrate = async () => {
+export const runMigrate = async (database?: NodePgDatabase) => {
   console.log("⏳ Running PostgreSQL migrations...");
 
   const start = Date.now();
-  await migrate(pgDb, {
+  const migrationDatabase = database ?? (await import("lib/db/pg/db.pg")).pgDb;
+  await migrate(migrationDatabase, {
     migrationsFolder: join(process.cwd(), "src/lib/db/migrations/pg"),
   }).catch((err) => {
     console.error(

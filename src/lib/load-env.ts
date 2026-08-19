@@ -1,10 +1,11 @@
-import { config } from "dotenv";
 import { existsSync } from "fs";
 import { join } from "path";
+import { config } from "dotenv";
 
 export const load = <T extends Record<string, string> = Record<string, string>>(
   root: string = process.cwd(),
 ): T => {
+  if (process.env.IRIS_DISABLE_ENV_FILE_LOADING === "1") return {} as T;
   const localEnv = join(root, ".env.local");
   const modeEnv = join(root, `.env.${process.env.NODE_ENV}`);
   const defaultEnv = join(root, ".env");

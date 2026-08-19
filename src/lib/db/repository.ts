@@ -15,6 +15,9 @@ import { pgMemoryGraphRepository } from "./pg/repositories/memory-graph-reposito
 import { pgMemoryReviewRepository } from "./pg/repositories/memory-review-repository.pg";
 import { pgWorkspaceRepository } from "./pg/repositories/workspace-repository.pg";
 import { pgTaskRepository } from "./pg/repositories/task-repository.pg";
+import { pgAgentRunRepository } from "./pg/repositories/agent-run-repository.pg";
+import { pgRemoteAgentRepository } from "./pg/repositories/remote-agent-repository.pg";
+import { pgArtifactRepository } from "./pg/repositories/artifact-repository.pg";
 
 export const chatRepository = pgChatRepository;
 export const userRepository = pgUserRepository;
@@ -36,3 +39,6 @@ export const memoryGraphRepository = pgMemoryGraphRepository;
 export const memoryReviewRepository = pgMemoryReviewRepository;
 export const workspaceRepository = pgWorkspaceRepository;
 export const taskRepository = pgTaskRepository;
+export const agentRunRepository = pgAgentRunRepository;
+export const remoteAgentRepository = pgRemoteAgentRepository;
+export const artifactRepository = pgArtifactRepository;

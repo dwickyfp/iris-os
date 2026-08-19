@@ -7,7 +7,7 @@ export type ContextSource =
   | "resources"
   | "conversation";
 
-type ContextPlannerInput = {
+export type ContextPlannerInput = {
   currentRequest: string;
   task?: string;
   workspaceInstructions?: string;
@@ -17,10 +17,16 @@ type ContextPlannerInput = {
   conversation?: string;
 };
 
-type ContextSection = {
+export type ContextSection = {
   source: ContextSource;
   content: string;
   trusted: boolean;
+  estimatedTokens: number;
+};
+
+export type ContextPlan = {
+  sections: ContextSection[];
+  truncated: ContextSource[];
   estimatedTokens: number;
 };
 
@@ -47,7 +53,7 @@ const names: Record<keyof ContextPlannerInput, ContextSource> = {
 export class ContextPlanner {
   constructor(private readonly tokenBudget = 12_000) {}
 
-  plan(input: ContextPlannerInput) {
+  plan(input: ContextPlannerInput): ContextPlan {
     let remaining = this.tokenBudget;
     const sections: ContextSection[] = [];
     const truncated: ContextSource[] = [];

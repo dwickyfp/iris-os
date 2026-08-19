@@ -18,9 +18,29 @@ const StatePayloadSchema = JsonPayloadSchema.extend({
   message: z.string().max(2_000).optional(),
 });
 const RunPayloadSchema = StatePayloadSchema.extend({
-  targetType: z.enum(["workflow", "skill", "agent"]).optional(),
+  targetType: z.enum(["workflow", "skill", "agent", "remote_agent"]).optional(),
   attempt: z.number().int().min(0).optional(),
   retryable: z.boolean().optional(),
+});
+const ArtifactVerificationPayloadSchema = StatePayloadSchema.extend({
+  artifactId: z.string().uuid(),
+  verified: z.boolean().optional(),
+  reason: z.string().max(120).optional(),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+});
+const ContextPreparationPayloadSchema = JsonPayloadSchema.extend({
+  compacted: z.boolean(),
+  estimatedTokensBefore: z.number().int().min(0),
+  estimatedTokensAfter: z.number().int().min(0),
+  sourceCount: z.number().int().min(0),
+});
+const CompletionVerificationPayloadSchema = StatePayloadSchema.extend({
+  verified: z.boolean(),
+  reason: z.string().max(240).optional(),
+  requirementCount: z.number().int().min(0),
 });
 
 export const ActivityEventPayloadRegistry = {
@@ -78,7 +98,25 @@ export const ActivityEventPayloadRegistry = {
   "delegation.failed": RunPayloadSchema,
   "delegation.cancelled": RunPayloadSchema,
   "delegation.timed_out": RunPayloadSchema,
+  "agent.remote_task_created": RunPayloadSchema,
+  "agent.remote_status_changed": RunPayloadSchema,
+  "agent.remote_artifact_received": RunPayloadSchema,
+  "agent.remote_artifact_verified": RunPayloadSchema,
+  "agent.input_required": RunPayloadSchema,
+  "agent.auth_required": RunPayloadSchema,
+  "trajectory.started": RunPayloadSchema,
+  "trajectory.step_completed": RunPayloadSchema,
+  "trajectory.completed": RunPayloadSchema,
+  "trajectory.failed": RunPayloadSchema,
+  "trajectory.cancelled": RunPayloadSchema,
+  "context.prepared": ContextPreparationPayloadSchema,
+  "verification.started": CompletionVerificationPayloadSchema,
+  "verification.completed": CompletionVerificationPayloadSchema,
+  "verification.failed": CompletionVerificationPayloadSchema,
   "artifact.created": StatePayloadSchema,
+  "artifact.verification_started": ArtifactVerificationPayloadSchema,
+  "artifact.verification_completed": ArtifactVerificationPayloadSchema,
+  "artifact.verification_failed": ArtifactVerificationPayloadSchema,
   "artifact.archived": StatePayloadSchema,
   "resource.created": StatePayloadSchema,
   "resource.attached": StatePayloadSchema,

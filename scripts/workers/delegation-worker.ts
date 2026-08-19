@@ -1,66 +1,87 @@
-import type PgBoss from "pg-boss";
-import { and, eq, inArray, lt, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { recordActivityEvent } from "lib/activity/service";
+import {
+  ArtifactService,
+  createArtifactVerifier,
+  ingestRemoteArtifacts,
+} from "lib/ai/artifacts";
+import { runManager } from "lib/ai/runs/server";
+import type { AgentRun } from "lib/ai/runs/types";
 import { createAutomationExecutionAdapter } from "lib/automation/execution-adapter";
+import { pgDb } from "lib/db/pg/db.pg";
+import { DelegationRunTable } from "lib/db/pg/schema.pg";
+import { agentRunRepository, artifactRepository } from "lib/db/repository";
 import {
   DELEGATION_EXECUTE_QUEUE,
+  DELEGATION_REMOTE_CANCEL_QUEUE,
   DELEGATION_SWEEP_QUEUE,
   enqueueDelegatedRun,
+  enqueueRemoteCancellation,
 } from "lib/delegation/queue";
-import { activeChildCount, DELEGATION_LIMITS } from "lib/delegation/service";
-import { pgDb } from "lib/db/pg/db.pg";
-import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
+import { DELEGATION_LIMITS } from "lib/delegation/service";
+import {
+  type DelegationWorkerEvent,
+  createDelegationWorkerExecutor,
+} from "lib/delegation/worker-executor";
+import { serverFileStorage } from "lib/file-storage";
+import { remoteAgentService } from "lib/remote-agent/server";
+import { decryptRemoteAgentSecret } from "lib/security/secrets";
+import type PgBoss from "pg-boss";
+import { enqueueParentResume } from "lib/ai/runs/parent-resume-queue";
 
 const executeTarget = createAutomationExecutionAdapter();
+const artifacts = new ArtifactService(serverFileStorage, artifactRepository);
+const artifactVerifier = createArtifactVerifier(
+  serverFileStorage,
+  artifactRepository,
+);
 
-async function execute(childRunId: string) {
-  const [child] = await pgDb
-    .select()
-    .from(AgentRunTable)
-    .where(
-      and(eq(AgentRunTable.id, childRunId), eq(AgentRunTable.status, "queued")),
+const execute = createDelegationWorkerExecutor({
+  runs: runManager,
+  selectRun: (id) => agentRunRepository.selectById(id),
+  selectDelegation: async (childRunId) => {
+    const [delegation] = await pgDb
+      .select({
+        targetKind: DelegationRunTable.targetKind,
+        remoteAgentId: DelegationRunTable.remoteAgentId,
+      })
+      .from(DelegationRunTable)
+      .where(eq(DelegationRunTable.childRunId, childRunId));
+    return delegation ?? null;
+  },
+  remote: remoteAgentService,
+  executeLocal: executeTarget,
+  enqueue: enqueueDelegatedRun,
+  markDispatched: (runId) => runManager.markDispatched(runId),
+  decryptCredential: decryptRemoteAgentSecret,
+  recordEvent,
+  ingestRemoteArtifacts: (claimed, owner) =>
+    ingestRemoteArtifacts(claimed, owner, {
+      artifacts,
+      verify: artifactVerifier.verify.bind(artifactVerifier),
+    }),
+});
+
+async function recordEvent(event: DelegationWorkerEvent) {
+  if (event.kind === "terminal") return recordTerminalEvent(event.child);
+  if (event.kind === "remote")
+    return recordRemoteEvent(
+      event.child,
+      event.eventType,
+      event.toStatus,
+      event.payload,
     );
-  if (!child || !child.parentRunId || !child.agentId) return;
-  const [parent] = await pgDb
-    .select()
-    .from(AgentRunTable)
-    .where(eq(AgentRunTable.id, child.parentRunId));
-  if (!parent || parent.cancelRequestedAt || parent.status === "cancelled") {
-    await finish(
-      child,
-      "cancelled",
-      null,
-      "PARENT_CANCELLED",
-      "Parent cancelled",
-    );
-    return;
-  }
-  if (
-    (await activeChildCount(parent.id)) >= DELEGATION_LIMITS.maxParallelChildren
-  ) {
-    await enqueueDelegatedRun(child.id, 5);
-    return;
-  }
-  const [claimed] = await pgDb
-    .update(AgentRunTable)
-    .set({ status: "running", startedAt: new Date() })
-    .where(
-      and(eq(AgentRunTable.id, child.id), eq(AgentRunTable.status, "queued")),
-    )
-    .returning();
-  if (!claimed) return;
-  await pgDb
-    .update(DelegationRunTable)
-    .set({ status: "running", startedAt: new Date() })
-    .where(eq(DelegationRunTable.childRunId, child.id));
+  const { child, parent, delegation } = event;
   await recordActivityEvent(child.userId, {
     actorType: "agent",
-    actorId: child.agentId,
+    actorId: child.agentId ?? undefined,
     scopeType: child.taskId
       ? "task"
       : child.workspaceId
         ? "workspace"
-        : "agent",
+        : child.agentId
+          ? "agent"
+          : "global",
     scopeId: child.taskId ?? child.workspaceId ?? child.agentId,
     eventType: "delegation.started",
     subjectType: "agent_run",
@@ -68,67 +89,50 @@ async function execute(childRunId: string) {
     runId: child.id,
     parentRunId: parent.id,
     taskId: child.taskId ?? undefined,
-    agentId: child.agentId,
-    payload: { targetType: "agent" },
+    agentId: child.agentId ?? undefined,
+    payload: {
+      targetType:
+        delegation.targetKind === "remote_agent" ? "remote_agent" : "agent",
+    },
     idempotencyKey: `delegation.started:${child.id}`,
   });
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), child.timeoutMs);
-  const poll = setInterval(() => {
-    void pgDb
-      .select({ cancel: AgentRunTable.cancelRequestedAt })
-      .from(AgentRunTable)
-      .where(
-        or(eq(AgentRunTable.id, child.id), eq(AgentRunTable.id, parent.id)),
-      )
-      .then((rows) => {
-        if (rows.some((row) => row.cancel)) controller.abort();
-      })
-      .catch(() => undefined);
-  }, 1_000);
-  const result = await executeTarget({
-    runId: child.id,
-    userId: child.userId,
-    workspaceId: child.workspaceId ?? undefined,
-    targetType: "agent",
-    targetId: child.agentId,
-    input: child.context,
-    allowedTools: child.allowedTools,
-    timeoutMs: child.timeoutMs,
-    signal: controller.signal,
-    executionSource: "delegation",
-  }).finally(() => {
-    clearTimeout(timeout);
-    clearInterval(poll);
-  });
-  if (result.status === "succeeded")
-    await finish(child, "succeeded", result.output, null, null);
-  else if (result.status === "timed_out")
-    await finish(child, "timed_out", null, "TIMED_OUT", result.message);
-  else if (result.status === "cancelled")
-    await finish(child, "cancelled", null, "CANCELLED", result.message ?? null);
-  else await finish(child, "failed", null, result.errorCode, result.message);
 }
 
-async function finish(
-  child: typeof AgentRunTable.$inferSelect,
-  status: "succeeded" | "failed" | "cancelled" | "timed_out",
-  result: Record<string, unknown> | null,
-  errorCode: string | null,
-  error: string | null,
+async function recordRemoteEvent(
+  child: AgentRun,
+  eventType:
+    | "agent.remote_task_created"
+    | "agent.remote_status_changed"
+    | "agent.remote_artifact_received"
+    | "agent.remote_artifact_verified"
+    | "agent.input_required"
+    | "agent.auth_required",
+  toStatus: string,
+  payload: Record<string, unknown> = {},
 ) {
-  const completedAt = new Date();
-  await pgDb.transaction(async (tx) => {
-    await tx
-      .update(AgentRunTable)
-      .set({ status, result, errorCode, error, completedAt })
-      .where(eq(AgentRunTable.id, child.id));
-    await tx
-      .update(DelegationRunTable)
-      .set({ status, result, errorCode, error, completedAt })
-      .where(eq(DelegationRunTable.childRunId, child.id));
+  await recordActivityEvent(child.userId, {
+    actorType: "agent",
+    scopeType: child.taskId
+      ? "task"
+      : child.workspaceId
+        ? "workspace"
+        : "global",
+    scopeId: child.taskId ?? child.workspaceId,
+    eventType,
+    subjectType: "agent_run",
+    subjectId: child.id,
+    runId: child.id,
+    parentRunId: child.parentRunId ?? undefined,
+    taskId: child.taskId ?? undefined,
+    payload: { targetType: "remote_agent", toStatus, ...payload },
+    idempotencyKey: `${eventType}:${child.id}:${toStatus}`,
   });
+}
+
+async function recordTerminalEvent(child: AgentRun) {
+  const status = child.status;
+  if (!["succeeded", "failed", "cancelled", "timed_out"].includes(status))
+    return;
   const eventType =
     status === "succeeded"
       ? "delegation.completed"
@@ -155,14 +159,22 @@ async function finish(
     parentRunId: child.parentRunId ?? undefined,
     taskId: child.taskId ?? undefined,
     agentId: child.agentId ?? undefined,
-    payload: { targetType: "agent", errorCode },
+    payload: { targetType: "agent", errorCode: child.errorCode },
     idempotencyKey: `${eventType}:${child.id}`,
   });
+  if (child.parentRunId) {
+    const pending = await runManager.listPendingParentResumeIds(100);
+    if (pending.includes(child.parentRunId)) {
+      if (await enqueueParentResume(child.parentRunId))
+        await runManager.markParentResumeDispatched(child.parentRunId);
+    }
+  }
 }
 
 export async function registerDelegationWorkers(boss: PgBoss) {
   await boss.createQueue(DELEGATION_EXECUTE_QUEUE);
   await boss.createQueue(DELEGATION_SWEEP_QUEUE);
+  await boss.createQueue(DELEGATION_REMOTE_CANCEL_QUEUE);
   await boss.work<{ childRunId: string }>(
     DELEGATION_EXECUTE_QUEUE,
     { batchSize: DELEGATION_LIMITS.maxParallelChildren },
@@ -170,21 +182,29 @@ export async function registerDelegationWorkers(boss: PgBoss) {
       for (const job of jobs) await execute(job.data.childRunId);
     },
   );
+  await boss.work<{ childRunId: string }>(
+    DELEGATION_REMOTE_CANCEL_QUEUE,
+    async (jobs) => {
+      for (const job of jobs) await execute.cancelRemote(job.data.childRunId);
+    },
+  );
   await boss.work(DELEGATION_SWEEP_QUEUE, async () => {
-    const stale = await pgDb
-      .select({ id: AgentRunTable.id })
-      .from(AgentRunTable)
-      .where(
-        and(
-          inArray(AgentRunTable.status, ["queued", "running"]),
-          lt(
-            AgentRunTable.createdAt,
-            new Date(Date.now() - DELEGATION_LIMITS.maxTimeoutMs),
-          ),
-        ),
-      )
-      .limit(100);
-    for (const run of stale) await enqueueDelegatedRun(run.id);
+    const pending = await runManager.listPendingDispatchRunIds(100);
+    for (const runId of pending) {
+      if (await enqueueDelegatedRun(runId))
+        await runManager.markDispatched(runId);
+    }
+    const stale = await runManager.listStaleDelegatedRunIds(
+      new Date(Date.now() - DELEGATION_LIMITS.maxTimeoutMs),
+      100,
+    );
+    for (const runId of stale) await enqueueDelegatedRun(runId);
+    const cancellations =
+      await runManager.listPendingRemoteCancellationRunIds(100);
+    for (const runId of cancellations) {
+      if (await enqueueRemoteCancellation(runId))
+        await runManager.markRemoteCancellationDispatched(runId);
+    }
   });
   await boss.schedule(DELEGATION_SWEEP_QUEUE, "*/5 * * * *", {});
 }

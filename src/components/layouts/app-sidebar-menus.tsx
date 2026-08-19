@@ -25,6 +25,7 @@ import {
   PlusIcon,
   Waypoints,
   BrainIcon,
+  CableIcon,
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Skeleton } from "ui/skeleton";
@@ -34,7 +35,13 @@ import { getIsUserAdmin } from "lib/user/utils";
 import { BasicUser } from "app-types/user";
 import { AppSidebarAdmin } from "./app-sidebar-menu-admin";
 
-export function AppSidebarMenus({ user }: { user?: BasicUser }) {
+export function AppSidebarMenus({
+  user,
+  remoteAgentsEnabled = false,
+}: {
+  user?: BasicUser;
+  remoteAgentsEnabled?: boolean;
+}) {
   const router = useRouter();
   const t = useTranslations("");
   const { setOpenMobile } = useSidebar();
@@ -79,6 +86,18 @@ export function AppSidebarMenus({ user }: { user?: BasicUser }) {
             </SidebarMenuItem>
           </Tooltip>
         </SidebarMenu>
+        {remoteAgentsEnabled && (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <Link href="/remote-agents" onClick={() => setOpenMobile(false)}>
+                <SidebarMenuButton className="font-semibold">
+                  <CableIcon className="size-4" />
+                  {t("Layout.remoteAgents")}
+                </SidebarMenuButton>
+              </Link>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
         <SidebarMenu>
           <Tooltip>
             <SidebarMenuItem>

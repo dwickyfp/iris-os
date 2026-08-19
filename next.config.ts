@@ -11,6 +11,7 @@ const PROJECT_ROOT = dirname(fileURLToPath(import.meta.url));
 export default () => {
   const nextConfig: NextConfig = {
     output: BUILD_OUTPUT,
+    distDir: process.env.HARNESS_DIST_DIR || ".next",
     cleanDistDir: true,
     // Allow this development server to be opened from the local network.
     // Next validates dev-server asset and HMR requests by origin.

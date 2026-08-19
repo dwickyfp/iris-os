@@ -36,6 +36,48 @@ import type {
 import type { Workspace, WorkspaceStatus } from "app-types/workspace";
 import type { TaskPriority, TaskStatus } from "app-types/task";
 import type { SystemModelEngineKey } from "app-types/model-settings";
+import type {
+  AgentCard,
+  RemoteAgentCredential,
+  RemoteAgentStatus,
+} from "app-types/remote-agent";
+
+export const RemoteAgentTable = pgTable(
+  "remote_agent",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 120 }).notNull(),
+    endpointUrl: text("endpoint_url").notNull(),
+    status: varchar("status", { enum: ["active", "disabled"] })
+      .notNull()
+      .default("active")
+      .$type<RemoteAgentStatus>(),
+    credentialType: varchar("credential_type", {
+      enum: ["bearer", "api_key"],
+    }).$type<RemoteAgentCredential["type"]>(),
+    credentialHeader: varchar("credential_header", { length: 128 }),
+    encryptedCredential: text("encrypted_credential"),
+    agentCard: json("agent_card").$type<AgentCard>(),
+    discoveredAt: timestamp("discovered_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.userId, table.endpointUrl),
+    index("remote_agent_user_status_idx").on(table.userId, table.status),
+    check(
+      "remote_agent_credential_check",
+      sql`(${table.credentialType} IS NULL AND ${table.credentialHeader} IS NULL AND ${table.encryptedCredential} IS NULL) OR (${table.credentialType} = 'bearer' AND ${table.credentialHeader} IS NULL AND ${table.encryptedCredential} IS NOT NULL) OR (${table.credentialType} = 'api_key' AND ${table.credentialHeader} IS NOT NULL AND ${table.encryptedCredential} IS NOT NULL)`,
+    ),
+  ],
+);
 
 export const WorkspaceTable = pgTable(
   "workspace",
@@ -209,6 +251,67 @@ export const TaskResourceRefTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [unique().on(table.taskId, table.kind, table.referenceId)],
+);
+
+export const ArtifactTable = pgTable(
+  "artifact",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull().unique(),
+    filename: varchar("filename", { length: 240 }).notNull(),
+    mediaType: varchar("media_type", { length: 160 }).notNull(),
+    size: integer("size").notNull(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    status: varchar("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("artifact_user_created_idx").on(table.userId, table.createdAt),
+    check("artifact_size_check", sql`${table.size} >= 0`),
+    check("artifact_sha256_check", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
+export const ArtifactVerificationTable = pgTable(
+  "artifact_verification",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    artifactId: uuid("artifact_id")
+      .notNull()
+      .references(() => ArtifactTable.id, { onDelete: "cascade" }),
+    verified: boolean("verified").notNull(),
+    reason: varchar("reason", { length: 120 }),
+    details: json("details")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("artifact_verification_artifact_idx").on(
+      table.artifactId,
+      table.createdAt,
+    ),
+    check(
+      "artifact_verification_reason_check",
+      sql`(${table.verified} AND ${table.reason} IS NULL) OR (NOT ${table.verified} AND ${table.reason} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const ChatThreadTable = pgTable("chat_thread", {
@@ -734,14 +837,7 @@ export const MemoryCuratorRunTable = pgTable(
     scopeId: uuid("scope_id"),
     jobKey: varchar("job_key", { length: 240 }),
     jobType: varchar("job_type", {
-      enum: [
-        "extract",
-        "curate",
-        "sweep",
-        "reembed",
-        "review",
-        "consolidate",
-      ],
+      enum: ["extract", "curate", "sweep", "reembed", "review", "consolidate"],
     }).notNull(),
     status: varchar("status", {
       enum: ["running", "completed", "failed"],
@@ -881,6 +977,26 @@ export const IrisActivityEventTable = pgTable(
       table.scopeId,
       table.createdAt,
     ),
+  ],
+);
+
+export const IrisWorkerHeartbeatTable = pgTable(
+  "iris_worker_heartbeat",
+  {
+    workerId: varchar("worker_id", { length: 160 }).primaryKey().notNull(),
+    hostname: varchar("hostname", { length: 255 }).notNull(),
+    pid: integer("pid").notNull(),
+    version: varchar("version", { length: 80 }).notNull(),
+    startedAt: timestamp("started_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    lastHeartbeatAt: timestamp("last_heartbeat_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check("iris_worker_heartbeat_pid_check", sql`${table.pid} > 0`),
+    index("iris_worker_heartbeat_last_seen_idx").on(table.lastHeartbeatAt),
   ],
 );
 
@@ -1276,6 +1392,9 @@ export const AgentRunTable = pgTable(
       enum: [
         "queued",
         "running",
+        "waiting_approval",
+        "waiting_input",
+        "waiting_external",
         "succeeded",
         "failed",
         "cancelled",
@@ -1296,6 +1415,12 @@ export const AgentRunTable = pgTable(
     error: text("error"),
     errorCode: varchar("error_code", { length: 120 }),
     cancelRequestedAt: timestamp("cancel_requested_at"),
+    waitingReason: varchar("waiting_reason", { length: 120 }),
+    lastHeartbeatAt: timestamp("last_heartbeat_at"),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    absoluteDeadlineAt: timestamp("absolute_deadline_at"),
+    attempt: integer("attempt").notNull().default(0),
     startedAt: timestamp("started_at"),
     completedAt: timestamp("completed_at"),
     createdAt: timestamp("created_at")
@@ -1309,6 +1434,7 @@ export const AgentRunTable = pgTable(
       sql`${table.tokenBudget} BETWEEN 1000 AND 200000`,
     ),
     index("agent_run_parent_idx").on(table.parentRunId),
+    index("agent_run_reclaim_idx").on(table.status, table.leaseExpiresAt),
   ],
 );
 
@@ -1326,10 +1452,33 @@ export const DelegationRunTable = pgTable(
       .notNull()
       .references(() => UserTable.id, { onDelete: "cascade" }),
     objective: text("objective").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 240 }).notNull(),
+    targetKind: varchar("target_kind", {
+      enum: ["local_agent", "remote_agent"],
+    })
+      .notNull()
+      .default("local_agent"),
+    remoteAgentId: uuid("remote_agent_id").references(
+      () => RemoteAgentTable.id,
+      { onDelete: "set null" },
+    ),
+    remoteProtocol: varchar("remote_protocol", { length: 24 }),
+    remoteTaskId: varchar("remote_task_id", { length: 512 }),
+    remoteContextId: varchar("remote_context_id", { length: 512 }),
+    remoteStatus: varchar("remote_status", { length: 80 }),
+    remoteMetadata: json("remote_metadata").$type<Record<string, unknown>>(),
+    submissionId: uuid("submission_id"),
+    messageId: uuid("message_id"),
+    submissionPayload:
+      json("submission_payload").$type<Record<string, unknown>>(),
+    submissionStartedAt: timestamp("submission_started_at"),
     status: varchar("status", {
       enum: [
         "queued",
         "running",
+        "waiting_approval",
+        "waiting_input",
+        "waiting_external",
         "succeeded",
         "failed",
         "cancelled",
@@ -1349,10 +1498,205 @@ export const DelegationRunTable = pgTable(
   },
   (table) => [
     unique().on(table.parentRunId, table.childRunId),
+    unique().on(table.parentRunId, table.idempotencyKey),
     index("delegation_run_status_idx").on(
       table.parentRunId,
       table.status,
       table.createdAt,
+    ),
+    index("delegation_run_remote_agent_idx").on(
+      table.remoteAgentId,
+      table.createdAt,
+    ),
+    check(
+      "delegation_run_target_check",
+      sql`(${table.targetKind} = 'local_agent' AND ${table.remoteAgentId} IS NULL) OR (${table.targetKind} = 'remote_agent' AND ${table.remoteProtocol} = 'a2a')`,
+    ),
+  ],
+);
+
+export const AgentRunContinuationTable = pgTable(
+  "agent_run_continuation",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { enum: ["input", "credential"] }).notNull(),
+    submissionId: uuid("submission_id").notNull(),
+    messageId: uuid("message_id").notNull(),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    encryptedCredential: text("encrypted_credential"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    consumedAt: timestamp("consumed_at"),
+  },
+  (table) => [
+    unique().on(table.runId, table.kind),
+    check(
+      "agent_run_continuation_value_check",
+      sql`(${table.kind} = 'input' AND ${table.payload} IS NOT NULL AND ${table.encryptedCredential} IS NULL) OR (${table.kind} = 'credential' AND ${table.payload} IS NULL AND ${table.encryptedCredential} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const AgentRunDispatchTable = pgTable(
+  "agent_run_dispatch",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    availableAt: timestamp("available_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    dispatchedAt: timestamp("dispatched_at"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique().on(table.runId),
+    index("agent_run_dispatch_pending_idx").on(
+      table.dispatchedAt,
+      table.availableAt,
+    ),
+  ],
+);
+
+export const AgentRunRemoteCancelTable = pgTable(
+  "agent_run_remote_cancel",
+  {
+    runId: uuid("run_id")
+      .primaryKey()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    availableAt: timestamp("available_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    dispatchedAt: timestamp("dispatched_at"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    remoteOutcome: json("remote_outcome").$type<Record<string, unknown>>(),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("agent_run_remote_cancel_pending_idx").on(
+      table.completedAt,
+      table.dispatchedAt,
+      table.availableAt,
+    ),
+  ],
+);
+
+export const AgentRunJoinTable = pgTable(
+  "agent_run_join",
+  {
+    parentRunId: uuid("parent_run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    checkpointGeneration: integer("checkpoint_generation").notNull().default(1),
+    toolCallId: varchar("tool_call_id", { length: 240 }).notNull(),
+    childRunId: uuid("child_run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    observation: json("observation").$type<Record<string, unknown>>(),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "agent_run_join_checkpoint_generation_check",
+      sql`${table.checkpointGeneration} > 0`,
+    ),
+    unique().on(table.parentRunId, table.toolCallId),
+    unique().on(table.childRunId),
+    index("agent_run_join_parent_pending_idx").on(
+      table.parentRunId,
+      table.completedAt,
+    ),
+    index("agent_run_join_parent_generation_idx").on(
+      table.parentRunId,
+      table.checkpointGeneration,
+    ),
+    check(
+      "agent_run_join_observation_check",
+      sql`(${table.observation} IS NULL) = (${table.completedAt} IS NULL)`,
+    ),
+  ],
+);
+
+export const AgentRunCheckpointTable = pgTable(
+  "agent_run_checkpoint",
+  {
+    parentRunId: uuid("parent_run_id")
+      .primaryKey()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull().default(1),
+    responseMessages: json("response_messages").notNull().$type<unknown[]>(),
+    modelMessages: json("model_messages").notNull().$type<unknown[]>(),
+    modelConfig: json("model_config")
+      .notNull()
+      .$type<Record<string, unknown>>(),
+    authorizationRecipe: json("authorization_recipe")
+      .notNull()
+      .$type<Record<string, unknown>>(),
+    assistantMessageId: text("assistant_message_id").notNull(),
+    claimToken: uuid("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "agent_run_checkpoint_generation_check",
+      sql`${table.generation} > 0`,
+    ),
+    check(
+      "agent_run_checkpoint_claim_check",
+      sql`(${table.claimToken} IS NULL) = (${table.claimExpiresAt} IS NULL)`,
+    ),
+    index("agent_run_checkpoint_claim_idx").on(
+      table.completedAt,
+      table.claimExpiresAt,
+    ),
+  ],
+);
+
+export const AgentRunResumeDispatchTable = pgTable(
+  "agent_run_resume_dispatch",
+  {
+    parentRunId: uuid("parent_run_id")
+      .primaryKey()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    generation: integer("generation").notNull(),
+    availableAt: timestamp("available_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    dispatchedAt: timestamp("dispatched_at"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "agent_run_resume_dispatch_generation_check",
+      sql`${table.generation} > 0`,
+    ),
+    index("agent_run_resume_dispatch_pending_idx").on(
+      table.dispatchedAt,
+      table.availableAt,
     ),
   ],
 );

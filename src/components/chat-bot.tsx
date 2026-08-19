@@ -25,6 +25,7 @@ import { mutate } from "swr";
 import {
   ChatApiSchemaRequestBody,
   ChatAttachment,
+  CapabilityRef,
   ChatModel,
 } from "app-types/chat";
 import { useToRef } from "@/hooks/use-latest";
@@ -154,7 +155,10 @@ export function ChatSession({
     allowedMcpServers,
     threadList,
     threadMentions,
+    threadPrimaryAgents,
+    threadCapabilityModes,
     pendingThreadMention,
+    pendingPrimaryAgent,
     threadImageToolModel,
     activeWorkspaceId,
     activeTaskId,
@@ -167,7 +171,10 @@ export function ChatSession({
       state.allowedMcpServers,
       state.threadList,
       state.threadMentions,
+      state.threadPrimaryAgents,
+      state.threadCapabilityModes,
       state.pendingThreadMention,
+      state.pendingPrimaryAgent,
       state.threadImageToolModel,
       state.activeWorkspaceId,
       state.activeTaskId,
@@ -278,6 +285,11 @@ export function ChatSession({
         const hasFilePart = lastMessage.parts?.some(
           (p) => (p as any)?.type === "file",
         );
+        const primaryAgent = latestRef.current.primaryAgent;
+        const requestedCapabilities = (latestRef.current.mentions ?? []).filter(
+          (mention): mention is CapabilityRef => mention.type !== "agent",
+        );
+        const capabilityMode = latestRef.current.capabilityMode ?? "prefer";
 
         const requestBody: ChatApiSchemaRequestBody = {
           ...body,
@@ -285,13 +297,22 @@ export function ChatSession({
           chatModel:
             (body as { model: ChatModel })?.model ?? latestRef.current.model,
           toolChoice: latestRef.current.toolChoice,
-          allowedAppDefaultToolkit:
-            latestRef.current.mentions?.length || hasFilePart
-              ? []
-              : latestRef.current.allowedAppDefaultToolkit,
-          allowedMcpServers: latestRef.current.mentions?.length
-            ? {}
-            : latestRef.current.allowedMcpServers,
+          allowedAppDefaultToolkit: hasFilePart
+            ? []
+            : latestRef.current.allowedAppDefaultToolkit,
+          allowedMcpServers: latestRef.current.allowedMcpServers,
+          primaryAgentId:
+            primaryAgent?.type === "agent" ? primaryAgent.agentId : undefined,
+          capabilityHints: {
+            requested: requestedCapabilities,
+            mode: capabilityMode,
+          },
+          autonomy:
+            latestRef.current.toolChoice === "manual"
+              ? "ask"
+              : latestRef.current.toolChoice === "none"
+                ? "off"
+                : "standard",
           mentions: latestRef.current.mentions,
           message: sanitizedLastMessage,
           imageTool: {
@@ -330,6 +351,8 @@ export function ChatSession({
     threadList,
     threadId,
     mentions: threadMentions[threadId],
+    primaryAgent: threadPrimaryAgents[threadId],
+    capabilityMode: threadCapabilityModes[threadId],
     threadImageToolModel,
     activeWorkspaceId,
     activeTaskId,
@@ -484,6 +507,17 @@ export function ChatSession({
       }));
     }
   }, [pendingThreadMention, threadId, appStoreMutate]);
+
+  useEffect(() => {
+    if (!pendingPrimaryAgent || !threadId) return;
+    appStoreMutate((prev) => ({
+      threadPrimaryAgents: {
+        ...prev.threadPrimaryAgents,
+        [threadId]: pendingPrimaryAgent,
+      },
+      pendingPrimaryAgent: undefined,
+    }));
+  }, [pendingPrimaryAgent, threadId, appStoreMutate]);
 
   useEffect(() => {
     if (isInitialThreadEntry)

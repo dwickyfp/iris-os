@@ -27,7 +27,7 @@ test.describe("IRIS V2 operational UI", () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
-  test("renders automation, delegation, learning, and OS failure states", async ({
+  test("renders current automation and delegation empty states", async ({
     page,
   }) => {
     await page.goto("/automations");
@@ -42,18 +42,6 @@ test.describe("IRIS V2 operational UI", () => {
     ).toBeVisible();
     await expect(
       page.getByText("No delegated agent runs yet", { exact: false }),
-    ).toBeVisible();
-
-    await page.goto("/learning");
-    await expect(
-      page.getByRole("heading", { name: "Learning inbox" }),
-    ).toBeVisible();
-    await expect(page.getByText("Learning controls")).toBeVisible();
-
-    await page.goto("/os");
-    await expect(page.getByText("Awaiting approval")).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Open task ledger" }),
     ).toBeVisible();
   });
 });

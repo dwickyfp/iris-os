@@ -56,6 +56,7 @@ export type WorkflowSummary = {
   id: string;
   name: string;
   description?: string;
+  schema?: ObjectJsonSchema7;
   icon?: WorkflowIcon;
   visibility: Visibility;
   isPublished: boolean;

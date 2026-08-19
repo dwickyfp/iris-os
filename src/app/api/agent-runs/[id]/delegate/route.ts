@@ -2,6 +2,7 @@ import { getSession } from "auth/server";
 import { createDelegatedRun, DELEGATION_LIMITS } from "lib/delegation/service";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { z } from "zod";
+import { generateUUID } from "lib/utils";
 
 const DelegateSchema = z.object({
   childAgentId: z.string().uuid(),
@@ -32,6 +33,7 @@ export async function POST(
         ...input,
         userId: session.user.id,
         parentRunId: (await params).id,
+        toolCallId: generateUUID(),
       }),
       { status: 202 },
     );

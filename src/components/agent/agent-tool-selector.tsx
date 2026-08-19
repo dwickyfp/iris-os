@@ -37,7 +37,11 @@ export function AgentToolSelector({
 
   const handleSelectMention = useCallback(
     (item: { label: string; id: string }) => {
-      const mention = JSON.parse(item.id) as ChatMention;
+      const selected = JSON.parse(item.id) as ChatMention;
+      const mention: ChatMention =
+        selected.type === "agent"
+          ? { ...selected, type: "peerAgent" }
+          : selected;
       const newMentions = [...mentions];
       const index = newMentions.findIndex((m) => equal(m, mention));
 
@@ -116,7 +120,6 @@ export function AgentToolSelector({
       onSelectMention={handleSelectMention}
       onClose={noop}
       open={open && hasEditAccess && !disabled}
-      disabledType={["agent"]}
       onOpenChange={(newOpen) => hasEditAccess && !disabled && setOpen(newOpen)}
       top={0}
       left={0}

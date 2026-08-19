@@ -1,6 +1,6 @@
 import { exec } from "child_process";
-import { IS_VERCEL_ENV, IS_DOCKER_ENV, FILE_BASED_MCP_CONFIG } from "lib/const";
 import { promisify } from "util";
+import { FILE_BASED_MCP_CONFIG, IS_DOCKER_ENV, IS_VERCEL_ENV } from "lib/const";
 import "load-env";
 const execPromise = promisify(exec);
 
@@ -32,8 +32,6 @@ async function main() {
       console.error("File based MCP config is not supported on Vercel.");
       process.exit(1);
     }
-    console.log("Running on Vercel, performing database migration.");
-    await runCommand("pnpm db:migrate", "Database migration");
   } else if (IS_DOCKER_ENV) {
     if (FILE_BASED_MCP_CONFIG) {
       console.error("File based MCP config is not supported in Docker.");

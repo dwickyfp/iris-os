@@ -1,39 +1,21 @@
 import { getOperationsDiagnostics } from "lib/admin/operations";
 
-function Panel({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: Array<{ id: string; status?: string; errorCode?: string | null }>;
-}) {
-  return (
-    <section className="space-y-3 rounded-xl border p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold">{title}</h2>
-        <span className="text-sm text-muted-foreground">{rows.length}</span>
-      </div>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No actionable records.</p>
-      ) : (
-        <ul className="space-y-2 text-sm">
-          {rows.slice(0, 12).map((row) => (
-            <li key={row.id} className="rounded-lg bg-muted/40 p-3">
-              <p className="break-all font-mono text-xs">{row.id}</p>
-              <p className="text-muted-foreground">
-                {row.status ?? "recorded"}
-                {row.errorCode ? ` · ${row.errorCode}` : ""}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 export default async function AdminOperationsPage() {
-  const diagnostics = await getOperationsDiagnostics();
+  const snapshot = await getOperationsDiagnostics();
+  const metrics = [
+    ["Queued runs", snapshot.runs.queued ?? 0],
+    ["Running runs", snapshot.runs.running ?? 0],
+    ["Waiting runs", total(snapshot.waiting)],
+    ["Expired leases", snapshot.leases.expired],
+    ["Pending outboxes", total(snapshot.outboxes)],
+    ["Failed activity", snapshot.activity.failed ?? 0],
+    ["Failed verification", snapshot.verification.failed],
+    ["Missing verification", snapshot.verification.missing],
+    ["Pending parent joins", snapshot.parentJoins.pending],
+    ["Active workers", snapshot.workers.active],
+    ["Stale workers", snapshot.workers.stale],
+    ["pg-boss jobs", total(snapshot.pgBoss.jobs)],
+  ] as const;
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 p-6 md:p-10">
       <header className="space-y-2 border-b pb-6">
@@ -42,53 +24,62 @@ export default async function AdminOperationsPage() {
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Operations</h1>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Read-only visibility into silent background learning and execution.
+          Aggregate execution, delivery, verification, A2A, and worker health.
+          Captured {snapshot.capturedAt.toLocaleString()}.
         </p>
       </header>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric
-          label="Failed / stale activity"
-          value={diagnostics.summary.failedOrStaleActivity}
-        />
-        <Metric
-          label="Active learning"
-          value={diagnostics.summary.activeLearningCandidates}
-        />
-        <Metric
-          label="Failed promotions"
-          value={diagnostics.summary.failedPromotionAttempts}
-        />
-        <Metric
-          label="Oldest pending"
-          value={
-            diagnostics.summary.oldestPendingActivityAt
-              ? diagnostics.summary.oldestPendingActivityAt.toISOString()
-              : "None"
-          }
-        />
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Activity delivery" rows={diagnostics.activity} />
-        <Panel title="Learning candidates" rows={diagnostics.candidates} />
-        <Panel
-          title="Promotion attempts"
-          rows={diagnostics.promotionAttempts}
-        />
-        <Panel title="Learned skills" rows={diagnostics.skills} />
-        <Panel title="Automation failures" rows={diagnostics.automationRuns} />
-        <Panel title="Agent failures" rows={diagnostics.agentRuns} />
-      </div>
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {metrics.map(([label, value]) => (
+          <Metric key={label} label={label} value={value} />
+        ))}
+      </section>
+      <section className="grid gap-4 lg:grid-cols-2">
+        <Breakdown title="Run states" values={snapshot.runs} />
+        <Breakdown title="Activity delivery" values={snapshot.activity} />
+        <Breakdown title="A2A agents" values={snapshot.a2a.agents} />
+        <Breakdown title="A2A delegations" values={snapshot.a2a.delegations} />
+      </section>
     </main>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) {
+function total(values: Record<string, number>) {
+  return Object.values(values).reduce((sum, value) => sum + value, 0);
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-xl border p-4">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-2 break-all text-lg font-semibold">{value}</p>
+      <p className="text-2xl font-semibold">{value}</p>
+      <p className="text-xs uppercase text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function Breakdown({
+  title,
+  values,
+}: {
+  title: string;
+  values: Record<string, number>;
+}) {
+  return (
+    <div className="rounded-xl border p-4">
+      <h2 className="font-semibold">{title}</h2>
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+        {Object.entries(values).map(([label, value]) => (
+          <div
+            key={label}
+            className="flex justify-between rounded bg-muted/40 p-2"
+          >
+            <dt>{label.replaceAll("_", " ")}</dt>
+            <dd className="font-medium">{value}</dd>
+          </div>
+        ))}
+        {Object.keys(values).length === 0 && (
+          <p className="text-muted-foreground">No records.</p>
+        )}
+      </dl>
     </div>
   );
 }

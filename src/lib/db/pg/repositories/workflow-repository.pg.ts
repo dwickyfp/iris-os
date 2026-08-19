@@ -67,6 +67,7 @@ export const pgWorkflowRepository: WorkflowRepository = {
         id: WorkflowTable.id,
         name: WorkflowTable.name,
         description: WorkflowTable.description,
+        schema: WorkflowNodeDataTable.nodeConfig,
         icon: WorkflowTable.icon,
         visibility: WorkflowTable.visibility,
         isPublished: WorkflowTable.isPublished,
@@ -77,6 +78,13 @@ export const pgWorkflowRepository: WorkflowRepository = {
       })
       .from(WorkflowTable)
       .innerJoin(UserTable, eq(WorkflowTable.userId, UserTable.id))
+      .innerJoin(
+        WorkflowNodeDataTable,
+        and(
+          eq(WorkflowNodeDataTable.workflowId, WorkflowTable.id),
+          eq(WorkflowNodeDataTable.kind, NodeKind.Input),
+        ),
+      )
       .where(
         and(
           eq(WorkflowTable.isPublished, true),
@@ -86,7 +94,11 @@ export const pgWorkflowRepository: WorkflowRepository = {
           ),
         ),
       );
-    return rows as WorkflowSummary[];
+    return rows.map((row) => ({
+      ...row,
+      schema:
+        row.schema?.outputSchema || structuredClone(defaultObjectJsonSchema),
+    })) as WorkflowSummary[];
   },
   async selectAll(userId) {
     const rows = await pgDb

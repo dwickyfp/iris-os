@@ -19,7 +19,7 @@ import { UIMessage, UseChatHelpers } from "@ai-sdk/react";
 import { SelectModel } from "./select-model";
 import { appStore, UploadedFile } from "@/app/store";
 import { useShallow } from "zustand/shallow";
-import { ChatMention, ChatModel } from "app-types/chat";
+import { CapabilityHintMode, ChatMention, ChatModel } from "app-types/chat";
 import dynamic from "next/dynamic";
 import { ToolModeDropdown } from "./tool-mode-dropdown";
 
@@ -106,6 +106,8 @@ export default function PromptInput({
     threadMentions,
     threadFiles,
     threadImageToolModel,
+    threadPrimaryAgents,
+    threadCapabilityModes,
     appStoreMutate,
   ] = appStore(
     useShallow((state) => [
@@ -113,6 +115,8 @@ export default function PromptInput({
       state.threadMentions,
       state.threadFiles,
       state.threadImageToolModel,
+      state.threadPrimaryAgents,
+      state.threadCapabilityModes,
       state.mutate,
     ]),
   );
@@ -140,6 +144,11 @@ export default function PromptInput({
     if (!threadId) return [];
     return threadFiles[threadId] ?? [];
   }, [threadFiles, threadId]);
+
+  const primaryAgent = threadId ? threadPrimaryAgents[threadId] : undefined;
+  const capabilityMode: CapabilityHintMode = threadId
+    ? (threadCapabilityModes[threadId] ?? "prefer")
+    : "prefer";
 
   const imageToolModel = useMemo(() => {
     if (!threadId) return undefined;
@@ -284,22 +293,20 @@ export default function PromptInput({
     (agent: AgentSummary) => {
       appStoreMutate((prev) => {
         return {
-          threadMentions: {
-            ...prev.threadMentions,
-            [threadId!]: [
-              {
-                type: "agent",
-                name: agent.name,
-                icon: agent.icon,
-                description: agent.description,
-                agentId: agent.id,
-              },
-            ],
+          threadPrimaryAgents: {
+            ...prev.threadPrimaryAgents,
+            [threadId!]: {
+              type: "agent",
+              name: agent.name,
+              icon: agent.icon,
+              description: agent.description,
+              agentId: agent.id,
+            },
           },
         };
       });
     },
-    [mentions, threadId],
+    [appStoreMutate, threadId],
   );
 
   const onChangeMention = useCallback(
@@ -392,21 +399,34 @@ export default function PromptInput({
       if (
         e.key === "Escape" &&
         threadId &&
-        (mentions.length > 0 || imageToolModel)
+        (primaryAgent || mentions.length > 0 || imageToolModel)
       ) {
         e.preventDefault();
         e.stopPropagation();
-        appStoreMutate(() => ({
-          threadMentions: {},
-          agentId: undefined,
-          threadImageToolModel: {},
+        appStoreMutate((prev) => ({
+          threadMentions: {
+            ...prev.threadMentions,
+            [threadId]: [],
+          },
+          threadPrimaryAgents: {
+            ...prev.threadPrimaryAgents,
+            [threadId]: undefined,
+          },
+          threadCapabilityModes: {
+            ...prev.threadCapabilityModes,
+            [threadId]: undefined,
+          },
+          threadImageToolModel: {
+            ...prev.threadImageToolModel,
+            [threadId]: undefined,
+          },
         }));
         editorRef.current?.commands.focus();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mentions.length, threadId, appStoreMutate, imageToolModel]);
+  }, [mentions.length, threadId, appStoreMutate, imageToolModel, primaryAgent]);
 
   // Drag overlay handled globally in ChatBot
 
@@ -415,13 +435,82 @@ export default function PromptInput({
       <div className="z-10 mx-auto w-full max-w-3xl relative">
         <fieldset className="flex w-full min-w-0 max-w-full flex-col px-4">
           <div className="shadow-lg overflow-hidden rounded-4xl backdrop-blur-sm transition-all duration-200 bg-muted/60 relative flex w-full flex-col cursor-text z-10 items-stretch focus-within:bg-muted hover:bg-muted focus-within:ring-muted hover:ring-muted">
-            {mentions.length > 0 && (
+            {(primaryAgent || mentions.length > 0) && (
               <div className="bg-input rounded-b-sm rounded-t-3xl p-3 flex flex-col gap-4 mx-2 my-2">
+                {primaryAgent && (
+                  <div className="flex items-center gap-2">
+                    <Avatar
+                      className="size-6 p-1 ring ring-border rounded-full flex-shrink-0"
+                      style={primaryAgent.icon?.style}
+                    >
+                      <AvatarImage src={primaryAgent.icon?.value} />
+                      <AvatarFallback>
+                        {primaryAgent.name.slice(0, 1)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        {t("primaryAgent")}
+                      </span>
+                      <span className="truncate text-sm font-semibold">
+                        {primaryAgent.name}
+                      </span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-full hover:bg-input!"
+                      aria-label={t("clearPrimaryAgent")}
+                      onClick={() =>
+                        appStoreMutate((prev) => ({
+                          threadPrimaryAgents: {
+                            ...prev.threadPrimaryAgents,
+                            [threadId!]: undefined,
+                          },
+                        }))
+                      }
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                )}
+                {mentions.length > 0 && (
+                  <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {t("capabilities")}
+                    </span>
+                    <div className="flex rounded-full bg-background/70 p-0.5 text-xs">
+                      {(["prefer", "only"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={capabilityMode === mode}
+                          className={cn(
+                            "rounded-full px-2 py-1 text-muted-foreground transition-colors",
+                            capabilityMode === mode &&
+                              "bg-primary text-primary-foreground",
+                          )}
+                          onClick={() =>
+                            appStoreMutate((prev) => ({
+                              threadCapabilityModes: {
+                                ...prev.threadCapabilityModes,
+                                [threadId!]: mode,
+                              },
+                            }))
+                          }
+                        >
+                          {t(mode)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {mentions.map((mention, i) => {
                   return (
                     <div key={i} className="flex items-center gap-2">
                       {mention.type === "workflow" ||
-                      mention.type === "agent" ? (
+                      mention.type === "agent" ||
+                      mention.type === "peerAgent" ? (
                         <Avatar
                           className="size-6 p-1 ring ring-border rounded-full flex-shrink-0"
                           style={mention.icon?.style}
@@ -463,6 +552,9 @@ export default function PromptInput({
                         variant={"ghost"}
                         size={"icon"}
                         disabled={!threadId}
+                        aria-label={t("removeCapability", {
+                          name: mention.name,
+                        })}
                         className="rounded-full hover:bg-input! flex-shrink-0"
                         onClick={() => {
                           deleteMention(mention);

@@ -27,13 +27,26 @@ export async function GET() {
     runs,
     delegations,
     summary: {
-      active: runs.filter((run) => ["queued", "running"].includes(run.status))
-        .length,
+      active: runs.filter((run) =>
+        [
+          "queued",
+          "running",
+          "waiting_approval",
+          "waiting_input",
+          "waiting_external",
+        ].includes(run.status),
+      ).length,
       failed: runs.filter((run) => ["failed", "timed_out"].includes(run.status))
         .length,
       cancellable: runs.filter(
         (run) =>
-          ["queued", "running"].includes(run.status) &&
+          [
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_input",
+            "waiting_external",
+          ].includes(run.status) &&
           run.cancelRequestedAt === null,
       ).length,
     },

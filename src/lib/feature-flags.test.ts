@@ -8,6 +8,7 @@ describe("getV2FeatureFlags", () => {
       learning: false,
       automation: false,
       delegation: false,
+      remoteAgents: false,
     });
   });
 
@@ -18,12 +19,14 @@ describe("getV2FeatureFlags", () => {
         IRIS_LEARNING_V2: "1",
         IRIS_AUTOMATION_V2: "yes",
         IRIS_DELEGATION_V2: "false",
+        IRIS_REMOTE_AGENTS_A2A: "true",
       }),
     ).toEqual({
       workspaces: true,
       learning: true,
       automation: false,
       delegation: false,
+      remoteAgents: true,
     });
   });
 });

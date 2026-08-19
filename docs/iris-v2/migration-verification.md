@@ -3,8 +3,20 @@
 ## Supported verification paths
 
 Run `pnpm test:integration:db` to start a disposable
-`pgvector/pgvector:pg17` container. Set `TEST_POSTGRES_URL` to use an existing
-disposable PostgreSQL instance instead. Never point this command at production.
+`pgvector/pgvector:pg17` container. External test databases are destructive and
+require all three values below. The exact confirmation prevents a copied URL
+from silently targeting a different database.
+
+```bash
+TEST_POSTGRES_URL=postgresql://.../iris_test \
+TEST_POSTGRES_TARGET_KIND=disposable \
+TEST_POSTGRES_CONFIRM_DATABASE=iris_test \
+pnpm test:integration:db
+```
+
+Production-like database or host names are rejected. The integration suite
+drops and recreates `public`; do not use staging, production, or a shared
+developer database.
 
 The suite verifies:
 
@@ -27,3 +39,7 @@ Before deploying migrations, snapshot the target database and record row counts
 for each scoped memory table. After migration, run orphan, invalid-scope,
 duplicate exact-scope, cross-user, cross-scope edge, and stale thread/task
 queries. Any unexplained row loss blocks rollout.
+
+The executable rehearsal, integrity, rollback, and rollout-gate procedure is in
+[`docs/operations/migrations.md`](../operations/migrations.md). It uses the real
+Drizzle migration runner rather than the integration test's SQL harness.

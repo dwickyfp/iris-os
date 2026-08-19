@@ -14,6 +14,7 @@ import {
 export type SkillsRuntime = {
   manifest: SkillManifestEntry[];
   tools: Record<string, Tool>;
+  select(skillIds: readonly string[]): SkillsRuntime;
 };
 
 export function bindSkillTools(
@@ -147,62 +148,74 @@ export async function createSkillsRuntime({
     }
   }
 
-  return {
-    manifest,
-    tools: {
-      [SKILLS_LIST_TOOL_NAME]: tool({
-        description:
-          "List or search metadata for skills assigned to this agent, including whether each skill has been loaded.",
-        inputSchema: jsonSchema<{ query?: string }>({
-          type: "object",
-          properties: { query: { type: "string" } },
-          additionalProperties: false,
-        }),
-        execute: async ({ query }: { query?: string }) => {
-          const normalizedQuery = query?.trim().toLocaleLowerCase();
-          const matches = normalizedQuery
-            ? manifest.filter((skill) =>
-                `${skill.name}\n${skill.description ?? ""}`
-                  .toLocaleLowerCase()
-                  .includes(normalizedQuery),
-              )
-            : manifest;
-          return {
-            skills: matches.slice(0, MAX_ASSIGNED_SKILLS).map((skill) => ({
-              ...skill,
-              loaded: loadedSkills.has(skill.id),
-            })),
-          };
-        },
-      }),
-      [SKILL_VIEW_TOOL_NAME]: tool({
-        description:
-          "Load an assigned skill's instructions, or one of its referenced files.",
-        inputSchema: jsonSchema<{
-          skillId: string;
-          filePath?: string;
-          path?: string;
-        }>({
-          type: "object",
-          properties: {
-            skillId: { type: "string", minLength: 1 },
-            filePath: { type: "string", minLength: 1 },
-            path: { type: "string", minLength: 1 },
+  function select(skillIds: readonly string[]): SkillsRuntime {
+    const selected = new Set(skillIds);
+    return buildRuntime(manifest.filter((skill) => selected.has(skill.id)));
+  }
+
+  function buildRuntime(visibleManifest: SkillManifestEntry[]): SkillsRuntime {
+    const visibleById = new Set(visibleManifest.map((skill) => skill.id));
+    return {
+      manifest: visibleManifest,
+      select,
+      tools: {
+        [SKILLS_LIST_TOOL_NAME]: tool({
+          description:
+            "List or search metadata for skills assigned to this agent, including whether each skill has been loaded.",
+          inputSchema: jsonSchema<{ query?: string }>({
+            type: "object",
+            properties: { query: { type: "string" } },
+            additionalProperties: false,
+          }),
+          execute: async ({ query }: { query?: string }) => {
+            const normalizedQuery = query?.trim().toLocaleLowerCase();
+            const matches = normalizedQuery
+              ? visibleManifest.filter((skill) =>
+                  `${skill.name}\n${skill.description ?? ""}`
+                    .toLocaleLowerCase()
+                    .includes(normalizedQuery),
+                )
+              : visibleManifest;
+            return {
+              skills: matches.slice(0, MAX_ASSIGNED_SKILLS).map((skill) => ({
+                ...skill,
+                loaded: loadedSkills.has(skill.id),
+              })),
+            };
           },
-          required: ["skillId"],
-          additionalProperties: false,
         }),
-        execute: async ({
-          skillId,
-          filePath,
-          path,
-        }: { skillId: string; filePath?: string; path?: string }) => {
-          if (filePath && path && filePath !== path) {
-            throw new Error(SKILL_NOT_AVAILABLE);
-          }
-          return viewSkill(skillId, filePath ?? path);
-        },
-      }),
-    },
-  };
+        [SKILL_VIEW_TOOL_NAME]: tool({
+          description:
+            "Load an assigned skill's instructions, or one of its referenced files.",
+          inputSchema: jsonSchema<{
+            skillId: string;
+            filePath?: string;
+            path?: string;
+          }>({
+            type: "object",
+            properties: {
+              skillId: { type: "string", minLength: 1 },
+              filePath: { type: "string", minLength: 1 },
+              path: { type: "string", minLength: 1 },
+            },
+            required: ["skillId"],
+            additionalProperties: false,
+          }),
+          execute: async ({
+            skillId,
+            filePath,
+            path,
+          }: { skillId: string; filePath?: string; path?: string }) => {
+            if (filePath && path && filePath !== path) {
+              throw new Error(SKILL_NOT_AVAILABLE);
+            }
+            if (!visibleById.has(skillId)) throw new Error(SKILL_NOT_AVAILABLE);
+            return viewSkill(skillId, filePath ?? path);
+          },
+        }),
+      },
+    };
+  }
+
+  return buildRuntime(manifest);
 }

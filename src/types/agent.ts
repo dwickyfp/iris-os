@@ -1,5 +1,5 @@
 import z from "zod";
-import { ChatMentionSchema } from "./chat";
+import { CapabilityRefSchema, ChatMentionSchema } from "./chat";
 import { VisibilitySchema } from "./util";
 
 export type AgentIcon = {
@@ -12,6 +12,7 @@ export const AgentInstructionsSchema = z.object({
   role: z.string().optional(),
   systemPrompt: z.string().optional(),
   mentions: z.array(ChatMentionSchema).optional(),
+  capabilities: z.array(CapabilityRefSchema).optional(),
   reasoningMode: z.enum(["auto", "low", "medium", "high"]).optional(),
 });
 

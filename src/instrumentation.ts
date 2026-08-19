@@ -1,6 +1,11 @@
 import { IS_VERCEL_ENV } from "lib/const";
 
 export async function register() {
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { parseOperationsConfig } = await import("lib/operations/config");
+    parseOperationsConfig(process.env);
+  }
+
   if (
     process.env.NEXT_RUNTIME === "nodejs" &&
     process.env.AI_SDK_OTEL_ENABLED !== "false"
@@ -33,14 +38,6 @@ export async function register() {
       setGlobalDispatcher(new ProxyAgent(proxyUrl));
     }
     if (!IS_VERCEL_ENV) {
-      // run DB migration (skip on Vercel - migrations run separately)
-      const runMigrate = await import("./lib/db/pg/migrate.pg").then(
-        (m) => m.runMigrate,
-      );
-      await runMigrate().catch((e) => {
-        console.error(e);
-        process.exit(1);
-      });
       // Init MCP manager on all environments.
       // Cached servers are available instantly; new servers connect in background.
       const initMCPManager = await import("./lib/ai/mcp/mcp-manager").then(

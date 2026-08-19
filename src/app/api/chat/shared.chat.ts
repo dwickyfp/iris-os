@@ -41,6 +41,7 @@ import { NodeKind } from "lib/ai/workflow/workflow.interface";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { AppDefaultToolkit } from "lib/ai/tools";
+import { mergePreferredCapabilities } from "lib/ai/runtime/capabilities";
 
 export function filterMCPToolsByMentions(
   tools: Record<string, VercelAIMcpTool>,
@@ -402,7 +403,11 @@ export const loadMcpTools = (opt?: {
   safe(() => mcpClientsManager.tools())
     .map((tools) => {
       if (opt?.mentions?.length) {
-        return filterMCPToolsByMentions(tools, opt.mentions);
+        return mergePreferredCapabilities(
+          filterMCPToolsByAllowedMCPServers(tools, opt.allowedMcpServers),
+          filterMCPToolsByMentions(tools, opt.mentions),
+          opt.mentions,
+        );
       }
       return filterMCPToolsByAllowedMCPServers(tools, opt?.allowedMcpServers);
     })
@@ -437,12 +442,26 @@ export const loadAppDefaultTools = (opt?: {
         const defaultToolMentions = opt.mentions.filter(
           (m) => m.type == "defaultTool",
         );
-        return Array.from(Object.values(tools)).reduce((acc, t) => {
-          const allowed = objectFlow(t).filter((_, k) => {
-            return defaultToolMentions.some((m) => m.name == k);
-          });
-          return { ...acc, ...allowed };
-        }, {});
+        const mentionedTools = Array.from(Object.values(tools)).reduce(
+          (acc, t) => {
+            const allowed = objectFlow(t).filter((_, k) => {
+              return defaultToolMentions.some((m) => m.name == k);
+            });
+            return { ...acc, ...allowed };
+          },
+          {} as Record<string, Tool>,
+        );
+        const allowedAppDefaultToolkit =
+          opt?.allowedAppDefaultToolkit ?? Object.values(AppDefaultToolkit);
+        const eligibleTools = allowedAppDefaultToolkit.reduce(
+          (acc, key) => ({ ...acc, ...tools[key] }),
+          {} as Record<string, Tool>,
+        );
+        return mergePreferredCapabilities(
+          eligibleTools,
+          mentionedTools,
+          opt.mentions,
+        );
       }
       const allowedAppDefaultToolkit =
         opt?.allowedAppDefaultToolkit ?? Object.values(AppDefaultToolkit);

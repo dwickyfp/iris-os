@@ -1,21 +1,22 @@
 import "server-only";
 
-import { and, count, eq, inArray } from "drizzle-orm";
-import {
-  insertActivityEvent,
-  publishActivityEvent,
-} from "lib/activity/service";
+import { createHash } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { sanitizeActivityPayload } from "lib/activity/sanitize";
+import { recordActivityEvent } from "lib/activity/service";
 import { intersectDelegationPermissions } from "lib/ai/agent/delegation-policy";
+import { runManager } from "lib/ai/runs/server";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   AgentRunTable,
   AgentTable,
   DelegationRunTable,
 } from "lib/db/pg/schema.pg";
-import { skillRepository } from "lib/db/repository";
+import { remoteAgentRepository, skillRepository } from "lib/db/repository";
 import { generateUUID } from "lib/utils";
 import { enqueueDelegatedRun } from "./queue";
+import { assertDelegationTargetEligible } from "lib/delegation/targets";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export const DELEGATION_LIMITS = {
   maxDepth: 3,
@@ -29,11 +30,16 @@ export const DELEGATION_LIMITS = {
 export async function createDelegatedRun(input: {
   userId: string;
   parentRunId: string;
-  childAgentId: string;
+  childAgentId?: string;
+  agentRef?:
+    | { kind: "local"; agentId: string }
+    | { kind: "remote"; connectionId: string };
   objective: string;
   context?: Record<string, unknown>;
   timeoutMs?: number;
   tokenBudget?: number;
+  idempotencyKey?: string;
+  toolCallId: string;
 }) {
   const [parent] = await pgDb
     .select()
@@ -43,32 +49,54 @@ export async function createDelegatedRun(input: {
         eq(AgentRunTable.id, input.parentRunId),
         eq(AgentRunTable.userId, input.userId),
         eq(AgentRunTable.status, "running"),
+        sql`${AgentRunTable.cancelRequestedAt} IS NULL`,
       ),
     );
   if (!parent) throw new Error("PARENT_RUN_NOT_FOUND");
   if (parent.depth >= DELEGATION_LIMITS.maxDepth)
     throw new Error("DELEGATION_DEPTH_EXCEEDED");
-  const [childAgent] = await pgDb
-    .select({ id: AgentTable.id })
-    .from(AgentTable)
-    .where(
-      and(
-        eq(AgentTable.id, input.childAgentId),
-        eq(AgentTable.userId, input.userId),
-      ),
-    );
-  if (!childAgent) throw new Error("CHILD_AGENT_NOT_FOUND");
-  const [{ total }] = await pgDb
-    .select({ total: count() })
-    .from(AgentRunTable)
-    .where(eq(AgentRunTable.parentRunId, parent.id));
-  if (total >= DELEGATION_LIMITS.maxChildren)
-    throw new Error("DELEGATION_CHILD_LIMIT_EXCEEDED");
-
-  const childSkills = await skillRepository.selectSkillsByAgentId(
-    childAgent.id,
-    input.userId,
-  );
+  const target =
+    input.agentRef ??
+    (input.childAgentId
+      ? ({ kind: "local", agentId: input.childAgentId } as const)
+      : null);
+  if (!target) throw new Error("CHILD_AGENT_NOT_FOUND");
+  assertDelegationTargetEligible({
+    context: parent.context,
+    target,
+    remoteAgentsEnabled: isV2FeatureEnabled("remoteAgents"),
+  });
+  const childAgent =
+    target.kind === "local"
+      ? (
+          await pgDb
+            .select({ id: AgentTable.id })
+            .from(AgentTable)
+            .where(
+              and(
+                eq(AgentTable.id, target.agentId),
+                eq(AgentTable.userId, input.userId),
+              ),
+            )
+        )[0]
+      : null;
+  const remoteAgent =
+    target.kind === "remote"
+      ? await remoteAgentRepository.selectById(
+          target.connectionId,
+          input.userId,
+        )
+      : null;
+  if (target.kind === "local" && !childAgent)
+    throw new Error("CHILD_AGENT_NOT_FOUND");
+  if (
+    target.kind === "remote" &&
+    (!remoteAgent || remoteAgent.status !== "active")
+  )
+    throw new Error("REMOTE_AGENT_NOT_FOUND");
+  const childSkills = childAgent
+    ? await skillRepository.selectSkillsByAgentId(childAgent.id, input.userId)
+    : [];
   const childTools = childSkills.flatMap((skill) => skill.allowedTools ?? []);
   const approvedTools = Array.isArray(parent.context.approvedDelegationTools)
     ? parent.context.approvedDelegationTools.filter(
@@ -90,75 +118,79 @@ export async function createDelegatedRun(input: {
     200_000,
     Math.max(1_000, input.tokenBudget ?? DELEGATION_LIMITS.defaultTokenBudget),
   );
-  const event = await pgDb.transaction(async (tx) => {
-    await tx.insert(AgentRunTable).values({
-      id: childRunId,
-      userId: input.userId,
-      agentId: childAgent.id,
-      parentRunId: parent.id,
-      workspaceId: parent.workspaceId,
-      taskId: parent.taskId,
-      status: "queued",
-      context: {
-        ...(sanitizeActivityPayload(input.context ?? {}) as Record<
-          string,
-          unknown
-        >),
-        objective: input.objective.slice(0, 8_000),
-      },
-      allowedTools,
-      timeoutMs,
-      depth: parent.depth + 1,
-      tokenBudget,
-    });
-    await tx.insert(DelegationRunTable).values({
-      id: delegationId,
-      parentRunId: parent.id,
-      childRunId,
-      userId: input.userId,
+  const idempotencyKey =
+    input.idempotencyKey ??
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          parentRunId: parent.id,
+          target,
+          objective: input.objective,
+          context: sanitizeActivityPayload(input.context ?? {}),
+        }),
+      )
+      .digest("hex");
+  const run = await runManager.queueDelegated({
+    id: childRunId,
+    delegationId,
+    userId: input.userId,
+    agentId: childAgent?.id,
+    target,
+    parentRunId: parent.id,
+    workspaceId: parent.workspaceId ?? undefined,
+    taskId: parent.taskId ?? undefined,
+    objective: input.objective.slice(0, 8_000),
+    context: {
+      ...(sanitizeActivityPayload(input.context ?? {}) as Record<
+        string,
+        unknown
+      >),
       objective: input.objective.slice(0, 8_000),
-    });
-    return insertActivityEvent(tx, input.userId, {
-      actorType: "agent",
-      actorId: parent.agentId ?? undefined,
-      scopeType: parent.taskId
-        ? "task"
-        : parent.workspaceId
-          ? "workspace"
-          : parent.agentId
-            ? "agent"
-            : "global",
-      scopeId: parent.taskId ?? parent.workspaceId ?? parent.agentId,
-      eventType: "delegation.child_queued",
-      subjectType: "agent_run",
-      subjectId: childRunId,
-      runId: childRunId,
-      parentRunId: parent.id,
-      taskId: parent.taskId ?? undefined,
-      agentId: childAgent.id,
-      payload: { targetType: "agent" },
-      idempotencyKey: `delegation.child_queued:${childRunId}`,
-    });
+    },
+    allowedTools,
+    timeoutMs,
+    depth: parent.depth + 1,
+    tokenBudget,
+    idempotencyKey,
+    toolCallId: input.toolCallId,
   });
-  publishActivityEvent(event.id);
-  await enqueueDelegatedRun(childRunId);
+  await recordActivityEvent(input.userId, {
+    actorType: "agent",
+    actorId: parent.agentId ?? undefined,
+    scopeType: parent.taskId
+      ? "task"
+      : parent.workspaceId
+        ? "workspace"
+        : parent.agentId
+          ? "agent"
+          : "global",
+    scopeId: parent.taskId ?? parent.workspaceId ?? parent.agentId,
+    eventType: "delegation.child_queued",
+    subjectType: "agent_run",
+    subjectId: run.id,
+    runId: run.id,
+    parentRunId: parent.id,
+    taskId: parent.taskId ?? undefined,
+    agentId: childAgent?.id,
+    payload: {
+      targetType: target.kind === "remote" ? "remote_agent" : "agent",
+    },
+    idempotencyKey: `delegation.child_queued:${run.id}`,
+  });
+  if (await enqueueDelegatedRun(run.id))
+    await runManager.markDispatched(run.id);
+  const [persistedDelegation] = await pgDb
+    .select({ id: DelegationRunTable.id })
+    .from(DelegationRunTable)
+    .where(eq(DelegationRunTable.childRunId, run.id));
   return {
-    id: delegationId,
-    childRunId,
+    id: persistedDelegation?.id ?? delegationId,
+    childRunId: run.id,
     status: "queued" as const,
     allowedTools,
   };
 }
 
 export async function activeChildCount(parentRunId: string) {
-  const [{ total }] = await pgDb
-    .select({ total: count() })
-    .from(AgentRunTable)
-    .where(
-      and(
-        eq(AgentRunTable.parentRunId, parentRunId),
-        inArray(AgentRunTable.status, ["running"]),
-      ),
-    );
-  return total;
+  return runManager.countRunningChildren(parentRunId);
 }

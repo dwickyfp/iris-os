@@ -230,6 +230,12 @@
       "temporaryChatInstructionsDescription": "Du kan sette instruksjoner for den midlertidige chatten. Dette vil bli brukt som systemledetekst for den midlertidige chatten."
     },
     "placeholder": "Spør om hva som helst eller @nevn",
+    "primaryAgent": "Primæragent",
+    "clearPrimaryAgent": "Fjern primæragent",
+    "capabilities": "Funksjoner",
+    "prefer": "Foretrekk",
+    "only": "Bare",
+    "removeCapability": "Fjern {name}",
     "Tool": {
       "webSearching": "Søker på nettet...",
       "searchedTheWeb": "Søkte på nettet",
@@ -270,7 +276,10 @@
       "manual": "Manuell",
       "none": "Ingen",
       "mentionOnly": "kun @nevning",
-      "noToolsAvailable": "Ingen verktøy tilgjengelig"
+      "noToolsAvailable": "Ingen verktøy tilgjengelig",
+      "standard": "Standard",
+      "askFirst": "Spør først",
+      "off": "Av"
     },
     "VoiceChat": {
       "title": "Talechat-modus",
@@ -403,7 +412,8 @@
     "showLessChats": "Vis færre",
     "reportAnIssue": "Rapporter et problem",
     "joinCommunity": "Bli med i fellesskapet",
-    "userSettings": "Brukerinnstillinger"
+    "userSettings": "Brukerinnstillinger",
+    "remoteAgents": "Eksterne tilkoblinger"
   },
   "Archive": {
     "title": "Arkiv",
@@ -832,6 +842,49 @@
       "cannotUpdateOwnRole": "Du kan ikke oppdatere din egen rolle",
       "roleUpdatedSuccessfullyTo": "Brukerrolle oppdatert til {role}"
     }
+  },
+  "RemoteAgents": {
+    "eyebrow": "Harness-nettverk",
+    "title": "Eksterne tilkoblinger",
+    "description": "Koble til og administrer eksterne agenter for delegering.",
+    "add": "Legg til tilkobling",
+    "loading": "Laster tilkoblinger...",
+    "loadFailed": "Kunne ikke laste tilkoblinger.",
+    "emptyTitle": "Ingen eksterne tilkoblinger",
+    "emptyDescription": "Legg til et A2A-endepunkt for å delegere arbeid.",
+    "active": "Aktiv",
+    "disabled": "Deaktivert",
+    "actions": "Tilkoblingshandlinger",
+    "edit": "Rediger",
+    "delete": "Slett",
+    "cardReady": "Agentkort klart",
+    "notDiscovered": "Ikke oppdaget",
+    "discover": "Oppdag",
+    "rediscover": "Oppdag på nytt",
+    "addTitle": "Legg til ekstern tilkobling",
+    "editTitle": "Rediger ekstern tilkobling",
+    "formDescription": "Legitimasjon krypteres og vises ikke etter lagring.",
+    "name": "Navn",
+    "endpoint": "Endepunkt-URL",
+    "status": "Status",
+    "credentialType": "Legitimasjonstype",
+    "none": "Ingen",
+    "bearer": "Bearer-token",
+    "apiKey": "API-nøkkel",
+    "credential": "Legitimasjon",
+    "credentialUnchanged": "La stå tomt for å beholde lagret verdi",
+    "headerName": "Headernavn",
+    "cancel": "Avbryt",
+    "save": "Lagre tilkobling",
+    "deleteTitle": "Slette ekstern tilkobling?",
+    "deleteDescription": "Dette sletter {name} permanent.",
+    "saveFailed": "Kunne ikke lagre tilkoblingen.",
+    "discoveryFailed": "Kunne ikke oppdage agenten.",
+    "deleteFailed": "Kunne ikke slette tilkoblingen.",
+    "created": "Tilkobling opprettet.",
+    "updated": "Tilkobling oppdatert.",
+    "discovered": "Agentkort oppdaget.",
+    "deleted": "Tilkobling slettet."
   },
   "MCP": {
     "marketplace": "Markedsplass",

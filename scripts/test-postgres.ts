@@ -4,6 +4,28 @@ import { Client } from "pg";
 
 const externalUrl = process.env.TEST_POSTGRES_URL;
 
+function assertSafeExternalUrl(url: string) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error("TEST_POSTGRES_URL must use PostgreSQL");
+  }
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  if (process.env.TEST_POSTGRES_TARGET_KIND !== "disposable") {
+    throw new Error(
+      "External TEST_POSTGRES_URL requires TEST_POSTGRES_TARGET_KIND=disposable",
+    );
+  }
+  if (process.env.TEST_POSTGRES_CONFIRM_DATABASE !== database) {
+    throw new Error(
+      `TEST_POSTGRES_CONFIRM_DATABASE must exactly equal ${database}`,
+    );
+  }
+  const productionLike = /(^|[^a-z0-9])(prod|production|live)([^a-z0-9]|$)/i;
+  if (productionLike.test(database) || productionLike.test(parsed.hostname)) {
+    throw new Error("Production-like TEST_POSTGRES_URL target rejected");
+  }
+}
+
 function runTests(url: string) {
   return new Promise<number>((resolve, reject) => {
     const child = spawn("pnpm", ["test:integration:db:run"], {
@@ -35,6 +57,7 @@ async function waitForPostgres(url: string) {
 }
 
 if (externalUrl) {
+  assertSafeExternalUrl(externalUrl);
   process.exitCode = await runTests(externalUrl);
 } else {
   const name = `iris-v2-test-${randomUUID().slice(0, 8)}`;

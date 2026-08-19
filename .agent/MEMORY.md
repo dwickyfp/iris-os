@@ -20,6 +20,9 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   feature flags on `codex/iris-v2-foundation`.
 - Agent execution uses Vercel AI SDK `ToolLoopAgent`; workflows and Skills have
   existing runtimes that V2 must extend rather than replace.
+- `IrisHarness` owns foreground/headless execution lifecycle. Stream consumers
+  use `{ native, finalize, fail }`; `generate()` verifies and finalizes while
+  returning the exact native generation result for migration compatibility.
 
 ## Stable constraints
 

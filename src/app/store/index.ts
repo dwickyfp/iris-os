@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { ChatMention, ChatModel, ChatThread } from "app-types/chat";
+import {
+  CapabilityHintMode,
+  ChatMention,
+  ChatModel,
+  ChatThread,
+} from "app-types/chat";
 import { AllowedMCPServer, MCPServerInfo } from "app-types/mcp";
 import { OPENAI_VOICE } from "lib/ai/speech/open-ai/use-voice-chat.openai";
 import { WorkflowSummary } from "app-types/workflow";
@@ -43,6 +48,12 @@ export interface AppState {
   threadMentions: {
     [threadId: string]: ChatMention[];
   };
+  threadPrimaryAgents: {
+    [threadId: string]: Extract<ChatMention, { type: "agent" }> | undefined;
+  };
+  threadCapabilityModes: {
+    [threadId: string]: CapabilityHintMode | undefined;
+  };
   threadFiles: {
     [threadId: string]: UploadedFile[];
   };
@@ -73,6 +84,7 @@ export interface AppState {
     };
   };
   pendingThreadMention?: ChatMention;
+  pendingPrimaryAgent?: Extract<ChatMention, { type: "agent" }>;
 }
 
 export interface AppDispatch {
@@ -86,6 +98,8 @@ const initialState: AppState = {
   chatSessions: {},
   runningThreadIds: [],
   threadMentions: {},
+  threadPrimaryAgents: {},
+  threadCapabilityModes: {},
   threadFiles: {},
   threadImageToolModel: {},
   mcpList: [],
@@ -121,6 +135,7 @@ const initialState: AppState = {
     },
   },
   pendingThreadMention: undefined,
+  pendingPrimaryAgent: undefined,
 };
 
 export const appStore = create<AppState & AppDispatch>()(
@@ -136,6 +151,11 @@ export const appStore = create<AppState & AppDispatch>()(
         toolChoice: state.toolChoice || initialState.toolChoice,
         activeWorkspaceId: state.activeWorkspaceId,
         activeTaskId: state.activeTaskId,
+        threadMentions: state.threadMentions,
+        threadPrimaryAgents: state.threadPrimaryAgents,
+        threadCapabilityModes: state.threadCapabilityModes,
+        pendingThreadMention: state.pendingThreadMention,
+        pendingPrimaryAgent: state.pendingPrimaryAgent,
         allowedMcpServers:
           state.allowedMcpServers || initialState.allowedMcpServers,
         allowedAppDefaultToolkit: (

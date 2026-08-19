@@ -32,9 +32,14 @@ import {
 import { useShallow } from "zustand/shallow";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
-import { capitalizeFirstLetter, cn, createDebounce } from "lib/utils";
+import { cn, createDebounce } from "lib/utils";
 
 const debounce = createDebounce();
+const autonomyLabel = {
+  auto: "standard",
+  manual: "askFirst",
+  none: "off",
+} as const;
 
 export const ToolModeDropdown = ({ disabled }: { disabled?: boolean }) => {
   const t = useTranslations("Chat.Tool");
@@ -79,7 +84,7 @@ export const ToolModeDropdown = ({ disabled }: { disabled?: boolean }) => {
               <span className="absolute inset-0 -z-10" />
             </TooltipTrigger>
             <TooltipContent className="flex items-center gap-2">
-              {capitalizeFirstLetter(toolChoice)}
+              {t(autonomyLabel[toolChoice])}
               <CheckIcon className="size-2.5" />
             </TooltipContent>
           </Tooltip>
@@ -125,7 +130,7 @@ export const ToolModeDropdown = ({ disabled }: { disabled?: boolean }) => {
             <div className="flex flex-col gap-2 w-full">
               <div className="flex items-center gap-2">
                 <Infinity />
-                <span className="font-bold">{t("auto")}</span>
+                <span className="font-bold">{t("standard")}</span>
                 {toolChoice == "auto" && <Check className="ml-auto" />}
               </div>
               <p className="text-xs text-muted-foreground">
@@ -142,7 +147,7 @@ export const ToolModeDropdown = ({ disabled }: { disabled?: boolean }) => {
             <div className="flex flex-col gap-2 w-full">
               <div className="flex items-center gap-2">
                 <ClipboardCheck />
-                <span className="font-bold">{t("manual")}</span>
+                <span className="font-bold">{t("askFirst")}</span>
                 {toolChoice == "manual" && <Check className="ml-auto" />}
               </div>
               <p className="text-xs text-muted-foreground">
@@ -159,10 +164,7 @@ export const ToolModeDropdown = ({ disabled }: { disabled?: boolean }) => {
             <div className="flex flex-col gap-2 w-full">
               <div className="flex items-center gap-2">
                 <PenOff />
-                <span className="font-bold">{t("none")}</span>
-                <span className="text-xs text-muted-foreground ml-4">
-                  {t("mentionOnly")}
-                </span>
+                <span className="font-bold">{t("off")}</span>
                 {toolChoice == "none" && <Check className="ml-auto" />}
               </div>
 

@@ -1,8 +1,30 @@
 "use client";
 
+import type {
+  AgentRunResumeInput,
+  RemoteAgentCredential,
+} from "app-types/remote-agent";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "ui/alert";
+import { Badge } from "ui/badge";
 import { Button } from "ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "ui/dialog";
+import { Input } from "ui/input";
+import { Label } from "ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "ui/select";
 
 type AgentRun = {
   id: string;
@@ -16,6 +38,11 @@ type AgentRun = {
   completedAt?: string;
   createdAt: string;
   cancelRequestedAt?: string;
+  waitingReason?: string;
+  remoteMetadata?: {
+    waitingRequest?: unknown;
+    statusMessage?: unknown;
+  } | null;
 };
 type Delegation = {
   id: string;
@@ -31,11 +58,26 @@ type Payload = {
   delegations: Delegation[];
   summary: { active: number; failed: number; cancellable: number };
 };
+type TimelinePayload = {
+  events: Array<{
+    id: string;
+    eventType: string;
+    createdAt: string;
+  }>;
+};
 
 export function DelegationOperations() {
   const [data, setData] = useState<Payload>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
+  const [selectedRun, setSelectedRun] = useState<AgentRun>();
+  const [timeline, setTimeline] = useState<TimelinePayload>();
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [resumeValue, setResumeValue] = useState("");
+  const [credentialType, setCredentialType] =
+    useState<RemoteAgentCredential["type"]>("bearer");
+  const [credentialHeader, setCredentialHeader] = useState("X-API-Key");
+  const [resumeBusy, setResumeBusy] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     const response = await fetch("/api/agent-runs");
@@ -63,6 +105,63 @@ export function DelegationOperations() {
     await load();
   }
 
+  async function openRun(run: AgentRun) {
+    setSelectedRun(run);
+    setTimeline(undefined);
+    setResumeValue("");
+    setCredentialType("bearer");
+    setCredentialHeader("X-API-Key");
+    setTimelineLoading(true);
+    const response = await fetch(`/api/agent-runs/${run.id}/timeline`);
+    if (response.ok) setTimeline(await response.json());
+    else setError("Unable to load run timeline");
+    setTimelineLoading(false);
+  }
+
+  async function resume() {
+    if (!selectedRun || !resumeValue.trim()) return;
+    setResumeBusy(true);
+    const body: AgentRunResumeInput =
+      selectedRun.status === "waiting_input"
+        ? { kind: "input", message: resumeValue }
+        : {
+            kind: "credential",
+            credential:
+              credentialType === "api_key"
+                ? {
+                    type: "api_key",
+                    value: resumeValue,
+                    headerName: credentialHeader,
+                  }
+                : { type: "bearer", value: resumeValue },
+          };
+    const response = await fetch(`/api/agent-runs/${selectedRun.id}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setResumeBusy(false);
+    if (!response.ok) {
+      const responseBody = await response.json().catch(() => null);
+      setError(responseBody?.error ?? "Unable to resume run");
+      return;
+    }
+    setSelectedRun(undefined);
+    await load();
+  }
+
+  const remoteRequest = formatRemoteValue(
+    selectedRun?.remoteMetadata?.waitingRequest,
+  );
+  const remoteStatus = formatRemoteValue(
+    selectedRun?.remoteMetadata?.statusMessage,
+  );
+  const canResume =
+    Boolean(resumeValue.trim()) &&
+    (selectedRun?.status !== "waiting_approval" ||
+      credentialType !== "api_key" ||
+      Boolean(credentialHeader.trim()));
+
   function renderRun(run: AgentRun): React.ReactNode {
     const children =
       data?.runs.filter((item) => item.parentRunId === run.id) ?? [];
@@ -89,7 +188,13 @@ export function DelegationOperations() {
               · budget {run.tokenBudget.toLocaleString()}
             </p>
           </div>
-          {["queued", "running"].includes(run.status) &&
+          {[
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_input",
+            "waiting_external",
+          ].includes(run.status) &&
             !run.cancelRequestedAt && (
               <Button
                 size="sm"
@@ -99,6 +204,9 @@ export function DelegationOperations() {
                 Cancel tree
               </Button>
             )}
+          <Button size="sm" variant="ghost" onClick={() => void openRun(run)}>
+            View timeline
+          </Button>
         </div>
         {(run.errorCode || delegation?.errorCode) && (
           <p className="mt-2 text-sm text-destructive">
@@ -156,8 +264,147 @@ export function DelegationOperations() {
           </ol>
         )}
       </section>
+      <Dialog
+        open={Boolean(selectedRun)}
+        onOpenChange={(open) => !open && setSelectedRun(undefined)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Run timeline</DialogTitle>
+            <DialogDescription>
+              {selectedRun?.waitingReason ??
+                "Execution events and delegation state changes."}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedRun && <Badge variant="outline">{selectedRun.status}</Badge>}
+          {(remoteRequest || remoteStatus) && (
+            <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
+              {remoteRequest && (
+                <div>
+                  <p className="font-medium">Remote request</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                    {remoteRequest}
+                  </p>
+                </div>
+              )}
+              {remoteStatus && remoteStatus !== remoteRequest && (
+                <div>
+                  <p className="font-medium">Remote status</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+                    {remoteStatus}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          <ol className="max-h-72 space-y-3 overflow-y-auto border-l pl-4">
+            {timelineLoading && (
+              <li className="text-sm text-muted-foreground">
+                Loading timeline…
+              </li>
+            )}
+            {!timelineLoading && !timeline?.events.length && (
+              <li className="text-sm text-muted-foreground">
+                No timeline events recorded.
+              </li>
+            )}
+            {timeline?.events.map((event) => (
+              <li key={event.id} className="text-sm">
+                <p className="font-medium">{event.eventType}</p>
+                <time className="text-xs text-muted-foreground">
+                  {new Date(event.createdAt).toLocaleString()}
+                </time>
+              </li>
+            ))}
+          </ol>
+          {selectedRun &&
+            ["waiting_input", "waiting_approval"].includes(
+              selectedRun.status,
+            ) && (
+              <div className="grid gap-2 border-t pt-4">
+                {selectedRun.status === "waiting_approval" && (
+                  <>
+                    <Label htmlFor="run-credential-type">Credential type</Label>
+                    <Select
+                      value={credentialType}
+                      onValueChange={(value: RemoteAgentCredential["type"]) =>
+                        setCredentialType(value)
+                      }
+                    >
+                      <SelectTrigger id="run-credential-type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bearer">Bearer token</SelectItem>
+                        <SelectItem value="api_key">API key</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+                <Label htmlFor="run-continuation">
+                  {selectedRun.status === "waiting_input"
+                    ? "Requested input"
+                    : credentialType === "api_key"
+                      ? "API key"
+                      : "Bearer token"}
+                </Label>
+                <Input
+                  id="run-continuation"
+                  type={
+                    selectedRun.status === "waiting_approval"
+                      ? "password"
+                      : "text"
+                  }
+                  value={resumeValue}
+                  onChange={(event) => setResumeValue(event.target.value)}
+                />
+                {selectedRun.status === "waiting_approval" &&
+                  credentialType === "api_key" && (
+                    <>
+                      <Label htmlFor="run-credential-header">Header name</Label>
+                      <Input
+                        id="run-credential-header"
+                        value={credentialHeader}
+                        onChange={(event) =>
+                          setCredentialHeader(event.target.value)
+                        }
+                      />
+                    </>
+                  )}
+              </div>
+            )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSelectedRun(undefined)}>
+              Close
+            </Button>
+            {selectedRun &&
+              ["waiting_input", "waiting_approval"].includes(
+                selectedRun.status,
+              ) && (
+                <Button
+                  disabled={!canResume || resumeBusy}
+                  onClick={() => void resume()}
+                >
+                  Resume run
+                </Button>
+              )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
+}
+
+function formatRemoteValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "Remote agent returned an unreadable status.";
+  }
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

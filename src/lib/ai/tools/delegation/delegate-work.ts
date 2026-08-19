@@ -1,13 +1,15 @@
 import { jsonSchema, tool } from "ai";
-import { and, eq } from "drizzle-orm";
 import { createDelegatedRun, DELEGATION_LIMITS } from "lib/delegation/service";
-import { pgDb } from "lib/db/pg/db.pg";
-import { AgentRunTable } from "lib/db/pg/schema.pg";
+import {
+  delegationTargetId,
+  type DelegationTarget,
+} from "lib/delegation/targets";
 
-export const DELEGATE_WORK_TOOL_NAME = "delegate_work";
+export const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";
+export const DELEGATE_WORK_TOOL_NAME = DELEGATE_AGENT_TOOL_NAME;
 
 type DelegateWorkInput = {
-  childAgentId: string;
+  target: string;
   objective: string;
   context?: Record<string, unknown>;
   timeoutMs?: number;
@@ -17,14 +19,19 @@ type DelegateWorkInput = {
 export function createDelegateWorkTool(input: {
   parentRunId: string;
   userId: string;
+  targets: readonly DelegationTarget[];
 }) {
+  const targets = new Map(
+    input.targets.map((target) => [delegationTargetId(target), target]),
+  );
   return tool({
-    description:
-      "Delegate bounded work to a user-owned specialist agent and wait for its structured result.",
+    description: `Delegate a bounded subproblem to one eligible specialist. Targets: ${input.targets
+      .map((target) => `${delegationTargetId(target)} (${target.name})`)
+      .join(", ")}.`,
     inputSchema: jsonSchema<DelegateWorkInput>({
       type: "object",
       properties: {
-        childAgentId: { type: "string", format: "uuid" },
+        target: { type: "string", enum: [...targets.keys()] },
         objective: { type: "string", minLength: 1, maxLength: 8_000 },
         context: { type: "object", additionalProperties: true },
         timeoutMs: {
@@ -34,59 +41,32 @@ export function createDelegateWorkTool(input: {
         },
         tokenBudget: { type: "integer", minimum: 1_000, maximum: 200_000 },
       },
-      required: ["childAgentId", "objective"],
+      required: ["target", "objective"],
       additionalProperties: false,
     }),
-    execute: async (args: DelegateWorkInput) => {
-      const {
-        childAgentId,
-        objective,
-        context,
-        timeoutMs,
-        tokenBudget,
-      } = args;
+    execute: async (args: DelegateWorkInput, options) => {
+      const { objective, context, timeoutMs, tokenBudget } = args;
+      const targetId = args.target;
+      const target = targets.get(targetId);
+      if (!target) throw new Error("DELEGATION_TARGET_NOT_ELIGIBLE");
       const effectiveTimeout = timeoutMs ?? DELEGATION_LIMITS.defaultTimeoutMs;
       const delegated = await createDelegatedRun({
         userId: input.userId,
         parentRunId: input.parentRunId,
-        childAgentId,
+        agentRef:
+          target.kind === "local"
+            ? { kind: "local", agentId: target.agentId }
+            : { kind: "remote", connectionId: target.connectionId },
         objective,
         context: context ?? {},
         timeoutMs: effectiveTimeout,
         tokenBudget,
+        toolCallId: options.toolCallId,
+        idempotencyKey: `${input.parentRunId}:${options.toolCallId}`,
       });
-      const deadline = Date.now() + effectiveTimeout;
-      while (Date.now() < deadline) {
-        const [run] = await pgDb
-          .select()
-          .from(AgentRunTable)
-          .where(
-            and(
-              eq(AgentRunTable.id, delegated.childRunId),
-              eq(AgentRunTable.userId, input.userId),
-            ),
-          );
-        if (
-          run &&
-          ["succeeded", "failed", "cancelled", "timed_out"].includes(run.status)
-        )
-          return {
-            childRunId: run.id,
-            status: run.status,
-            result: run.result,
-            errorCode: run.errorCode,
-            error: run.error,
-          };
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-      await pgDb
-        .update(AgentRunTable)
-        .set({ cancelRequestedAt: new Date() })
-        .where(eq(AgentRunTable.id, delegated.childRunId));
       return {
         childRunId: delegated.childRunId,
-        status: "timed_out" as const,
-        errorCode: "DELEGATION_WAIT_TIMED_OUT",
+        status: "accepted" as const,
       };
     },
   });

@@ -15,6 +15,7 @@
 /tests/.auth
 test-results/
 playwright-report/
+/.harness/
 /benchmark-results/
 .env.test
 

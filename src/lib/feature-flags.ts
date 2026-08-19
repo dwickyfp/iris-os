@@ -3,6 +3,7 @@ export type V2FeatureFlags = {
   learning: boolean;
   automation: boolean;
   delegation: boolean;
+  remoteAgents: boolean;
 };
 
 export function getV2FeatureFlags(
@@ -16,6 +17,7 @@ export function getV2FeatureFlags(
     learning: enabled(env.IRIS_LEARNING_V2),
     automation: enabled(env.IRIS_AUTOMATION_V2),
     delegation: enabled(env.IRIS_DELEGATION_V2),
+    remoteAgents: enabled(env.IRIS_REMOTE_AGENTS_A2A),
   };
 }
 

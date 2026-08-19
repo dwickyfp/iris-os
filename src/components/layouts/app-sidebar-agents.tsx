@@ -62,24 +62,14 @@ export function AppSidebarAgents({ userRole }: { userRole?: string | null }) {
 
       if (currentThreadId) {
         appStore.setState((prev) => {
-          const currentMentions = prev.threadMentions[currentThreadId] || [];
-
-          const target = currentMentions.find(
-            (mention) =>
-              mention.type == "agent" && mention.agentId === agent.id,
-          );
-
-          if (target) {
+          if (prev.threadPrimaryAgents[currentThreadId]?.agentId === agent.id) {
             return prev;
           }
 
           return {
-            threadMentions: {
-              ...prev.threadMentions,
-              [currentThreadId]: [
-                ...currentMentions.filter((v) => v.type != "agent"),
-                newMention,
-              ],
+            threadPrimaryAgents: {
+              ...prev.threadPrimaryAgents,
+              [currentThreadId]: newMention,
             },
           };
         });
@@ -87,7 +77,7 @@ export function AppSidebarAgents({ userRole }: { userRole?: string | null }) {
         router.push("/");
 
         appStore.setState(() => ({
-          pendingThreadMention: newMention,
+          pendingPrimaryAgent: newMention,
         }));
       }
     },

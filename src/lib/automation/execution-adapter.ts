@@ -2,12 +2,16 @@ import "server-only";
 
 import type { Agent } from "app-types/agent";
 import type { Tool } from "ai";
-import { createToolLoopAgent } from "lib/ai/agent/create-tool-loop-agent";
 import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
+import {
+  type DriverGenerateInput,
+  type HarnessOrchestration,
+} from "lib/ai/runtime";
+import { irisHarness } from "lib/ai/runtime/server";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import {
@@ -52,6 +56,10 @@ export type AutomationExecutionDependencies = Record<
   TargetExecutor
 >;
 
+export type AutomationHarness = {
+  generate(input: DriverGenerateInput): Promise<any>;
+};
+
 function objective(input: Record<string, unknown>) {
   const explicit = input.objective ?? input.prompt;
   return typeof explicit === "string" && explicit.trim()
@@ -70,11 +78,20 @@ function availableTools(allowedTools: string[]) {
   );
 }
 
-async function runHeadlessAgent(input: {
+export function mapWorkflowOutput(output: unknown): Record<string, unknown> {
+  if (!output || typeof output !== "object") return { output };
+  const outputs = (output as { outputs?: unknown }).outputs;
+  return outputs && typeof outputs === "object"
+    ? (outputs as Record<string, unknown>)
+    : { output };
+}
+
+export async function runHeadlessAgent(input: {
   request: AutomationExecutionRequest;
   profile: { type: "base" } | { type: "custom"; agent: Agent };
   instructions: string;
   allowedTools: string[];
+  harness?: AutomationHarness;
 }) {
   const model = await customModelProvider.getEngineModel(
     input.request.executionSource === "delegation"
@@ -100,18 +117,36 @@ async function runHeadlessAgent(input: {
           toolMode: "auto",
           approvalPolicy: "never",
         });
-  const runner = createToolLoopAgent({
-    profile: input.profile,
-    model,
-    instructions: input.instructions,
-    tools: availableTools(input.allowedTools),
-    runtimeContext,
-  });
-  const result = await runner.generate({
-    prompt: objective(input.request.input),
-    abortSignal: input.request.signal,
-    timeout: input.request.timeoutMs,
-  });
+  const execution = {
+    agent: {
+      profile: input.profile,
+      model,
+      instructions: input.instructions,
+      tools: availableTools(input.allowedTools),
+      runtimeContext,
+    },
+    execution: {
+      prompt: objective(input.request.input),
+      abortSignal: input.request.signal,
+      timeout: input.request.timeoutMs,
+    },
+    orchestration: {
+      identity: {
+        userId: input.request.userId,
+        runId: input.request.runId,
+        requestId: runtimeContext.requestId,
+        actorType: "agent",
+        agentId:
+          input.profile.type === "custom" ? input.profile.agent.id : undefined,
+        workspaceId: input.request.workspaceId,
+      },
+      policy: {
+        approvalPolicy: "never",
+        tools: {},
+      },
+    } satisfies HarnessOrchestration,
+  };
+  const result = await (input.harness ?? irisHarness).generate(execution);
   return {
     status: "succeeded" as const,
     output: {
@@ -154,7 +189,10 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
         timeout: request.timeoutMs,
       });
       return result.isOk
-        ? { status: "succeeded", output: { targetId: request.targetId } }
+        ? {
+            status: "succeeded",
+            output: mapWorkflowOutput(result.output),
+          }
         : {
             status: "failed",
             errorCode: "WORKFLOW_FAILED",
@@ -228,6 +266,13 @@ export function createAutomationExecutionAdapter(
       if (request.signal.aborted)
         return { status: "cancelled" as const, message: "Run was cancelled" };
       const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("VERIFICATION_REQUIRED:"))
+        return {
+          status: "failed" as const,
+          errorCode: "VERIFICATION_REQUIRED",
+          message: message.slice(0, 2_000),
+          retryable: false,
+        };
       if (/timeout/i.test(message))
         return {
           status: "timed_out" as const,

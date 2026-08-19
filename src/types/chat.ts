@@ -1,8 +1,9 @@
 import type { LanguageModelUsage, UIMessage } from "ai";
+import { normalizeChatRequest } from "lib/ai/runtime/capabilities/normalize";
+import { tag } from "lib/tag";
 import { z } from "zod";
 import { AllowedMCPServerZodSchema } from "./mcp";
 import { UserPreferences } from "./user";
-import { tag } from "lib/tag";
 
 export type ChatMetadata = {
   usage?: LanguageModelUsage;
@@ -45,28 +46,42 @@ export type ChatMessage = {
   createdAt: Date;
 };
 
-export const ChatMentionSchema = z.discriminatedUnion("type", [
-  z.object({
+export const CapabilityHintModeSchema = z.enum(["prefer", "only"]);
+export type CapabilityHintMode = z.infer<typeof CapabilityHintModeSchema>;
+export const ChatAutonomySchema = z.enum(["standard", "ask", "off"]);
+
+const CapabilityRoutingSchema = z.object({
+  routingMode: CapabilityHintModeSchema.optional(),
+});
+
+const McpToolCapabilitySchema = z
+  .object({
     type: z.literal("mcpTool"),
     name: z.string(),
     description: z.string().optional(),
     serverName: z.string().optional(),
     serverId: z.string(),
-  }),
-  z.object({
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const DefaultToolCapabilitySchema = z
+  .object({
     type: z.literal("defaultTool"),
     name: z.string(),
     label: z.string(),
     description: z.string().optional(),
-  }),
-  z.object({
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const McpServerCapabilitySchema = z
+  .object({
     type: z.literal("mcpServer"),
     name: z.string(),
     description: z.string().optional(),
     toolCount: z.number().optional(),
     serverId: z.string(),
-  }),
-  z.object({
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const WorkflowCapabilitySchema = z
+  .object({
     type: z.literal("workflow"),
     name: z.string(),
     description: z.string().nullish(),
@@ -78,8 +93,41 @@ export const ChatMentionSchema = z.discriminatedUnion("type", [
         style: z.record(z.string(), z.string()).optional(),
       })
       .nullish(),
-  }),
-  z.object({
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const SkillCapabilitySchema = z
+  .object({
+    type: z.literal("skill"),
+    name: z.string(),
+    description: z.string().nullish(),
+    skillId: z.string(),
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const PeerAgentCapabilitySchema = z
+  .object({
+    type: z.literal("peerAgent"),
+    name: z.string(),
+    description: z.string().nullish(),
+    agentId: z.string(),
+    icon: z
+      .object({
+        type: z.literal("emoji"),
+        value: z.string(),
+        style: z.record(z.string(), z.string()).optional(),
+      })
+      .nullish(),
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const RemotePeerAgentCapabilitySchema = z
+  .object({
+    type: z.literal("remoteAgent"),
+    name: z.string(),
+    description: z.string().nullish(),
+    agentId: z.string(),
+  })
+  .extend(CapabilityRoutingSchema.shape);
+const LegacyPrimaryAgentMentionSchema = z
+  .object({
     type: z.literal("agent"),
     name: z.string(),
     description: z.string().nullish(),
@@ -91,12 +139,42 @@ export const ChatMentionSchema = z.discriminatedUnion("type", [
         style: z.record(z.string(), z.string()).optional(),
       })
       .nullish(),
-  }),
+  })
+  .extend(CapabilityRoutingSchema.shape);
+
+export const CapabilityRefSchema = z.discriminatedUnion("type", [
+  McpToolCapabilitySchema,
+  DefaultToolCapabilitySchema,
+  McpServerCapabilitySchema,
+  WorkflowCapabilitySchema,
+  SkillCapabilitySchema,
+  PeerAgentCapabilitySchema,
+  RemotePeerAgentCapabilitySchema,
+]);
+
+export type CapabilityRef = z.infer<typeof CapabilityRefSchema>;
+
+export const ChatMentionSchema = z.discriminatedUnion("type", [
+  McpToolCapabilitySchema,
+  DefaultToolCapabilitySchema,
+  McpServerCapabilitySchema,
+  WorkflowCapabilitySchema,
+  SkillCapabilitySchema,
+  PeerAgentCapabilitySchema,
+  RemotePeerAgentCapabilitySchema,
+  LegacyPrimaryAgentMentionSchema,
 ]);
 
 export type ChatMention = z.infer<typeof ChatMentionSchema>;
 
-export const chatApiSchemaRequestBodySchema = z.object({
+export const CapabilityHintsSchema = z.object({
+  requested: z.array(CapabilityRefSchema).default([]),
+  mode: CapabilityHintModeSchema.default("prefer"),
+});
+
+export type CapabilityHints = z.infer<typeof CapabilityHintsSchema>;
+
+const chatApiSchemaRequestBodyInputSchema = z.object({
   id: z.string(),
   message: z.any() as z.ZodType<UIMessage>,
   chatModel: z
@@ -105,8 +183,11 @@ export const chatApiSchemaRequestBodySchema = z.object({
       model: z.string(),
     })
     .optional(),
-  toolChoice: z.enum(["auto", "none", "manual"]),
+  toolChoice: z.enum(["auto", "none", "manual"]).default("auto"),
   mentions: z.array(ChatMentionSchema).optional(),
+  primaryAgentId: z.string().optional(),
+  capabilityHints: CapabilityHintsSchema.optional(),
+  autonomy: ChatAutonomySchema.optional(),
   imageTool: z.object({ model: z.string().optional() }).optional(),
   allowedMcpServers: z.record(z.string(), AllowedMCPServerZodSchema).optional(),
   allowedAppDefaultToolkit: z.array(z.string()).optional(),
@@ -114,6 +195,9 @@ export const chatApiSchemaRequestBodySchema = z.object({
   workspaceId: z.string().uuid().optional(),
   taskId: z.string().uuid().optional(),
 });
+
+export const chatApiSchemaRequestBodySchema =
+  chatApiSchemaRequestBodyInputSchema.transform(normalizeChatRequest);
 
 export type ChatApiSchemaRequestBody = z.infer<
   typeof chatApiSchemaRequestBodySchema

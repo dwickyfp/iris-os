@@ -230,6 +230,12 @@
       "temporaryChatInstructionsDescription": "You can set instructions for the temporary chat. This will be used as a system prompt for the temporary chat."
     },
     "placeholder": "Ask anything or @mention",
+    "primaryAgent": "Primary agent",
+    "clearPrimaryAgent": "Clear primary agent",
+    "capabilities": "Capabilities",
+    "prefer": "Prefer",
+    "only": "Only",
+    "removeCapability": "Remove {name}",
     "Tool": {
       "webSearching": "Searching the Web...",
       "searchedTheWeb": "Searched the Web",
@@ -270,7 +276,10 @@
       "manual": "Manual",
       "none": "None",
       "mentionOnly": "@mention only",
-      "noToolsAvailable": "No tools available"
+      "noToolsAvailable": "No tools available",
+      "standard": "Standard",
+      "askFirst": "Ask first",
+      "off": "Off"
     },
     "VoiceChat": {
       "title": "Voice Chat Mode",
@@ -403,7 +412,8 @@
     "showLessChats": "Show less",
     "reportAnIssue": "Report an issue",
     "joinCommunity": "Join Community",
-    "userSettings": "User Settings"
+    "userSettings": "User Settings",
+    "remoteAgents": "Remote connections"
   },
   "Archive": {
     "title": "Archive",
@@ -832,6 +842,49 @@
       "cannotUpdateOwnRole": "You cannot update your own role",
       "roleUpdatedSuccessfullyTo": "User role updated successfully to {role}"
     }
+  },
+  "RemoteAgents": {
+    "eyebrow": "Harness network",
+    "title": "Remote connections",
+    "description": "Connect and manage remote agents available for delegation.",
+    "add": "Add connection",
+    "loading": "Loading connections...",
+    "loadFailed": "Unable to load remote connections.",
+    "emptyTitle": "No remote connections",
+    "emptyDescription": "Add an A2A endpoint to delegate work to a remote agent.",
+    "active": "Active",
+    "disabled": "Disabled",
+    "actions": "Connection actions",
+    "edit": "Edit",
+    "delete": "Delete",
+    "cardReady": "Agent card ready",
+    "notDiscovered": "Agent card not discovered",
+    "discover": "Discover",
+    "rediscover": "Rediscover",
+    "addTitle": "Add remote connection",
+    "editTitle": "Edit remote connection",
+    "formDescription": "Credentials are encrypted and never displayed after saving.",
+    "name": "Name",
+    "endpoint": "Endpoint URL",
+    "status": "Status",
+    "credentialType": "Credential type",
+    "none": "None",
+    "bearer": "Bearer token",
+    "apiKey": "API key",
+    "credential": "Credential",
+    "credentialUnchanged": "Leave blank to keep the saved credential",
+    "headerName": "Header name",
+    "cancel": "Cancel",
+    "save": "Save connection",
+    "deleteTitle": "Delete remote connection?",
+    "deleteDescription": "This permanently deletes {name}.",
+    "saveFailed": "Unable to save remote connection.",
+    "discoveryFailed": "Unable to discover the remote agent.",
+    "deleteFailed": "Unable to delete remote connection.",
+    "created": "Remote connection created.",
+    "updated": "Remote connection updated.",
+    "discovered": "Agent card discovered.",
+    "deleted": "Remote connection deleted."
   },
   "MCP": {
     "marketplace": "Marketplace",

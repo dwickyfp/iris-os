@@ -102,6 +102,37 @@ describe("createSkillsRuntime", () => {
     });
   });
 
+  it("isolates selected skills from list and view tools", async () => {
+    const other = {
+      id: "deploy",
+      name: "Deploy",
+      description: "Deploy services",
+      body: "Deployment instructions",
+      files: [],
+    };
+    const repository = createRepository();
+    repository.selectSkillsByAgentId = vi.fn(async () => [skill, other]);
+    repository.selectSkillById = vi.fn(
+      async (skillId) =>
+        [skill, other].find((candidate) => candidate.id === skillId) ?? null,
+    );
+    const runtime = (
+      await createSkillsRuntime({
+        repository,
+        agentId: "agent-1",
+        userId: "user-1",
+      })
+    ).select([skill.id]);
+
+    await expect(execute(runtime, "skills_list", {})).resolves.toEqual({
+      skills: [{ ...runtime.manifest[0], loaded: false }],
+    });
+    await expect(
+      execute(runtime, "skill_view", { skillId: other.id }),
+    ).rejects.toThrow(SKILL_NOT_AVAILABLE);
+    expect(repository.selectSkillById).not.toHaveBeenCalled();
+  });
+
   it("deduplicates concurrent loads and returns already-loaded responses", async () => {
     const repository = createRepository();
     const runtime = await createSkillsRuntime({

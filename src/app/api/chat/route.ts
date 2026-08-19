@@ -10,18 +10,20 @@ import {
 import { customModelProvider } from "lib/ai/models";
 
 import {
+  CapabilityRef,
   ChatMention,
   ChatMetadata,
   chatApiSchemaRequestBodySchema,
 } from "app-types/chat";
 import {
-  buildMcpServerCustomizationsSystemPrompt,
   buildBaseAgentSystemPrompt,
+  buildMcpServerCustomizationsSystemPrompt,
   buildToolCallUnsupportedModelSystemPrompt,
   buildUserSystemPrompt,
 } from "lib/ai/prompts";
 import {
   agentRepository,
+  agentRunRepository,
   chatRepository,
   skillRepository,
   taskRepository,
@@ -29,55 +31,51 @@ import {
 } from "lib/db/repository";
 import globalLogger from "logger";
 
-import { errorIf, safe } from "ts-safe";
+import { safe } from "ts-safe";
 
 import { buildCsvIngestionPreviewParts } from "@/lib/ai/ingest/csv-ingest";
 import { getSession } from "auth/server";
 import { colorize } from "consola/utils";
-import { createToolLoopAgent } from "lib/ai/agent/create-tool-loop-agent";
+import { recordActivityEvent } from "lib/activity/service";
+import { isReadOnlyTool } from "lib/ai/agent/approval-policy";
 import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
-import { compactContext } from "lib/ai/context-compaction";
+import { prepareContext } from "lib/ai/context-compaction";
+import { enqueueMemoryReview } from "lib/ai/memory/queue";
+import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
+import type { HarnessStreamResult } from "lib/ai/runtime";
+import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
+import { policyEngine } from "lib/ai/runtime/policy-engine";
+import { irisHarness } from "lib/ai/runtime/server";
 import {
   type AssignedSkillsRepository,
-  bindSkillTools,
   buildSkillManifestPrompt,
   createSkillsRuntime,
 } from "lib/ai/skill";
 import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
 import { ImageToolName } from "lib/ai/tools";
+import {
+  MANAGE_AUTOMATION_TOOL_NAME,
+  createManageAutomationTool,
+} from "lib/ai/tools/background/manage-automation";
+import {
+  MANAGE_LEARNING_TOOL_NAME,
+  createManageLearningTool,
+} from "lib/ai/tools/background/manage-learning";
+import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
-import { serverFileStorage } from "lib/file-storage";
-import { generateUUID } from "lib/utils";
-import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
-import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import { serverFileStorage } from "lib/file-storage";
+import { isChatCorrection } from "lib/learning/policy";
+import { buildTaskContextPrompt } from "lib/task/context";
+import { generateUUID } from "lib/utils";
 import {
   buildWorkspaceInstructionsPrompt,
   resolveThreadWorkspaceId,
 } from "lib/workspace/context";
 import { workspaceService } from "lib/workspace/server";
-import { buildTaskContextPrompt } from "lib/task/context";
-import { recordActivityEvent } from "lib/activity/service";
-import { isChatCorrection } from "lib/learning/policy";
-import { pgDb } from "lib/db/pg/db.pg";
-import { AgentRunTable } from "lib/db/pg/schema.pg";
-import { and, eq } from "drizzle-orm";
-import { isReadOnlyTool } from "lib/ai/agent/approval-policy";
-import {
-  createDelegateWorkTool,
-  DELEGATE_WORK_TOOL_NAME,
-} from "lib/ai/tools/delegation/delegate-work";
-import {
-  createManageLearningTool,
-  MANAGE_LEARNING_TOOL_NAME,
-} from "lib/ai/tools/background/manage-learning";
-import {
-  createManageAutomationTool,
-  MANAGE_AUTOMATION_TOOL_NAME,
-} from "lib/ai/tools/background/manage-automation";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
@@ -88,11 +86,9 @@ import {
   extractInProgressToolPart,
   filterMcpServerCustomizations,
   handleError,
-  loadAppDefaultTools,
-  loadMcpTools,
-  loadWorkFlowTools,
   manualToolExecuteByLastMessage,
   mergeSystemPrompt,
+  workflowToVercelAITool,
 } from "./shared.chat";
 
 const logger = globalLogger.withDefaults({
@@ -117,12 +113,16 @@ export async function POST(request: Request) {
       allowedMcpServers,
       imageTool,
       mentions = [],
+      primaryAgentId,
+      autonomy,
+      capabilityHints,
       attachments = [],
       workspaceId: requestedWorkspaceId,
       taskId: requestedTaskId,
     } = chatApiSchemaRequestBodySchema.parse(json);
     const requestId = generateUUID();
     const runId = generateUUID();
+    let checkpointResolvedPolicy;
 
     const modelConfig =
       await customModelProvider.getModelConfiguration(chatModel);
@@ -280,20 +280,28 @@ export async function POST(request: Request) {
 
     const supportToolCall = modelConfig.capabilities.toolCalls;
 
-    const agentId = (
-      mentions.find((m) => m.type === "agent") as Extract<
-        ChatMention,
-        { type: "agent" }
-      >
-    )?.agentId;
+    const agentId =
+      primaryAgentId ??
+      (
+        mentions.find((m) => m.type === "agent") as Extract<
+          ChatMention,
+          { type: "agent" }
+        >
+      )?.agentId;
 
     const agent = await rememberAgentAction(agentId, session.user.id);
 
-    if (agent?.instructions?.mentions) {
-      mentions.push(...agent.instructions.mentions);
-    }
+    const agentAllowedCapabilities: CapabilityRef[] | undefined = agent
+      ? [
+          ...(agent.instructions.mentions ?? []),
+          ...(agent.instructions.capabilities ?? []),
+        ].filter(
+          (mention): mention is CapabilityRef => mention.type !== "agent",
+        )
+      : undefined;
 
-    const useImageTool = Boolean(imageTool?.model) && toolChoice !== "none";
+    const useImageTool =
+      supportToolCall && Boolean(imageTool?.model) && toolChoice !== "none";
 
     const isToolCallAllowed =
       supportToolCall && toolChoice !== "none" && !useImageTool;
@@ -328,37 +336,10 @@ export async function POST(request: Request) {
       idempotencyKey: `chat.started:${message.id}`,
     }).catch((error) => logger.warn("Unable to record activity", error));
 
+    let harnessStream: HarnessStreamResult<any> | undefined;
+    let checkpointModelMessages: unknown[] = [];
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
-        const MCP_TOOLS = await safe()
-          .map(errorIf(() => !isToolCallAllowed && "Not allowed"))
-          .map(() =>
-            loadMcpTools({
-              mentions,
-              allowedMcpServers,
-            }),
-          )
-          .orElse({});
-
-        const WORKFLOW_TOOLS = await safe()
-          .map(errorIf(() => !isToolCallAllowed && "Not allowed"))
-          .map(() =>
-            loadWorkFlowTools({
-              mentions,
-              dataStream,
-            }),
-          )
-          .orElse({});
-
-        const APP_DEFAULT_TOOLS = await safe()
-          .map(errorIf(() => !isToolCallAllowed && "Not allowed"))
-          .map(() =>
-            loadAppDefaultTools({
-              mentions,
-              allowedAppDefaultToolkit,
-            }),
-          )
-          .orElse({});
         const userText = message.parts
           .filter((part: any) => part.type === "text")
           .map((part: any) => part.text)
@@ -382,7 +363,7 @@ export async function POST(request: Request) {
             : {}),
         };
         const scopedLearnedSkills =
-          supportToolCall && isV2FeatureEnabled("learning")
+          isToolCallAllowed && isV2FeatureEnabled("learning")
             ? await selectScopedLearnedSkillSummaries({
                 userId: session.user.id,
                 query: userText,
@@ -391,29 +372,83 @@ export async function POST(request: Request) {
                 agentId: agent?.id,
               })
             : [];
-        const skillsRuntime = supportToolCall
+        const skillsRuntime = isToolCallAllowed
           ? await createSkillsRuntime({
               repository: skillRepository as AssignedSkillsRepository,
               agentId: agent?.id,
               userId: session.user.id,
               additionalSkills: scopedLearnedSkills,
             })
-          : { manifest: [], tools: {} };
+          : {
+              manifest: [],
+              tools: {},
+              select() {
+                return this;
+              },
+            };
+        const capabilities = await resolveServerCapabilities({
+          context: {
+            userId: session.user.id,
+            primaryAgentId: agent?.id,
+            allowedMcpServers,
+            allowedAppDefaultToolkit,
+            toolsEnabled: isToolCallAllowed,
+            workflowsEnabled: isToolCallAllowed,
+            delegationEnabled:
+              isToolCallAllowed && isV2FeatureEnabled("delegation"),
+            remoteAgentsEnabled: isV2FeatureEnabled("remoteAgents"),
+          },
+          hints: {
+            mode: useImageTool ? "only" : capabilityHints.mode,
+            requested: useImageTool
+              ? [
+                  {
+                    type: "defaultTool",
+                    name: ImageToolName,
+                    label: "Generate image",
+                  },
+                ]
+              : mentions.filter(
+                  (
+                    mention,
+                  ): mention is Exclude<ChatMention, { type: "agent" }> =>
+                    mention.type !== "agent",
+                ),
+          },
+          allowedCapabilities: agentAllowedCapabilities,
+          skillsRuntime,
+          workflowTool: (workflow) =>
+            workflowToVercelAITool({ ...workflow, dataStream } as any),
+          additionalTools: {
+            ...(isToolCallAllowed ? BACKGROUND_CONTROL_TOOLS : {}),
+            ...(useImageTool
+              ? {
+                  [ImageToolName]:
+                    imageTool?.model === "google"
+                      ? nanoBananaTool
+                      : openaiImageTool,
+                }
+              : {}),
+          },
+          createDelegationTool: (targets) =>
+            createDelegateWorkTool({
+              parentRunId: runId,
+              userId: session.user.id,
+              targets,
+            }),
+        });
+        const MCP_TOOLS = Object.fromEntries(
+          capabilities.ordered
+            .filter(({ kind }) => kind === "mcp")
+            .map(({ key, value }) => [key, value]),
+        ) as Record<string, any>;
         const inProgressToolParts = extractInProgressToolPart(message);
         if (inProgressToolParts.length) {
           await Promise.all(
             inProgressToolParts.map(async (part) => {
               const output = await manualToolExecuteByLastMessage(
                 part,
-                bindSkillTools(
-                  {
-                    ...MCP_TOOLS,
-                    ...WORKFLOW_TOOLS,
-                    ...APP_DEFAULT_TOOLS,
-                    ...BACKGROUND_CONTROL_TOOLS,
-                  },
-                  skillsRuntime.tools,
-                ),
+                capabilities.manual as Record<string, Tool>,
                 request.signal,
               );
               part.output = output;
@@ -451,77 +486,33 @@ export async function POST(request: Request) {
           !agent && buildBaseAgentSystemPrompt(),
           buildUserSystemPrompt(session.user, userPreferences, agent),
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
-          buildSkillManifestPrompt(skillsRuntime.manifest),
+          buildSkillManifestPrompt(capabilities.skillManifest),
           workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
           buildTaskContextPrompt(task),
           memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
 
-        const IMAGE_TOOL: Record<string, Tool> = useImageTool
-          ? {
-              [ImageToolName]:
-                imageTool?.model === "google"
-                  ? nanoBananaTool
-                  : openaiImageTool,
-            }
-          : {};
-        const DELEGATION_TOOLS: Record<string, Tool> = isV2FeatureEnabled(
-          "delegation",
-        )
-          ? {
-              [DELEGATE_WORK_TOOL_NAME]: createDelegateWorkTool({
-                parentRunId: runId,
-                userId: session.user.id,
-              }),
-            }
-          : {};
-        const vercelAITooles = safe({
-          ...MCP_TOOLS,
-          ...WORKFLOW_TOOLS,
-        })
-          .map((t) => {
-            const bindingTools =
-              toolChoice === "manual" ||
-              (message.metadata as ChatMetadata)?.toolChoice === "manual"
-                ? excludeToolExecution(t)
-                : t;
-            return bindSkillTools(
-              {
-                ...bindingTools,
-                ...APP_DEFAULT_TOOLS, // APP_DEFAULT_TOOLS Not Supported Manual
-                ...IMAGE_TOOL,
-                ...DELEGATION_TOOLS,
-                ...BACKGROUND_CONTROL_TOOLS,
-              },
-              skillsRuntime.tools,
-            );
-          })
-          .unwrap();
+        const manualMode =
+          toolChoice === "manual" ||
+          (message.metadata as ChatMetadata)?.toolChoice === "manual";
+        const manuallyConfirmedKinds = new Set(["mcp", "workflow"]);
+        const routedModelTools = Object.fromEntries(
+          capabilities.ordered
+            .filter(({ key }) => Object.hasOwn(capabilities.model, key))
+            .map(({ key, kind }) => [
+              key,
+              manualMode && manuallyConfirmedKinds.has(kind)
+                ? excludeToolExecution({
+                    [key]: capabilities.model[key] as Tool,
+                  })[key]
+                : capabilities.model[key],
+            ]),
+        );
+        if (capabilities.model.delegate_agent)
+          routedModelTools.delegate_agent = capabilities.model.delegate_agent;
+        const vercelAITooles = routedModelTools as Record<string, Tool>;
         metadata.toolCount = Object.keys(vercelAITooles).length;
-        if (isV2FeatureEnabled("delegation")) {
-          await pgDb
-            .insert(AgentRunTable)
-            .values({
-              id: runId,
-              userId: session.user.id,
-              agentId: agent?.id,
-              workspaceId: workspace?.id,
-              taskId: task?.id,
-              status: "running",
-              context: {
-                requestId,
-                threadId: thread!.id,
-                userMessageId: message.id,
-                approvedDelegationTools:
-                  Object.keys(vercelAITooles).filter(isReadOnlyTool),
-              },
-              allowedTools: Object.keys(vercelAITooles),
-              startedAt: new Date(),
-            })
-            .onConflictDoNothing();
-        }
-
         const allowedMcpTools = Object.values(allowedMcpServers ?? {})
           .map((t) => t.tools)
           .flat();
@@ -537,17 +528,26 @@ export async function POST(request: Request) {
           logger.info(`binding tool count Image: ${imageTool?.model}`);
         } else {
           logger.info(
-            `binding tool count APP_DEFAULT: ${Object.keys(APP_DEFAULT_TOOLS ?? {}).length}, MCP: ${Object.keys(MCP_TOOLS ?? {}).length}, Workflow: ${Object.keys(WORKFLOW_TOOLS ?? {}).length}`,
+            `binding tool count: ${Object.keys(vercelAITooles).length}, MCP: ${Object.keys(MCP_TOOLS).length}`,
           );
         }
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
-        const compactedMessages = await compactContext({
+        const preparedContext = await prepareContext({
           threadId: thread!.id,
           messages,
           contextWindow: modelConfig.contextWindow,
         });
-        const modelMessages = await convertToModelMessages(compactedMessages);
+        const modelMessages = await convertToModelMessages(
+          preparedContext.messages,
+        );
+        checkpointModelMessages = modelMessages;
+        const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
+        const resolvedPolicy = policyEngine.resolveSnapshot(
+          Object.keys(vercelAITooles),
+          approvalPolicy,
+        );
+        checkpointResolvedPolicy = resolvedPolicy;
         const runtimeContext = agent
           ? createAgentRuntimeContext({
               requestId,
@@ -559,9 +559,8 @@ export async function POST(request: Request) {
               agent,
               userRole: (session.user as any).role,
               toolMode: toolChoice,
-              approvalPolicy:
-                toolChoice === "manual" ? "always" : "destructive_only",
-              skills: skillsRuntime.manifest,
+              approvalPolicy,
+              skills: capabilities.skillManifest,
             })
           : createBaseAgentRuntimeContext({
               requestId,
@@ -572,22 +571,57 @@ export async function POST(request: Request) {
               threadId: thread!.id,
               userRole: (session.user as any).role,
               toolMode: toolChoice,
-              approvalPolicy:
-                toolChoice === "manual" ? "always" : "destructive_only",
+              approvalPolicy,
             });
-        const result = await createToolLoopAgent({
-          profile: agent ? { type: "custom", agent } : { type: "base" },
-          model,
-          instructions: systemPrompt,
-          tools: vercelAITooles,
-          runtimeContext,
-        }).stream({
-          messages: modelMessages,
-          runtimeContext,
-          toolsContext: runtimeContext,
-          abortSignal: request.signal,
-          experimental_transform: smoothStream({ chunking: "word" }),
-        } as any);
+        harnessStream = await irisHarness.stream({
+          agent: {
+            profile: agent ? { type: "custom", agent } : { type: "base" },
+            model,
+            instructions: systemPrompt,
+            tools: vercelAITooles,
+            runtimeContext,
+            resolvedPolicy,
+          },
+          execution: {
+            messages: modelMessages,
+            runtimeContext,
+            toolsContext: runtimeContext,
+            abortSignal: request.signal,
+            experimental_transform: smoothStream({ chunking: "word" }),
+          } as any,
+          orchestration: {
+            identity: {
+              userId: session.user.id,
+              runId,
+              requestId,
+              actorType: agent ? "agent" : "system",
+              actorId: agent?.id,
+              agentId: agent?.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
+              threadId: thread!.id,
+            },
+            run: isV2FeatureEnabled("delegation")
+              ? {
+                  context: {
+                    userMessageId: message.id,
+                    approvedDelegationTools:
+                      Object.keys(vercelAITooles).filter(isReadOnlyTool),
+                    eligibleDelegationTargets:
+                      capabilities.eligibleDelegationTargets,
+                    capabilityDescriptorIds: capabilities.ordered.map(
+                      ({ id }) => id,
+                    ),
+                    systemPrompt,
+                  },
+                  allowedTools: Object.keys(vercelAITooles),
+                }
+              : undefined,
+            context: preparedContext,
+            policy: resolvedPolicy,
+          },
+        });
+        const result = harnessStream.native;
         result.consumeStream();
         dataStream.merge(
           result.toUIMessageStream({
@@ -603,6 +637,16 @@ export async function POST(request: Request) {
 
       generateId: generateUUID,
       onEnd: async ({ responseMessage, isAborted, finishReason }) => {
+        const responseMessages = harnessStream
+          ? await harnessStream.native.responseMessages
+          : [];
+        const { successfulDelegationToolCallIds } = await import(
+          "lib/ai/runs/parent-resume-executor"
+        );
+        const delegationToolCallIds = successfulDelegationToolCallIds(
+          responseMessages as any,
+        );
+        const delegated = delegationToolCallIds.length > 0;
         if (responseMessage.id == message.id) {
           await chatRepository.upsertMessage({
             threadId: thread!.id,
@@ -662,7 +706,9 @@ export async function POST(request: Request) {
           .map((part: any) => part.text)
           .join(" ")
           .slice(0, 2_000);
-        const chatEventType = isAborted
+        const chatEventType = delegated
+          ? "chat.completed"
+          : isAborted
           ? "chat.cancelled"
           : finishReason === "error"
             ? "chat.failed"
@@ -696,33 +742,53 @@ export async function POST(request: Request) {
           agentId: agent?.id,
           idempotencyKey: `${chatEventType}:${responseMessage.id}`,
         }).catch((error) => logger.warn("Unable to record activity", error));
-        if (isV2FeatureEnabled("delegation")) {
-          const runStatus = isAborted
-            ? "cancelled"
-            : finishReason === "error"
-              ? "failed"
-              : "succeeded";
-          void pgDb
-            .update(AgentRunTable)
-            .set({
-              status: runStatus,
-              result:
-                runStatus === "succeeded"
-                  ? { assistantMessageId: responseMessage.id }
-                  : null,
-              error:
-                runStatus === "failed"
-                  ? "Chat stream finished with an error"
-                  : null,
-              completedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(AgentRunTable.id, runId),
-                eq(AgentRunTable.status, "running"),
-              ),
-            );
-        }
+        if (delegated) {
+          const run = await agentRunRepository.selectById(
+            runId,
+            session.user.id,
+          );
+          await harnessStream?.waitForExternal({
+            delegationToolCallIds,
+            responseMessages,
+            modelMessages: [...checkpointModelMessages, ...responseMessages],
+            modelConfig: {
+              provider: modelConfig.provider,
+              model: modelConfig.model,
+            },
+            authorizationRecipe: {
+              userId: session.user.id,
+              threadId: thread!.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
+              agentId: agent?.id,
+              instructions: run?.context.systemPrompt,
+              toolChoice,
+              autonomy,
+              resolvedPolicy: checkpointResolvedPolicy,
+              allowedMcpServers,
+              allowedAppDefaultToolkit,
+              capabilityHints,
+              descriptorIds: run?.context.capabilityDescriptorIds ?? [],
+              eligibleDelegationTargets:
+                run?.context.eligibleDelegationTargets ?? [],
+            },
+            assistantMessageId: responseMessage.id,
+          });
+        } else if (isAborted)
+          await harnessStream?.fail({
+            error: "Chat stream was aborted",
+            errorCode: "ABORTED",
+            status: "cancelled",
+          });
+        else if (finishReason === "error")
+          await harnessStream?.fail({
+            error: "Chat stream finished with an error",
+            errorCode: "STREAM_ERROR",
+          });
+        else
+          await harnessStream?.finalize(responseMessage, {
+            assistantMessageId: responseMessage.id,
+          });
       },
       onError: (error) => {
         const errorMessage = handleError(error);
@@ -754,21 +820,10 @@ export async function POST(request: Request) {
         }).catch((activityError) =>
           logger.warn("Unable to record activity", activityError),
         );
-        if (isV2FeatureEnabled("delegation")) {
-          void pgDb
-            .update(AgentRunTable)
-            .set({
-              status: "failed",
-              error: errorMessage.slice(0, 2_000),
-              completedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(AgentRunTable.id, runId),
-                eq(AgentRunTable.status, "running"),
-              ),
-            );
-        }
+        void harnessStream?.fail({
+          error: errorMessage,
+          errorCode: "STREAM_ERROR",
+        });
         return errorMessage;
       },
       originalMessages: messages,
