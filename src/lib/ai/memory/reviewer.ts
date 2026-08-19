@@ -18,7 +18,7 @@ export function getMemoryRecallMode(
   env: Record<string, string | undefined> = process.env,
 ): MemoryRecallMode {
   const configured = env.IRIS_MEMORY_RECALL_MODE;
-  return MemoryRecallModeSchema.catch("hybrid").parse(configured);
+  return MemoryRecallModeSchema.catch("keyword").parse(configured);
 }
 
 export const MemoryTopicKeySchema = z.enum([

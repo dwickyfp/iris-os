@@ -28,8 +28,8 @@ describe("agentic memory reviewer", () => {
     );
   });
 
-  it("defaults memory recall to hybrid and accepts keyword mode", () => {
-    expect(getMemoryRecallMode({})).toBe("hybrid");
+  it("defaults memory recall to keyword and accepts hybrid mode", () => {
+    expect(getMemoryRecallMode({})).toBe("keyword");
     expect(getMemoryRecallMode({ IRIS_MEMORY_RECALL_MODE: "keyword" })).toBe(
       "keyword",
     );
@@ -37,7 +37,7 @@ describe("agentic memory reviewer", () => {
       "hybrid",
     );
     expect(getMemoryRecallMode({ IRIS_MEMORY_RECALL_MODE: "invalid" })).toBe(
-      "hybrid",
+      "keyword",
     );
   });
 

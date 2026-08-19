@@ -582,7 +582,6 @@ export function ModelSettingsPage() {
                     }
                   >
                     <option value="chat">Chat / language model</option>
-                    <option value="embedding">Memory embedding</option>
                   </select>
                 </Field>
                 <Field label="API model ID / deployment">
@@ -626,21 +625,6 @@ export function ModelSettingsPage() {
                     required
                   />
                 </Field>
-                {modelForm.modelKind === "embedding" && (
-                  <Field label="Embedding dimensions">
-                    <Input
-                      type="number"
-                      min={1}
-                      value={modelForm.embeddingDimensions}
-                      onChange={(event) =>
-                        setModelForm({
-                          ...modelForm,
-                          embeddingDimensions: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </Field>
-                )}
                 <div className="flex flex-wrap gap-4">
                   <Toggle
                     label="Enabled"
@@ -771,7 +755,6 @@ export function ModelSettingsPage() {
           {[
             ["background", "Background Agents"],
             ["auxiliary", "Chat Auxiliaries"],
-            ["vector", "Memory Vector"],
           ].map(([category, label]) => (
             <section key={category} className="space-y-3">
               <div>
