@@ -40,8 +40,8 @@ describe("capability providers", () => {
     const selectExecuteAbility = vi.fn(async () => [
       {
         id: "workflow-1",
-          name: "Publish",
-          schema: { type: "object" as const, properties: {} },
+        name: "Publish",
+        schema: { type: "object" as const, properties: {} },
         visibility: "private" as const,
         isPublished: true,
         userId: "user-1",
@@ -153,6 +153,46 @@ describe("capability providers", () => {
 
     expect(await provider.eligible({})).toMatchObject([
       { id: "remote-peer:ready", kind: "remotePeer", value: "ready" },
+    ]);
+  });
+
+  it("adds remote Agent Card skills and provider to search metadata", async () => {
+    const now = new Date();
+    const provider = remotePeerCapabilities({
+      enabled: () => true,
+      load: async () => [
+        {
+          id: "snowflake-agent",
+          userId: "user-1",
+          name: "Warehouse analyst",
+          endpointUrl: "https://agent.example.com",
+          status: "active" as const,
+          credentialType: null,
+          credentialHeader: null,
+          encryptedCredential: null,
+          agentCard: {
+            name: "Finance analyst",
+            provider: { organization: "Snowflake Inc" },
+            skills: [
+              { id: "revenue", name: "Revenue forecasting", tags: ["finance"] },
+            ],
+          },
+          discoveredAt: now,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      value: ({ id }) => id,
+    });
+
+    expect(await provider.eligible({})).toMatchObject([
+      {
+        search: {
+          aliases: ["Finance analyst"],
+          provider: ["Snowflake Inc"],
+          skills: ["revenue", "Revenue forecasting", "finance"],
+        },
+      },
     ]);
   });
 });

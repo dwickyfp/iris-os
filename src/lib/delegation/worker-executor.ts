@@ -182,6 +182,7 @@ export type DelegationWorkerExecutorDependencies = {
     timeoutMs: number;
     signal: AbortSignal;
     executionSource: "delegation";
+    claimToken: string;
   }): Promise<AutomationExecutionResult>;
   enqueue(runId: string, delaySeconds?: number): Promise<boolean>;
   markDispatched(runId: string): Promise<void>;
@@ -335,6 +336,7 @@ export function createDelegationWorkerExecutor(
           timeoutMs: Math.max(1, deadline - now()),
           signal: controller.signal,
           executionSource: "delegation",
+          claimToken: token,
         })
     ).finally(() => {
       clearTimeout(timeout);

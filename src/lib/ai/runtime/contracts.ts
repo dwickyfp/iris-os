@@ -1,8 +1,16 @@
 import type { ActivityEventInput } from "app-types/activity";
 import type { StartRunInput } from "../runs/types";
 import type { ParentRunCheckpoint } from "../runs/types";
-import type { ContextDiagnostics, ContextProvenance } from "./context-engine";
-import type { PolicyDecision } from "./policy-engine";
+import type {
+  ContextDiagnostics,
+  ContextProvenance,
+  ContextSourceRecord,
+} from "./context-engine";
+import type {
+  PolicyAuthority,
+  PolicyCapability,
+  PolicyDecision,
+} from "./policy-engine";
 import type { CompletionRequirement, VerificationResult } from "./verification";
 
 export type HarnessIdentity = {
@@ -21,19 +29,27 @@ export type HarnessIdentity = {
 export type ContextPreparation = {
   provenance: ContextProvenance[];
   diagnostics: ContextDiagnostics;
+  sourceRecords?: ContextSourceRecord[];
+  estimatedTokens?: number;
+  truncatedSources?: string[];
+  trustBoundaries?: string[];
 };
 
 export type ResolvedPolicySnapshot = {
+  version?: 2;
   approvalPolicy: "always" | "destructive_only" | "never";
   tools: Record<string, PolicyDecision>;
+  capabilities?: Record<string, PolicyCapability>;
+  authority?: PolicyAuthority;
 };
 
 export type HarnessRunSpec = Omit<StartRunInput, "id" | "userId">;
 
 export type HarnessOrchestration = {
   identity: HarnessIdentity;
-  /** Omit during migration when no durable agent run should be created. */
-  run?: HarnessRunSpec;
+  run:
+    | { mode: "create"; spec: HarnessRunSpec }
+    | { mode: "claimed"; claimToken: string };
   context?: ContextPreparation;
   policy?: ResolvedPolicySnapshot;
   completionRequirement?: CompletionRequirement;
@@ -63,4 +79,8 @@ export type HarnessStreamResult<Native> = {
 
 export interface HarnessEventRecorder {
   record(userId: string, event: ActivityEventInput): Promise<unknown>;
+  recordRuntime(
+    userId: string,
+    event: Omit<ActivityEventInput, "idempotencyKey" | "occurrenceId">,
+  ): Promise<unknown>;
 }

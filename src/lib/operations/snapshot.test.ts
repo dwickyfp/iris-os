@@ -13,13 +13,13 @@ describe("operations migration readiness", () => {
     const sql = await readFile(
       join(
         process.cwd(),
-        "src/lib/db/migrations/pg/0047_memory_fts_indexes.sql",
+        "src/lib/db/migrations/pg/0048_runtime_event_sequence.sql",
       ),
       "utf8",
     );
 
     expect(expected).toEqual({
-      createdAt: 1787137200000,
+      createdAt: 1787140800000,
       hash: createHash("sha256").update(sql).digest("hex"),
     });
   });

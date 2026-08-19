@@ -1,16 +1,18 @@
 import "server-only";
 
-import type { Agent } from "app-types/agent";
 import type { Tool } from "ai";
+import type { Agent } from "app-types/agent";
 import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
+import { contextEngine } from "lib/ai/context-compaction";
 import {
   type DriverGenerateInput,
   type HarnessOrchestration,
 } from "lib/ai/runtime";
+import { RunPreparer } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
@@ -34,7 +36,7 @@ export type AutomationExecutionResult =
   | { status: "cancelled"; message?: string }
   | { status: "timed_out"; message: string };
 
-export type AutomationExecutionRequest = {
+type AutomationExecutionRequestBase = {
   runId: string;
   userId: string;
   workspaceId?: string;
@@ -44,8 +46,13 @@ export type AutomationExecutionRequest = {
   allowedTools?: string[];
   timeoutMs: number;
   signal: AbortSignal;
-  executionSource: "automation" | "delegation";
 };
+
+export type AutomationExecutionRequest = AutomationExecutionRequestBase &
+  (
+    | { executionSource: "automation" }
+    | { executionSource: "delegation"; claimToken: string }
+  );
 
 type TargetExecutor = (
   request: AutomationExecutionRequest,
@@ -93,6 +100,11 @@ export async function runHeadlessAgent(input: {
   allowedTools: string[];
   harness?: AutomationHarness;
 }) {
+  const prepared = await new RunPreparer(contextEngine).prepare({
+    request: objective(input.request.input),
+    instructions: input.instructions,
+    contextWindow: 12_000,
+  });
   const model = await customModelProvider.getEngineModel(
     input.request.executionSource === "delegation"
       ? "delegation-runner"
@@ -102,7 +114,10 @@ export async function runHeadlessAgent(input: {
     input.profile.type === "custom"
       ? createAgentRuntimeContext({
           requestId: generateUUID(),
-          runId: input.request.runId,
+          runId:
+            input.request.executionSource === "delegation"
+              ? input.request.runId
+              : generateUUID(),
           userId: input.request.userId,
           workspaceId: input.request.workspaceId,
           agent: input.profile.agent,
@@ -111,7 +126,10 @@ export async function runHeadlessAgent(input: {
         })
       : createBaseAgentRuntimeContext({
           requestId: generateUUID(),
-          runId: input.request.runId,
+          runId:
+            input.request.executionSource === "delegation"
+              ? input.request.runId
+              : generateUUID(),
           userId: input.request.userId,
           workspaceId: input.request.workspaceId,
           toolMode: "auto",
@@ -121,7 +139,7 @@ export async function runHeadlessAgent(input: {
     agent: {
       profile: input.profile,
       model,
-      instructions: input.instructions,
+       instructions: prepared.instructions,
       tools: availableTools(input.allowedTools),
       runtimeContext,
     },
@@ -133,13 +151,37 @@ export async function runHeadlessAgent(input: {
     orchestration: {
       identity: {
         userId: input.request.userId,
-        runId: input.request.runId,
+        runId: runtimeContext.runId,
         requestId: runtimeContext.requestId,
         actorType: "agent",
         agentId:
           input.profile.type === "custom" ? input.profile.agent.id : undefined,
         workspaceId: input.request.workspaceId,
       },
+      run:
+        input.request.executionSource === "delegation"
+          ? {
+              mode: "claimed",
+              claimToken: input.request.claimToken,
+            }
+          : {
+              mode: "create",
+              spec: {
+                agentId:
+                  input.profile.type === "custom"
+                    ? input.profile.agent.id
+                    : undefined,
+                workspaceId: input.request.workspaceId,
+                context: {
+                  automationRunId: input.request.runId,
+                  targetType: input.request.targetType,
+                  targetId: input.request.targetId,
+                  objective: objective(input.request.input),
+                },
+                allowedTools: input.allowedTools,
+                timeoutMs: input.request.timeoutMs,
+              },
+            },
       policy: {
         approvalPolicy: "never",
         tools: {},

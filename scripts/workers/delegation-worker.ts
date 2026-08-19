@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { recordActivityEvent } from "lib/activity/service";
+import { recordRuntimeActivityEvent } from "lib/activity/service";
 import {
   ArtifactService,
   createArtifactVerifier,
@@ -72,7 +72,7 @@ async function recordEvent(event: DelegationWorkerEvent) {
       event.payload,
     );
   const { child, parent, delegation } = event;
-  await recordActivityEvent(child.userId, {
+  await recordRuntimeActivityEvent(child.userId, {
     actorType: "agent",
     actorId: child.agentId ?? undefined,
     scopeType: child.taskId
@@ -94,7 +94,6 @@ async function recordEvent(event: DelegationWorkerEvent) {
       targetType:
         delegation.targetKind === "remote_agent" ? "remote_agent" : "agent",
     },
-    idempotencyKey: `delegation.started:${child.id}`,
   });
 }
 
@@ -110,7 +109,7 @@ async function recordRemoteEvent(
   toStatus: string,
   payload: Record<string, unknown> = {},
 ) {
-  await recordActivityEvent(child.userId, {
+  await recordRuntimeActivityEvent(child.userId, {
     actorType: "agent",
     scopeType: child.taskId
       ? "task"
@@ -125,7 +124,6 @@ async function recordRemoteEvent(
     parentRunId: child.parentRunId ?? undefined,
     taskId: child.taskId ?? undefined,
     payload: { targetType: "remote_agent", toStatus, ...payload },
-    idempotencyKey: `${eventType}:${child.id}:${toStatus}`,
   });
 }
 
@@ -141,7 +139,7 @@ async function recordTerminalEvent(child: AgentRun) {
         : status === "timed_out"
           ? "delegation.timed_out"
           : "delegation.failed";
-  await recordActivityEvent(child.userId, {
+  await recordRuntimeActivityEvent(child.userId, {
     actorType: "agent",
     actorId: child.agentId ?? undefined,
     scopeType: child.taskId
@@ -160,7 +158,6 @@ async function recordTerminalEvent(child: AgentRun) {
     taskId: child.taskId ?? undefined,
     agentId: child.agentId ?? undefined,
     payload: { targetType: "agent", errorCode: child.errorCode },
-    idempotencyKey: `${eventType}:${child.id}`,
   });
   if (child.parentRunId) {
     const pending = await runManager.listPendingParentResumeIds(100);

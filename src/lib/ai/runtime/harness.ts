@@ -65,10 +65,17 @@ export class IrisHarness {
   ): Promise<
     HarnessStreamResult<Awaited<ReturnType<ExecutionDriver["stream"]>>>
   > {
+    this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
     try {
       lease = await this.start(input.orchestration);
-      const native = await this.driver.stream(input);
+      if (this.recorder)
+        await this.record(input.orchestration, "routing.resolved", {
+          driver: this.driver.id,
+        });
+      const native = await this.driver.stream(
+        this.withEventRecording(input, input.orchestration),
+      );
       return this.lifecycle(native, input.orchestration, lease);
     } catch (error) {
       try {
@@ -85,10 +92,17 @@ export class IrisHarness {
    * native driver result for migration compatibility.
    */
   async generate(input: DriverGenerateInput) {
+    this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
     try {
       lease = await this.start(input.orchestration);
-      const native = await this.driver.generate(input);
+      if (this.recorder)
+        await this.record(input.orchestration, "routing.resolved", {
+          driver: this.driver.id,
+        });
+      const native = await this.driver.generate(
+        this.withEventRecording(input, input.orchestration),
+      );
       await this.finalize(input.orchestration, native, {}, lease);
       return native;
     } catch (error) {
@@ -101,9 +115,11 @@ export class IrisHarness {
     }
   }
 
-  async generateClaimed(input: DriverGenerateInput, claimToken: string) {
-    if (!input.orchestration?.run || !this.runs)
+  async generateClaimed(input: DriverGenerateInput) {
+    this.assertOrchestration(input.orchestration);
+    if (input.orchestration.run.mode !== "claimed" || !this.runs)
       throw new Error("CLAIMED_RUN_ORCHESTRATION_REQUIRED");
+    const claimToken = input.orchestration.run.claimToken;
     const runId = input.orchestration.identity.runId;
     const orchestration = input.orchestration;
     const controller = new AbortController();
@@ -117,8 +133,12 @@ export class IrisHarness {
     );
     let native;
     try {
+      if (this.recorder)
+        await this.record(orchestration, "routing.resolved", {
+          driver: this.driver.id,
+        });
       native = await this.driver.generate({
-        ...input,
+        ...this.withEventRecording(input, orchestration),
         execution: {
           ...input.execution,
           abortSignal: controller.signal,
@@ -236,7 +256,7 @@ export class IrisHarness {
 
   private lifecycle<Native>(
     native: Native,
-    orchestration?: HarnessOrchestration,
+    orchestration: HarnessOrchestration,
     lease?: ExecutionLease,
   ): HarnessStreamResult<Native> {
     let terminal: Promise<HarnessFinalization> | undefined;
@@ -275,23 +295,22 @@ export class IrisHarness {
   }
 
   private async start(
-    orchestration?: HarnessOrchestration,
+    orchestration: HarnessOrchestration,
   ): Promise<ExecutionLease | undefined> {
-    if (!orchestration) return;
     const { identity, run, context, policy } = orchestration;
     let lease: ExecutionLease | undefined;
-    if (run) {
+    if (run.mode === "create") {
       if (!this.runs) throw new Error("RUN_MANAGER_NOT_CONFIGURED");
       const started = await this.runs.start({
-        ...run,
+        ...run.spec,
         id: identity.runId,
         userId: identity.userId,
-        agentId: run.agentId ?? identity.agentId,
-        parentRunId: run.parentRunId ?? identity.parentRunId,
-        workspaceId: run.workspaceId ?? identity.workspaceId,
-        taskId: run.taskId ?? identity.taskId,
+        agentId: run.spec.agentId ?? identity.agentId,
+        parentRunId: run.spec.parentRunId ?? identity.parentRunId,
+        workspaceId: run.spec.workspaceId ?? identity.workspaceId,
+        taskId: run.spec.taskId ?? identity.taskId,
         context: {
-          ...run.context,
+          ...run.spec.context,
           requestId: identity.requestId,
           threadId: identity.threadId,
           contextProvenance: context?.provenance,
@@ -302,9 +321,12 @@ export class IrisHarness {
       if (!started.leaseToken) throw leaseLost();
       lease = this.heartbeat(identity.runId, started.leaseToken);
     }
-    await this.record(orchestration, "trajectory.started", {
-      toStatus: "running",
-    });
+    if (run.mode === "create") {
+      await this.record(orchestration, "trajectory.started", {
+        toStatus: "running",
+      });
+      await this.record(orchestration, "run.started", { toStatus: "running" });
+    }
     if (context) {
       await this.record(orchestration, "context.prepared", {
         ...context.diagnostics,
@@ -313,6 +335,21 @@ export class IrisHarness {
       });
     }
     return lease;
+  }
+
+  private assertOrchestration(
+    orchestration: HarnessOrchestration | undefined,
+  ): asserts orchestration is HarnessOrchestration {
+    if (!orchestration?.identity || !orchestration.run)
+      throw new Error("HARNESS_ORCHESTRATION_REQUIRED");
+    if (
+      !orchestration.identity.userId ||
+      !orchestration.identity.runId ||
+      !orchestration.identity.requestId
+    )
+      throw new Error("HARNESS_IDENTITY_REQUIRED");
+    if (orchestration.run.mode === "claimed" && !orchestration.run.claimToken)
+      throw new Error("CLAIM_TOKEN_REQUIRED");
   }
 
   private heartbeat(
@@ -405,6 +442,7 @@ export class IrisHarness {
       await this.record(orchestration, "trajectory.completed", {
         toStatus: status,
       });
+      await this.record(orchestration, "run.completed", { toStatus: status });
       return;
     }
     await this.record(
@@ -420,16 +458,21 @@ export class IrisHarness {
               : errorCode,
       },
     );
+    await this.record(
+      orchestration,
+      status === "cancelled" ? "run.cancelled" : "run.failed",
+      { toStatus: status, errorCode },
+    );
   }
 
   private async finalize(
-    orchestration: HarnessOrchestration | undefined,
+    orchestration: HarnessOrchestration,
     value: unknown,
     result: Record<string, unknown> = {},
     lease?: ExecutionLease,
   ): Promise<HarnessFinalization> {
     const verification = await this.verify(value, orchestration);
-    if (orchestration?.run) {
+    if (orchestration.run.mode === "create") {
       if (!lease) throw leaseLost();
       lease.assertActive();
       const run = await this.runs?.succeedWithLease(
@@ -439,32 +482,32 @@ export class IrisHarness {
       );
       if (!run) throw leaseLost();
     }
-    await this.record(orchestration, "trajectory.completed", {
-      toStatus: "succeeded",
-    });
+    if (orchestration.run.mode === "create") {
+      await this.record(orchestration, "trajectory.completed", {
+        toStatus: "succeeded",
+      });
+      await this.record(orchestration, "run.completed", {
+        toStatus: "succeeded",
+      });
+    }
     return { result, verification };
   }
 
   private async verify(
     value: unknown,
-    orchestration?: HarnessOrchestration,
+    orchestration: HarnessOrchestration,
   ): Promise<VerificationResult[]> {
     const requirements = await this.requirementsFor(
       value,
-      orchestration?.completionRequirement,
+      orchestration.completionRequirement,
     );
     const verification: VerificationResult[] = [];
-    if (orchestration || requirements.length) {
-      await this.record(orchestration, "verification.started", {
-        verified: false,
-        requirementCount: requirements.length,
-        toStatus: "running",
-      });
-    }
+    await this.record(orchestration, "verification.started", {
+      verified: false,
+      requirementCount: requirements.length,
+      toStatus: "running",
+    });
     for (const requirement of requirements) {
-      if (!orchestration) {
-        throw new Error("ARTIFACT_VERIFICATION_IDENTITY_REQUIRED");
-      }
       const outcome = await requirement.verifyCompletion(value, {
         userId: orchestration.identity.userId,
         runId: orchestration.identity.runId,
@@ -475,27 +518,27 @@ export class IrisHarness {
           verified: false,
           reason: outcome.reason,
           requirementCount: requirements.length,
+          check: outcome,
+          checkIndex: verification.length - 1,
           toStatus: "failed",
         });
         throw new Error(`VERIFICATION_REQUIRED:${outcome.reason}`);
       }
     }
-    if (orchestration || requirements.length) {
-      await this.record(orchestration, "verification.completed", {
-        verified: true,
-        requirementCount: requirements.length,
-        toStatus: "succeeded",
-      });
-    }
+    await this.record(orchestration, "verification.completed", {
+      verified: true,
+      requirementCount: requirements.length,
+      checks: verification,
+      toStatus: "succeeded",
+    });
     return verification;
   }
 
   private async fail(
-    orchestration: HarnessOrchestration | undefined,
+    orchestration: HarnessOrchestration,
     raw: HarnessFailure | unknown,
     lease?: ExecutionLease,
   ) {
-    if (!orchestration) return;
     const failure: HarnessFailure =
       raw && typeof raw === "object" && "error" in raw
         ? (raw as HarnessFailure)
@@ -505,7 +548,7 @@ export class IrisHarness {
         ? failure.error.message
         : String(failure.error);
     const status = failure.status ?? "failed";
-    if (orchestration.run) {
+    if (orchestration.run.mode === "create") {
       if (!lease) throw leaseLost();
       lease.assertActive();
       let run;
@@ -533,23 +576,35 @@ export class IrisHarness {
       }
       if (!run) throw leaseLost();
     }
-    await this.record(
-      orchestration,
-      status === "cancelled" ? "trajectory.cancelled" : "trajectory.failed",
-      {
-        toStatus: status,
-        errorCode: failure.errorCode,
-        message: message.slice(0, 2_000),
-      },
-    );
+    if (orchestration.run.mode === "create") {
+      await this.record(
+        orchestration,
+        status === "cancelled" ? "trajectory.cancelled" : "trajectory.failed",
+        {
+          toStatus: status,
+          errorCode: failure.errorCode,
+          message: message.slice(0, 2_000),
+        },
+      );
+      await this.record(
+        orchestration,
+        status === "cancelled" ? "run.cancelled" : "run.failed",
+        {
+          toStatus: status,
+          errorCode: failure.errorCode,
+          message: message.slice(0, 2_000),
+        },
+      );
+    }
   }
 
   private async waitForExternal(
-    orchestration: HarnessOrchestration | undefined,
+    orchestration: HarnessOrchestration,
     checkpoint: Parameters<RunManager["suspendParent"]>[2],
     lease?: ExecutionLease,
   ) {
-    if (!orchestration?.run || !this.runs || !lease) throw leaseLost();
+    if (orchestration.run.mode !== "create" || !this.runs || !lease)
+      throw leaseLost();
     lease.assertActive();
     const run = await this.runs.suspendParent(
       orchestration.identity.runId,
@@ -598,11 +653,11 @@ export class IrisHarness {
   }
 
   private async record(
-    orchestration: HarnessOrchestration | undefined,
+    orchestration: HarnessOrchestration,
     eventType: ActivityEventInput["eventType"],
     payload: Record<string, unknown>,
   ) {
-    if (!orchestration || !this.recorder) return;
+    if (!this.recorder) return;
     const { identity } = orchestration;
     const scopeType = identity.taskId
       ? "task"
@@ -611,7 +666,7 @@ export class IrisHarness {
         : identity.agentId
           ? "agent"
           : "global";
-    await this.recorder.record(identity.userId, {
+    await this.recorder.recordRuntime(identity.userId, {
       actorType: identity.actorType ?? "system",
       actorId: identity.actorId ?? identity.agentId,
       scopeType,
@@ -627,7 +682,23 @@ export class IrisHarness {
       threadId: identity.threadId,
       taskId: identity.taskId,
       agentId: identity.agentId,
-      idempotencyKey: `${eventType}:${identity.runId}`,
     });
+  }
+
+  private withEventRecording<T extends DriverGenerateInput | DriverStreamInput>(
+    input: T,
+    orchestration?: HarnessOrchestration,
+  ): T {
+    if (!orchestration || !this.recorder) return input;
+    return {
+      ...input,
+      agent: {
+        ...input.agent,
+        onRuntimeEvent: async (eventType, payload) => {
+          await input.agent.onRuntimeEvent?.(eventType, payload);
+          await this.record(orchestration, eventType, payload);
+        },
+      },
+    };
   }
 }

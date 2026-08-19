@@ -42,8 +42,26 @@ const CompletionVerificationPayloadSchema = StatePayloadSchema.extend({
   reason: z.string().max(240).optional(),
   requirementCount: z.number().int().min(0),
 });
+const RoutingPayloadSchema = JsonPayloadSchema.extend({
+  driver: z.string().max(120).optional(),
+  provider: z.string().max(120).optional(),
+  model: z.string().max(240).optional(),
+});
+const ModelPayloadSchema = StatePayloadSchema.extend({
+  stepNumber: z.number().int().min(0).optional(),
+  finishReason: z.string().max(120).optional(),
+  totalTokens: z.number().int().min(0).optional(),
+});
 
 export const ActivityEventPayloadRegistry = {
+  "run.started": RunPayloadSchema,
+  "run.completed": RunPayloadSchema,
+  "run.failed": RunPayloadSchema,
+  "run.cancelled": RunPayloadSchema,
+  "routing.resolved": RoutingPayloadSchema,
+  "model.requested": ModelPayloadSchema,
+  "model.completed": ModelPayloadSchema,
+  "model.failed": ModelPayloadSchema,
   "chat.started": ChatPayloadSchema,
   "chat.completed": ChatPayloadSchema,
   "chat.failed": ChatPayloadSchema,
@@ -149,6 +167,7 @@ const ActivityEventBaseSchema = z.object({
   threadId: z.string().uuid().optional(),
   taskId: z.string().uuid().optional(),
   agentId: z.string().uuid().optional(),
+  occurrenceId: z.string().uuid().optional(),
   idempotencyKey: z.string().min(1).max(240),
 });
 

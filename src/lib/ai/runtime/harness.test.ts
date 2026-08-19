@@ -12,7 +12,7 @@ function orchestration(
       requestId: "request-1",
       threadId: crypto.randomUUID(),
     },
-    run: { allowedTools: ["search"] },
+    run: { mode: "create", spec: { allowedTools: ["search"] } },
     ...overrides,
   };
 }
@@ -34,7 +34,10 @@ function dependencies() {
       finishParentResume: vi.fn(async () => ({ id: "run-1" })),
       checkpointParentAgain: vi.fn(async () => ({ id: "run-1" })),
     },
-    recorder: { record: vi.fn(async () => ({})) },
+    recorder: {
+      record: vi.fn(async () => ({})),
+      recordRuntime: vi.fn(async () => ({})),
+    },
   };
 }
 
@@ -94,13 +97,16 @@ describe("IrisHarness", () => {
     });
     expect(runs.failWithLease).not.toHaveBeenCalled();
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
       "trajectory.started",
+      "run.started",
       "context.prepared",
+      "routing.resolved",
       "verification.started",
       "verification.completed",
       "trajectory.completed",
+      "run.completed",
     ]);
   });
 
@@ -129,7 +135,7 @@ describe("IrisHarness", () => {
     expect(runs.cancelWithLease).toHaveBeenCalledOnce();
     expect(runs.succeedWithLease).not.toHaveBeenCalled();
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toContain("trajectory.cancelled");
   });
 
@@ -205,7 +211,7 @@ describe("IrisHarness", () => {
       "PARENT_SUSPENSION_REJECTED",
     );
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toContain("trajectory.failed");
   });
 
@@ -242,7 +248,7 @@ describe("IrisHarness", () => {
       }),
     ).rejects.toThrow("CANCELLED");
 
-    const events = recorder.record.mock.calls.map(
+    const events = recorder.recordRuntime.mock.calls.map(
       (call: any[]) => call[1].eventType,
     );
     expect(events).toContain("trajectory.cancelled");
@@ -284,12 +290,15 @@ describe("IrisHarness", () => {
     });
     expect(runs.succeedWithLease).toHaveBeenCalledAfter(verifyCompletion);
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
       "trajectory.started",
+      "run.started",
+      "routing.resolved",
       "verification.started",
       "verification.completed",
       "trajectory.completed",
+      "run.completed",
     ]);
   });
 
@@ -328,13 +337,49 @@ describe("IrisHarness", () => {
       undefined,
     );
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
       "trajectory.started",
+      "run.started",
+      "routing.resolved",
       "verification.started",
       "verification.failed",
       "trajectory.failed",
+      "run.failed",
     ]);
+  });
+
+  test("does not conflict with worker-owned lifecycle in claimed mode", async () => {
+    const { runs, recorder } = dependencies();
+    const harness = new IrisHarness(
+      {
+        id: "test",
+        generate: vi.fn(async () => ({ text: "complete" })),
+        stream: vi.fn(),
+      } as never,
+      runs as never,
+      [],
+      recorder,
+    );
+
+    await harness.generate({
+      agent: {},
+      execution: {},
+      orchestration: orchestration({
+        run: { mode: "claimed", claimToken: "worker-lease" },
+      }),
+    } as never);
+
+    expect(runs.start).not.toHaveBeenCalled();
+    expect(runs.succeedWithLease).not.toHaveBeenCalled();
+    const events = recorder.recordRuntime.mock.calls.map(
+      (call: any[]) => call[1].eventType,
+    );
+    expect(events).toContain("routing.resolved");
+    expect(events).not.toContain("run.started");
+    expect(events).not.toContain("run.completed");
+    expect(events).not.toContain("trajectory.started");
+    expect(events).not.toContain("trajectory.completed");
   });
 
   test("claimed generation verifies artifacts before finishing the root", async () => {
@@ -352,16 +397,14 @@ describe("IrisHarness", () => {
       } as never,
       runs as never,
     );
-    const generated = await harness.generateClaimed(
-      {
-        agent: {},
-        execution: {},
-        orchestration: orchestration({
-          completionRequirement: { verifyCompletion },
-        }),
-      } as never,
-      "claim-1",
-    );
+    const generated = await harness.generateClaimed({
+      agent: {},
+      execution: {},
+      orchestration: orchestration({
+        completionRequirement: { verifyCompletion },
+        run: { mode: "claimed", claimToken: "claim-1" },
+      }),
+    } as never);
 
     await expect(generated.finalize({}, native)).rejects.toThrow(
       "VERIFICATION_REQUIRED:ARTIFACT_HASH_MISMATCH",
@@ -396,14 +439,13 @@ describe("IrisHarness", () => {
     );
 
     await expect(
-      harness.generateClaimed(
-        {
-          agent: {},
-          execution: {},
-          orchestration: orchestration(),
-        } as never,
-        "claim-1",
-      ),
+      harness.generateClaimed({
+        agent: {},
+        execution: {},
+        orchestration: orchestration({
+          run: { mode: "claimed", claimToken: "claim-1" },
+        }),
+      } as never),
     ).rejects.toThrow("provider failed");
     expect(runs.finishParentResume).toHaveBeenCalledWith("run-1", "claim-1", {
       status: "failed",
@@ -449,14 +491,13 @@ describe("IrisHarness", () => {
           [],
           recorder,
         );
-        const generation = harness.generateClaimed(
-          {
-            agent: {},
-            execution: {},
-            orchestration: orchestration(),
-          } as never,
-          "claim-1",
-        );
+        const generation = harness.generateClaimed({
+          agent: {},
+          execution: {},
+          orchestration: orchestration({
+            run: { mode: "claimed", claimToken: "claim-1" },
+          }),
+        } as never);
         const rejected = expect(generation).rejects.toThrow(errorCode);
 
         await vi.advanceTimersByTimeAsync(10_000);
@@ -476,7 +517,9 @@ describe("IrisHarness", () => {
           expect.objectContaining({ status: "succeeded" }),
         );
         expect(
-          recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+          recorder.recordRuntime.mock.calls.map(
+            (call: any[]) => call[1].eventType,
+          ),
         ).not.toContain("trajectory.completed");
       } finally {
         vi.useRealTimers();
@@ -508,14 +551,13 @@ describe("IrisHarness", () => {
         [],
         recorder,
       );
-      const generation = harness.generateClaimed(
-        {
-          agent: {},
-          execution: {},
-          orchestration: orchestration(),
-        } as never,
-        "claim-1",
-      );
+      const generation = harness.generateClaimed({
+        agent: {},
+        execution: {},
+        orchestration: orchestration({
+          run: { mode: "claimed", claimToken: "claim-1" },
+        }),
+      } as never);
       const rejected = expect(generation).rejects.toThrow("LEASE_LOST");
 
       await vi.advanceTimersByTimeAsync(10_000);
@@ -523,7 +565,9 @@ describe("IrisHarness", () => {
       await rejected;
       expect(runs.finishParentResume).not.toHaveBeenCalled();
       expect(
-        recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+        recorder.recordRuntime.mock.calls
+          .map((call: any[]) => call[1].eventType)
+          .filter((eventType) => eventType.startsWith("trajectory.")),
       ).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -552,15 +596,15 @@ describe("IrisHarness", () => {
       } as never,
       runs as never,
     );
-    const generation = harness.generateClaimed(
-      {
-        agent: {},
-        execution: { abortSignal: caller.signal },
-        orchestration: orchestration(),
-      } as never,
-      "claim-1",
-    );
+    const generation = harness.generateClaimed({
+      agent: {},
+      execution: { abortSignal: caller.signal },
+      orchestration: orchestration({
+        run: { mode: "claimed", claimToken: "claim-1" },
+      }),
+    } as never);
 
+    await vi.waitFor(() => expect(driverSignal).toBeDefined());
     caller.abort(new Error("caller aborted"));
 
     expect(driverSignal).not.toBe(caller.signal);
@@ -661,7 +705,7 @@ describe("IrisHarness", () => {
 
     await expect(stream.finalize({}, {})).rejects.toThrow("LEASE_LOST");
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).not.toContain("trajectory.completed");
     expect(runs.failWithLease).not.toHaveBeenCalled();
   });
@@ -689,23 +733,26 @@ describe("IrisHarness", () => {
       "LEASE_LOST",
     );
     expect(
-      recorder.record.mock.calls.map((call: any[]) => call[1].eventType),
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).not.toContain("trajectory.failed");
   });
 
-  test("keeps generate compatible when orchestration is omitted", async () => {
-    const native = { text: "generated" };
-    const driver = {
-      id: "test",
-      generate: vi.fn(async () => native),
-      stream: vi.fn(),
-    };
-    const harness = new IrisHarness(driver as never);
-    const input = { agent: {}, execution: { prompt: "goal" } } as never;
+  test.each(["stream", "generate"] as const)(
+    "rejects %s before driver execution when orchestration is omitted",
+    async (method) => {
+      const driver = {
+        id: "test",
+        generate: vi.fn(async () => ({})),
+        stream: vi.fn(async () => ({})),
+      };
+      const harness = new IrisHarness(driver as never);
 
-    await expect(harness.generate(input)).resolves.toBe(native);
-    expect(driver.generate).toHaveBeenCalledWith(input);
-  });
+      await expect(
+        harness[method]({ agent: {}, execution: {} } as never),
+      ).rejects.toThrow("HARNESS_ORCHESTRATION_REQUIRED");
+      expect(driver[method]).not.toHaveBeenCalled();
+    },
+  );
 
   test("delegates durable cancellation to RunManager", async () => {
     const requestCancellation = vi.fn(async () => ({ id: "run-1" }));

@@ -13,6 +13,52 @@ export type ContextProvenance = {
   messageIds: string[];
 };
 
+export type ContextSourceKind =
+  | "current_request"
+  | "conversation"
+  | "conversation_summary"
+  | "agent"
+  | "workspace"
+  | "task"
+  | "memory"
+  | "skill"
+  | "resource"
+  | "mcp"
+  | "user_preferences"
+  | "remote_observation"
+  | "continuation";
+
+export type ContextTrust = "trusted" | "untrusted" | "mixed";
+
+export type ContextSourceRecord = {
+  id: string;
+  kind: ContextSourceKind;
+  priority: number;
+  trust: ContextTrust;
+  included: boolean;
+  truncated: boolean;
+  estimatedTokens: number;
+};
+
+export type ContextResolveSource = {
+  id?: string;
+  kind: ContextSourceKind;
+  content: string;
+  priority?: number;
+  trust?: ContextTrust;
+};
+
+export type ResolvedContext = {
+  instructions: string;
+  messages: UIMessage[];
+  sourceRecords: ContextSourceRecord[];
+  estimatedTokens: number;
+  truncatedSources: string[];
+  trustBoundaries: string[];
+  provenance: ContextProvenance[];
+  diagnostics: ContextDiagnostics;
+};
+
 export type ContextDiagnostics = {
   compacted: boolean;
   estimatedTokensBefore: number;
@@ -52,6 +98,104 @@ export class ContextEngine {
 
   plan(input: ContextPlannerInput): ContextPlan {
     return this.dependencies.planner.plan(input);
+  }
+
+  /** Assemble every request source in one deterministic, auditable pass. */
+  async resolve(input: {
+    threadId?: string;
+    currentRequest?: string;
+    instructions?: string;
+    sources?: ContextResolveSource[];
+    messages?: UIMessage[];
+    contextWindow?: number;
+  }): Promise<ResolvedContext> {
+    const sourceOrder: ContextResolveSource[] = [
+      ...(input.currentRequest
+        ? [{ kind: "current_request" as const, content: input.currentRequest }]
+        : []),
+      ...(input.sources ?? []),
+    ];
+    const budget = Math.floor((input.contextWindow ?? 12_000) * SAFETY_MARGIN);
+    let remaining = budget;
+    const records: ContextSourceRecord[] = [];
+    const included: string[] = [];
+    const truncatedSources: string[] = [];
+    const ordered = sourceOrder
+      .map((source, index) => ({
+        ...source,
+        id: source.id ?? `${source.kind}-${index}`,
+        priority: source.priority ?? 100 - index,
+        trust: source.trust ?? "untrusted",
+      }))
+      .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+    const instructionParts: string[] = [];
+    for (const source of ordered) {
+      const tokens = Math.max(1, Math.ceil(source.content.length / 4));
+      const canInclude = source.kind === "current_request" || tokens <= remaining;
+      const content = canInclude
+        ? source.content
+        : source.content.slice(0, Math.max(4, remaining * 4));
+      const truncated = content.length < source.content.length;
+      const used = Math.max(1, Math.ceil(content.length / 4));
+      records.push({
+        id: source.id,
+        kind: source.kind,
+        priority: source.priority,
+        trust: source.trust,
+        included: content.length > 0,
+        truncated,
+        estimatedTokens: content.length > 0 ? used : 0,
+      });
+      if (content) {
+        included.push(source.id);
+        instructionParts.push(content);
+        remaining = Math.max(0, remaining - used);
+      }
+      if (truncated || (!canInclude && tokens > 0)) truncatedSources.push(source.id);
+    }
+    const conversation = input.messages ?? [];
+    const compacted = input.threadId
+      ? await this.compact({
+          threadId: input.threadId,
+          messages: conversation,
+          contextWindow: Math.max(1, remaining * 4),
+        })
+      : {
+          messages: conversation,
+          provenance: [{ source: "conversation" as const, messageIds: conversation.map((m) => m.id) }],
+          diagnostics: {
+            compacted: false,
+            estimatedTokensBefore: estimateMessageTokens(conversation),
+            estimatedTokensAfter: estimateMessageTokens(conversation),
+            budget,
+            retainedMessages: conversation.length,
+            summarizedMessages: 0,
+          },
+        };
+    for (const provenance of compacted.provenance) {
+      records.push({
+        id: provenance.source,
+        kind: provenance.source,
+        priority: 0,
+        trust: "untrusted",
+        included: true,
+        truncated: provenance.source === "conversation_summary",
+        estimatedTokens: 0,
+      });
+    }
+    const trustBoundaries = records
+      .filter((record) => record.trust !== "trusted")
+      .map((record) => `${record.id}:${record.trust}`);
+    return {
+      instructions: [input.instructions, ...instructionParts].filter(Boolean).join("\n\n"),
+      messages: compacted.messages,
+      sourceRecords: records,
+      estimatedTokens: records.reduce((sum, record) => sum + record.estimatedTokens, 0),
+      truncatedSources: [...new Set(truncatedSources)],
+      trustBoundaries,
+      provenance: compacted.provenance,
+      diagnostics: compacted.diagnostics,
+    };
   }
 
   async compact(input: {

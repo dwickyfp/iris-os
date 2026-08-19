@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FileStorage } from "lib/file-storage/file-storage.interface";
 import type { VerificationResult, Verifier } from "../runtime/verification";
-import { ArtifactReferenceSchema } from "./contracts";
+import { ArtifactReferenceSchema, extractArtifactContent } from "./contracts";
 import type { ArtifactRepository } from "./repository";
 
 export function createArtifactVerifier(
@@ -60,6 +60,7 @@ export function createArtifactVerifier(
                     storageKey: reference.storageKey,
                     size: reference.size,
                     sha256,
+                    content: extractArtifactContent(bytes, reference.mediaType),
                   },
                 }
               : { verified: false, reason: "ARTIFACT_HASH_MISMATCH" };

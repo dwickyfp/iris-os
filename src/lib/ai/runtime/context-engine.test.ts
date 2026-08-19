@@ -8,6 +8,51 @@ function message(id: string, role: "user" | "assistant", text: string) {
 }
 
 describe("ContextEngine", () => {
+  test("resolves sources with provenance and explicit trust boundaries", async () => {
+    const engine = new ContextEngine({
+      planner: new ContextPlanner(),
+      loadSummary: vi.fn(),
+      summarize: vi.fn(),
+      saveSummary: vi.fn(),
+    });
+
+    const result = await engine.resolve({
+      currentRequest: "do the thing",
+      sources: [
+        { id: "workspace-1", kind: "workspace", content: "workspace rule", trust: "trusted", priority: 90 },
+        { id: "remote-1", kind: "remote_observation", content: "remote claim", trust: "untrusted", priority: 10 },
+      ],
+    });
+
+    expect(result.instructions).toContain("workspace rule");
+    expect(result.sourceRecords).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "workspace-1", trust: "trusted", included: true }),
+      expect.objectContaining({ id: "remote-1", trust: "untrusted", included: true }),
+    ]));
+    expect(result.trustBoundaries).toContain("remote-1:untrusted");
+  });
+
+  test("truncates deterministically by priority", async () => {
+    const engine = new ContextEngine({
+      planner: new ContextPlanner(),
+      loadSummary: vi.fn(),
+      summarize: vi.fn(),
+      saveSummary: vi.fn(),
+    });
+    const input = {
+      contextWindow: 20,
+      sources: [
+        { id: "low", kind: "resource" as const, content: "l".repeat(100), priority: 1 },
+        { id: "high", kind: "task" as const, content: "h".repeat(20), priority: 10 },
+      ],
+    };
+    const first = await engine.resolve(input);
+    const second = await engine.resolve(input);
+    expect(first).toEqual(second);
+    expect(first.truncatedSources).toContain("low");
+    expect(first.sourceRecords.find((record) => record.id === "high")?.included).toBe(true);
+  });
+
   test("composes the planner and preserves its context precedence", () => {
     const engine = new ContextEngine({
       planner: new ContextPlanner(10_000),

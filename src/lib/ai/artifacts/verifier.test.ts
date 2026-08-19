@@ -105,4 +105,15 @@ describe("artifact verifier", () => {
     });
     expect(storage.exists).not.toHaveBeenCalled();
   });
+
+  test("extracts deterministic Markdown title and sections into verification details", async () => {
+    const { storage, repository } = dependencies();
+    const verifier = createArtifactVerifier(storage, repository);
+    await expect(
+      verifier.verify({ kind: "artifact", value: reference, ...owner }),
+    ).resolves.toMatchObject({
+      verified: true,
+      details: { content: { title: undefined, sections: [], nonEmpty: true } },
+    });
+  });
 });

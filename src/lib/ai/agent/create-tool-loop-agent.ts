@@ -1,10 +1,15 @@
-import { hasToolCall, isStepCount, ToolLoopAgent, type Tool } from "ai";
-import type { Agent } from "app-types/agent";
+import { type Tool, ToolLoopAgent, hasToolCall, isStepCount } from "ai";
 import type { LanguageModel } from "ai";
-import { isReadOnlyTool, requiresToolApproval } from "./approval-policy";
-import type { AgentRuntimeContext } from "./runtime-context";
+import type { Agent } from "app-types/agent";
 import logger from "logger";
 import type { ResolvedPolicySnapshot } from "../runtime/contracts";
+import {
+  type PolicyEvaluationDecision,
+  destinationFromArgs,
+  policyEngine,
+} from "../runtime/policy-engine";
+import { isReadOnlyTool } from "./approval-policy";
+import type { AgentRuntimeContext } from "./runtime-context";
 
 export const AGENT_TIMEOUTS = {
   totalMs: 90_000,
@@ -24,6 +29,14 @@ export type ToolLoopAgentConfig = {
   tools: Record<string, Tool>;
   runtimeContext: AgentRuntimeContext;
   resolvedPolicy?: ResolvedPolicySnapshot;
+  onRuntimeEvent?: (
+    eventType:
+      | "model.requested"
+      | "model.completed"
+      | "tool.requested"
+      | "tool.completed",
+    payload: Record<string, unknown>,
+  ) => Promise<void> | void;
 };
 
 export function getToolLoopAgentReasoningMode(profile: ToolLoopAgentProfile) {
@@ -48,6 +61,40 @@ export function getAgentToolTimeouts(tools: Record<string, Tool>) {
   );
 }
 
+export function evaluateToolCallPolicy(input: {
+  toolName: string;
+  args: unknown;
+  runtimeContext: AgentRuntimeContext;
+  resolvedPolicy?: ResolvedPolicySnapshot;
+}): PolicyEvaluationDecision {
+  const { toolName, args, runtimeContext, resolvedPolicy } = input;
+  const legacy = policyEngine.evaluateTool(toolName);
+  return policyEngine.evaluate({
+    actor: {
+      type: runtimeContext.agentType === "custom" ? "agent" : "system",
+      id: runtimeContext.agentId,
+      userId: runtimeContext.userId,
+    },
+    capability: resolvedPolicy?.capabilities?.[toolName] ?? {
+      id: `tool:${toolName}`,
+      key: toolName,
+      risks: legacy.readOnly ? ["read"] : undefined,
+    },
+    action: legacy.readOnly ? "read" : "execute",
+    resource: `tool:${toolName}`,
+    args,
+    destination: destinationFromArgs(args),
+    runtime: {
+      kind: runtimeContext.parentRunId ? "local_delegation" : "foreground",
+      approvalPolicy:
+        resolvedPolicy?.approvalPolicy ?? runtimeContext.approvalPolicy,
+      runId: runtimeContext.runId,
+      parentRunId: runtimeContext.parentRunId,
+      authority: resolvedPolicy?.authority,
+    },
+  });
+}
+
 export function createToolLoopAgent({
   profile,
   model,
@@ -55,6 +102,7 @@ export function createToolLoopAgent({
   tools,
   runtimeContext,
   resolvedPolicy,
+  onRuntimeEvent,
 }: ToolLoopAgentConfig) {
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
 
@@ -76,17 +124,44 @@ export function createToolLoopAgent({
       },
     },
     reasoning: reasoningMode === "auto" ? undefined : { effort: reasoningMode },
-    toolApproval: ({ toolCall }) =>
-      (resolvedPolicy?.approvalPolicy ?? runtimeContext.approvalPolicy) ===
-      "never"
-        ? "not-applicable"
-        : (resolvedPolicy?.approvalPolicy ?? runtimeContext.approvalPolicy) ===
-              "always" ||
-            (resolvedPolicy?.tools[toolCall.toolName]?.requiresApproval ??
-              requiresToolApproval(toolCall.toolName))
-          ? "user-approval"
-          : "not-applicable",
-    onStepEnd: ({ stepNumber, finishReason, usage }) => {
+    toolApproval: ({ toolCall }) => {
+      const decision = evaluateToolCallPolicy({
+        toolName: toolCall.toolName,
+        args: (toolCall as { input?: unknown }).input,
+        runtimeContext,
+        resolvedPolicy,
+      });
+      logger.info("policy decision", decision);
+      if (decision.result === "deny") throw new Error("POLICY_DENIED");
+      return decision.result === "allow" ? "not-applicable" : "user-approval";
+    },
+    onStepEnd: async ({
+      stepNumber,
+      finishReason,
+      usage,
+      toolCalls,
+      toolResults,
+    }) => {
+      await onRuntimeEvent?.("model.requested", { stepNumber });
+      await onRuntimeEvent?.("model.completed", {
+        stepNumber,
+        finishReason,
+        totalTokens: usage.totalTokens,
+      });
+      for (const toolCall of toolCalls ?? []) {
+        await onRuntimeEvent?.("tool.requested", {
+          stepNumber,
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+        });
+      }
+      for (const toolResult of toolResults ?? []) {
+        await onRuntimeEvent?.("tool.completed", {
+          stepNumber,
+          toolCallId: toolResult.toolCallId,
+          toolName: toolResult.toolName,
+        });
+      }
       logger.info("agent step completed", {
         agentType: runtimeContext.agentType,
         ...(runtimeContext.agentId ? { agentId: runtimeContext.agentId } : {}),

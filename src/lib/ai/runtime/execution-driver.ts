@@ -7,13 +7,13 @@ type NativeToolLoopAgent = ReturnType<typeof createToolLoopAgent>;
 export type DriverGenerateInput = {
   agent: ToolLoopAgentConfig;
   execution: Parameters<NativeToolLoopAgent["generate"]>[0];
-  orchestration?: HarnessOrchestration;
+  orchestration: HarnessOrchestration;
 };
 
 export type DriverStreamInput = {
   agent: ToolLoopAgentConfig;
   execution: Parameters<NativeToolLoopAgent["stream"]>[0];
-  orchestration?: HarnessOrchestration;
+  orchestration: HarnessOrchestration;
 };
 
 export interface ExecutionDriver {

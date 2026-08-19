@@ -56,4 +56,18 @@ export class EventRecorder {
     this.publish(event.id);
     return event;
   }
+
+  async recordRuntime(
+    userId: string,
+    raw: Omit<ActivityEventInput, "idempotencyKey" | "occurrenceId">,
+  ) {
+    if (!raw.runId) throw new Error("RUNTIME_EVENT_RUN_ID_REQUIRED");
+    const occurrenceId = this.dependencies.generateId();
+    return this.record(userId, {
+      ...raw,
+      id: occurrenceId,
+      occurrenceId,
+      idempotencyKey: `runtime:${occurrenceId}`,
+    });
+  }
 }

@@ -926,6 +926,7 @@ export const IrisActivityEventTable = pgTable(
     requestId: varchar("request_id", { length: 160 }),
     runId: varchar("run_id", { length: 160 }),
     parentRunId: varchar("parent_run_id", { length: 160 }),
+    trajectoryId: varchar("trajectory_id", { length: 160 }),
     threadId: uuid("thread_id").references(() => ChatThreadTable.id, {
       onDelete: "set null",
     }),
@@ -935,6 +936,8 @@ export const IrisActivityEventTable = pgTable(
     agentId: uuid("agent_id").references(() => AgentTable.id, {
       onDelete: "set null",
     }),
+    occurrenceId: uuid("occurrence_id"),
+    sequence: integer("sequence"),
     idempotencyKey: varchar("idempotency_key", { length: 240 }).notNull(),
     processingStatus: varchar("processing_status", {
       enum: ["pending", "processing", "processed", "failed"],
@@ -961,6 +964,8 @@ export const IrisActivityEventTable = pgTable(
       sql`${table.schemaVersion} BETWEEN 1 AND 20`,
     ),
     unique().on(table.userId, table.idempotencyKey),
+    unique().on(table.occurrenceId),
+    unique().on(table.userId, table.trajectoryId, table.sequence),
     index("iris_activity_unprocessed_idx").on(
       table.processedAt,
       table.createdAt,
@@ -976,6 +981,11 @@ export const IrisActivityEventTable = pgTable(
       table.scopeType,
       table.scopeId,
       table.createdAt,
+    ),
+    index("iris_activity_run_sequence_idx").on(
+      table.userId,
+      table.trajectoryId,
+      table.sequence,
     ),
   ],
 );

@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { VerificationEngine } from "./verification";
+import { capabilityResultVerifier, VerificationEngine } from "./verification";
 
 describe("VerificationEngine", () => {
   test("does not accept a filename without a storage-backed verifier", async () => {
@@ -24,5 +24,24 @@ describe("VerificationEngine", () => {
       engine.verify({ kind: "tool_result", value: {} }),
     ).resolves.toEqual({ verified: false, reason: "NO_VERIFIER" });
     expect(verify).not.toHaveBeenCalled();
+  });
+
+  test("distinguishes an unexecuted critical capability from a result", async () => {
+    await expect(
+      capabilityResultVerifier.verify({
+        kind: "capability_result",
+        capability: "generate_report",
+        executed: false,
+        value: { artifact: "ignored" },
+      }),
+    ).resolves.toEqual({ verified: false, reason: "CAPABILITY_NOT_EXECUTED" });
+    await expect(
+      capabilityResultVerifier.verify({
+        kind: "capability_result",
+        capability: "generate_report",
+        executed: true,
+        value: { artifactId: "artifact-1" },
+      }),
+    ).resolves.toMatchObject({ verified: true });
   });
 });

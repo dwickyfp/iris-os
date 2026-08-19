@@ -25,16 +25,33 @@ export type {
   VerificationTarget,
   Verifier,
   CompletionRequirement,
+  GoalVerificationSpec,
+  VerificationLevel,
+  CapabilityVerification,
 } from "./verification";
-export { VerificationEngine } from "./verification";
-export { ArtifactVerificationRequirement } from "./artifact-verification-requirement";
+export {
+  VerificationEngine,
+  capabilityResultVerifier,
+  nonEmptyStructuredOutput,
+} from "./verification";
+export {
+  ArtifactVerificationRequirement,
+  GoalAwareVerificationRequirement,
+} from "./artifact-verification-requirement";
 export { ContextEngine, estimateMessageTokens } from "./context-engine";
 export type {
   ContextCompactionResult,
   ContextDiagnostics,
   ContextEngineDependencies,
   ContextProvenance,
+  ContextResolveSource,
+  ContextSourceKind,
+  ContextSourceRecord,
+  ContextTrust,
+  ResolvedContext,
 } from "./context-engine";
+export { RunPreparer } from "./run-preparer";
+export type { PreparedRun, RunPreparationInput } from "./run-preparer";
 export { PolicyEngine, policyEngine } from "./policy-engine";
 export type { PolicyDecision } from "./policy-engine";
 export { EventRecorder } from "./event-recorder";

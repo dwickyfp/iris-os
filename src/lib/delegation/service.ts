@@ -4,8 +4,12 @@ import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { sanitizeActivityPayload } from "lib/activity/sanitize";
 import { recordActivityEvent } from "lib/activity/service";
-import { intersectDelegationPermissions } from "lib/ai/agent/delegation-policy";
+import { intersectDelegationAuthority } from "lib/ai/agent/delegation-policy";
 import { runManager } from "lib/ai/runs/server";
+import {
+  type PolicyAuthority,
+  policyEngine,
+} from "lib/ai/runtime/policy-engine";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   AgentRunTable,
@@ -13,10 +17,10 @@ import {
   DelegationRunTable,
 } from "lib/db/pg/schema.pg";
 import { remoteAgentRepository, skillRepository } from "lib/db/repository";
-import { generateUUID } from "lib/utils";
-import { enqueueDelegatedRun } from "./queue";
 import { assertDelegationTargetEligible } from "lib/delegation/targets";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import { generateUUID } from "lib/utils";
+import { enqueueDelegatedRun } from "./queue";
 
 export const DELEGATION_LIMITS = {
   maxDepth: 3,
@@ -103,11 +107,55 @@ export async function createDelegatedRun(input: {
         (tool): tool is string => typeof tool === "string",
       )
     : [];
-  const allowedTools = intersectDelegationPermissions({
+  const parentPolicy =
+    parent.context.policyAuthority &&
+    typeof parent.context.policyAuthority === "object"
+      ? (parent.context.policyAuthority as PolicyAuthority)
+      : {};
+  const authority = intersectDelegationAuthority({
     parentTools: parent.allowedTools,
     childTools,
     approvedTools,
+    parentPolicy,
+    childPolicy: {
+      destinationKinds: [target.kind === "remote" ? "remote" : "local"],
+    },
   });
+  const allowedTools = authority.allowedTools;
+  const delegationDecision = policyEngine.evaluate({
+    actor: {
+      type: "agent",
+      id: parent.agentId ?? undefined,
+      userId: input.userId,
+    },
+    capability: {
+      id:
+        target.kind === "remote"
+          ? `remote-peer:${target.connectionId}`
+          : `local-peer:${target.agentId}`,
+      key: "delegate_agent",
+      risks: target.kind === "remote" ? ["write", "remote"] : ["write"],
+    },
+    action: "delegate",
+    resource: target.kind === "remote" ? target.connectionId : target.agentId,
+    args: input.context ?? {},
+    destination: {
+      kind: target.kind === "remote" ? "remote" : "local",
+      id: target.kind === "remote" ? target.connectionId : target.agentId,
+    },
+    runtime: {
+      kind: target.kind === "remote" ? "remote_delegation" : "local_delegation",
+      approvalPolicy:
+        parent.context.approvalPolicy === "always" ||
+        parent.context.approvalPolicy === "never"
+          ? parent.context.approvalPolicy
+          : "destructive_only",
+      runId: parent.id,
+      parentRunId: parent.parentRunId ?? undefined,
+    },
+  });
+  if (delegationDecision.result === "deny")
+    throw new Error("DELEGATION_DENIED");
   const childRunId = generateUUID();
   const delegationId = generateUUID();
   const timeoutMs = Math.min(
@@ -146,6 +194,8 @@ export async function createDelegatedRun(input: {
         unknown
       >),
       objective: input.objective.slice(0, 8_000),
+      policyAuthority: authority.policy,
+      delegationPolicyDecision: delegationDecision,
     },
     allowedTools,
     timeoutMs,
@@ -174,6 +224,9 @@ export async function createDelegatedRun(input: {
     agentId: childAgent?.id,
     payload: {
       targetType: target.kind === "remote" ? "remote_agent" : "agent",
+      policyDecisionId: delegationDecision.decisionId,
+      policyResult: delegationDecision.result,
+      policyRisks: delegationDecision.risks,
     },
     idempotencyKey: `delegation.child_queued:${run.id}`,
   });
@@ -188,6 +241,8 @@ export async function createDelegatedRun(input: {
     childRunId: run.id,
     status: "queued" as const,
     allowedTools,
+    policyDecision: delegationDecision,
+    policyAuthority: authority.policy,
   };
 }
 

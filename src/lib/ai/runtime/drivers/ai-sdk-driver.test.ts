@@ -17,9 +17,10 @@ describe("AiSdkExecutionDriver", () => {
     vi.mocked(createToolLoopAgent).mockReturnValue({ generate } as never);
     const agent = { instructions: "Handle the goal" } as never;
     const execution = { prompt: "Do the work", timeout: 1_000 } as never;
+    const orchestration = {} as never;
 
     await expect(
-      new AiSdkExecutionDriver().generate({ agent, execution }),
+      new AiSdkExecutionDriver().generate({ agent, execution, orchestration }),
     ).resolves.toBe(result);
 
     expect(createToolLoopAgent).toHaveBeenCalledWith(agent);
@@ -35,9 +36,10 @@ describe("AiSdkExecutionDriver", () => {
     vi.mocked(createToolLoopAgent).mockReturnValue({ stream } as never);
     const agent = { instructions: "Handle the goal" } as never;
     const execution = { messages: [], abortSignal: undefined } as never;
+    const orchestration = {} as never;
 
     await expect(
-      new AiSdkExecutionDriver().stream({ agent, execution }),
+      new AiSdkExecutionDriver().stream({ agent, execution, orchestration }),
     ).resolves.toBe(result);
 
     expect(createToolLoopAgent).toHaveBeenCalledWith(agent);

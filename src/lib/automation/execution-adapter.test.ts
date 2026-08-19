@@ -1,12 +1,12 @@
+import { customModelProvider } from "lib/ai/models";
 import { describe, expect, test, vi } from "vitest";
 import {
+  type AutomationExecutionDependencies,
+  type AutomationExecutionRequest,
   createAutomationExecutionAdapter,
   mapWorkflowOutput,
   runHeadlessAgent,
-  type AutomationExecutionDependencies,
-  type AutomationExecutionRequest,
 } from "./execution-adapter";
-import { customModelProvider } from "lib/ai/models";
 
 vi.mock("server-only", () => ({}));
 vi.mock("lib/ai/models", () => ({
@@ -63,7 +63,7 @@ describe("automation execution adapter", () => {
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         agent: expect.objectContaining({
-          instructions: "Execute the skill",
+          instructions: expect.stringContaining("Execute the skill"),
           tools: {},
         }),
         execution: {
@@ -73,9 +73,53 @@ describe("automation execution adapter", () => {
         },
         orchestration: expect.objectContaining({
           identity: expect.objectContaining({
-            runId: input.runId,
             userId: input.userId,
           }),
+          run: {
+            mode: "create",
+            spec: expect.objectContaining({
+              context: expect.objectContaining({
+                automationRunId: input.runId,
+              }),
+            }),
+          },
+        }),
+      }),
+    );
+    const generatedInput = (generate.mock.calls as any[][])[0][0];
+    expect(generatedInput.orchestration.identity.runId).not.toBe(input.runId);
+    expect(generatedInput.agent.runtimeContext.runId).toBe(
+      generatedInput.orchestration.identity.runId,
+    );
+  });
+
+  test("claims an existing worker-owned AgentRun without creating another", async () => {
+    const input = {
+      ...request("agent"),
+      executionSource: "delegation" as const,
+      claimToken: "lease-1",
+    };
+    const generate = vi.fn(async () => ({
+      text: "complete",
+      usage: { totalTokens: 1 },
+    }));
+    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue(
+      {} as never,
+    );
+
+    await runHeadlessAgent({
+      request: input,
+      profile: { type: "base" },
+      instructions: "Execute delegated work",
+      allowedTools: [],
+      harness: { generate },
+    });
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orchestration: expect.objectContaining({
+          identity: expect.objectContaining({ runId: input.runId }),
+          run: { mode: "claimed", claimToken: "lease-1" },
         }),
       }),
     );

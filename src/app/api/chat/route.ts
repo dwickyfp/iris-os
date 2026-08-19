@@ -42,7 +42,8 @@ import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
-import { prepareContext } from "lib/ai/context-compaction";
+import { contextEngine } from "lib/ai/context-compaction";
+import { RunPreparer } from "lib/ai/runtime/run-preparer";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import type { HarnessStreamResult } from "lib/ai/runtime";
@@ -94,6 +95,8 @@ import {
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Chat API: `),
 });
+
+const runPreparer = new RunPreparer(contextEngine);
 
 export async function POST(request: Request) {
   try {
@@ -387,6 +390,7 @@ export async function POST(request: Request) {
               },
             };
         const capabilities = await resolveServerCapabilities({
+          query: userText,
           context: {
             userId: session.user.id,
             primaryAgentId: agent?.id,
@@ -482,14 +486,8 @@ export async function POST(request: Request) {
             taskId: task?.id,
           },
         );
-        const systemPrompt = mergeSystemPrompt(
+        const assembledInstructions = mergeSystemPrompt(
           !agent && buildBaseAgentSystemPrompt(),
-          buildUserSystemPrompt(session.user, userPreferences, agent),
-          buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
-          buildSkillManifestPrompt(capabilities.skillManifest),
-          workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
-          buildTaskContextPrompt(task),
-          memoryContext.prompt,
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,
         );
 
@@ -533,19 +531,72 @@ export async function POST(request: Request) {
         }
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
-        const preparedContext = await prepareContext({
+        const preparedRun = await runPreparer.prepare({
           threadId: thread!.id,
+          instructions: assembledInstructions,
+          request: userText,
+          sources: [
+            {
+              id: "agent-and-skills",
+              kind: "agent",
+              content: [agent?.instructions, buildSkillManifestPrompt(capabilities.skillManifest)]
+                .filter(Boolean)
+                .join("\n\n"),
+              trust: "trusted",
+              priority: 90,
+            },
+            {
+              id: "workspace",
+              kind: "workspace",
+              content: workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
+              trust: "trusted",
+              priority: 80,
+            },
+            {
+              id: "task",
+              kind: "task",
+              content: buildTaskContextPrompt(task),
+              trust: "trusted",
+              priority: 70,
+            },
+            {
+              id: "memory",
+              kind: "memory",
+              content: memoryContext.prompt,
+              trust: "mixed",
+              priority: 60,
+            },
+            {
+              id: "mcp-customization",
+              kind: "mcp",
+              content: buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
+              trust: "mixed",
+              priority: 50,
+            },
+            {
+              id: "user-preferences",
+              kind: "user_preferences",
+              content: buildUserSystemPrompt(session.user, userPreferences, agent),
+              trust: "trusted",
+              priority: 40,
+            },
+          ],
           messages,
           contextWindow: modelConfig.contextWindow,
         });
-        const modelMessages = await convertToModelMessages(
-          preparedContext.messages,
-        );
+        const preparedContext = preparedRun.context;
+        const modelMessages = await convertToModelMessages(preparedRun.messages);
         checkpointModelMessages = modelMessages;
         const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
         const resolvedPolicy = policyEngine.resolveSnapshot(
           Object.keys(vercelAITooles),
           approvalPolicy,
+          capabilities.ordered.map(({ id, key, kind, risks }) => ({
+            id,
+            key,
+            kind,
+            risks,
+          })),
         );
         checkpointResolvedPolicy = resolvedPolicy;
         const runtimeContext = agent
@@ -577,7 +628,7 @@ export async function POST(request: Request) {
           agent: {
             profile: agent ? { type: "custom", agent } : { type: "base" },
             model,
-            instructions: systemPrompt,
+            instructions: preparedContext.instructions,
             tools: vercelAITooles,
             runtimeContext,
             resolvedPolicy,
@@ -601,22 +652,25 @@ export async function POST(request: Request) {
               taskId: task?.id,
               threadId: thread!.id,
             },
-            run: isV2FeatureEnabled("delegation")
-              ? {
-                  context: {
-                    userMessageId: message.id,
-                    approvedDelegationTools:
-                      Object.keys(vercelAITooles).filter(isReadOnlyTool),
-                    eligibleDelegationTargets:
-                      capabilities.eligibleDelegationTargets,
-                    capabilityDescriptorIds: capabilities.ordered.map(
-                      ({ id }) => id,
-                    ),
-                    systemPrompt,
-                  },
-                  allowedTools: Object.keys(vercelAITooles),
-                }
-              : undefined,
+            run: {
+              mode: "create",
+              spec: {
+                context: {
+                  userMessageId: message.id,
+                  approvedDelegationTools:
+                    Object.keys(vercelAITooles).filter(isReadOnlyTool),
+                  eligibleDelegationTargets:
+                    capabilities.eligibleDelegationTargets,
+                  capabilityDescriptorIds: capabilities.ordered.map(
+                    ({ id }) => id,
+                  ),
+                  policyAuthority: resolvedPolicy.authority,
+                  approvalPolicy,
+                  systemPrompt: preparedContext.instructions,
+                },
+                allowedTools: Object.keys(vercelAITooles),
+              },
+            },
             context: preparedContext,
             policy: resolvedPolicy,
           },
@@ -709,12 +763,12 @@ export async function POST(request: Request) {
         const chatEventType = delegated
           ? "chat.completed"
           : isAborted
-          ? "chat.cancelled"
-          : finishReason === "error"
-            ? "chat.failed"
-            : isChatCorrection(completedUserText)
-              ? "chat.correction"
-              : "chat.completed";
+            ? "chat.cancelled"
+            : finishReason === "error"
+              ? "chat.failed"
+              : isChatCorrection(completedUserText)
+                ? "chat.correction"
+                : "chat.completed";
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
           actorId: agent?.id,

@@ -1,4 +1,11 @@
 import type { CapabilityHints, CapabilityRef, ChatModel } from "app-types/chat";
+import type { PolicyRisk } from "../policy-engine";
+import {
+  type CapabilityRouterConfig,
+  type CapabilityRoutingDiagnostics,
+  capabilitySearchDocument,
+  routeCapabilityDocuments,
+} from "./semantic-router";
 
 export type CapabilityKind =
   | "builtin"
@@ -23,6 +30,13 @@ export type CapabilityDescriptor<T = unknown> = {
   value: T;
   modelDescriptor?: unknown;
   hintIds?: readonly string[];
+  search?: {
+    aliases?: readonly string[];
+    provider?: readonly string[];
+    skills?: readonly string[];
+  };
+  /** Trusted, additive governance classification. Request hints never alter it. */
+  risks?: readonly PolicyRisk[];
 };
 
 export type CapabilityProvider<Context = unknown> = {
@@ -42,6 +56,13 @@ export type ResolvedCapabilities = {
   model: Record<string, unknown>;
   manual: Record<string, unknown>;
   collisions: CapabilityCollision[];
+  routing: CapabilityRoutingDiagnostics;
+};
+
+export type CapabilityRoutingRequest = {
+  query?: string;
+  config?: Partial<CapabilityRouterConfig>;
+  now?: () => number;
 };
 
 function capabilityRefId(hint: CapabilityRef) {
@@ -89,6 +110,7 @@ export class CapabilityRegistry<Context = unknown> {
     context: Context,
     hints: CapabilityHints = { requested: [], mode: "prefer" },
     allowed?: readonly CapabilityRef[],
+    routing: CapabilityRoutingRequest = {},
   ): Promise<ResolvedCapabilities> {
     const batches = await Promise.all(
       this.providers.map(async (provider) => ({
@@ -138,8 +160,21 @@ export class CapabilityRegistry<Context = unknown> {
       descriptor.hintIds?.some((id) => requested.has(id)) === true;
 
     let ordered: CapabilityDescriptor[];
+    let routingDiagnostics: CapabilityRoutingDiagnostics;
     if (hints.mode === "only") {
       ordered = eligible.filter(isRequested);
+      routingDiagnostics = {
+        event: "capability.routing",
+        strategy: "only",
+        candidateCount: eligible.length,
+        selectedCount: ordered.length,
+        topN: routing.config?.topN ?? ordered.length,
+        minScore: routing.config?.minScore ?? 0,
+        elapsedMs: 0,
+        pinnedIds: ordered.map(({ id }) => id),
+        selectedIds: ordered.map(({ id }) => id),
+        scores: [],
+      };
     } else {
       const rank = new Map(requestedIds.map((id, index) => [id, index]));
       const requestedRank = (descriptor: CapabilityDescriptor) => {
@@ -148,7 +183,7 @@ export class CapabilityRegistry<Context = unknown> {
           ...ids.map((id) => rank.get(id) ?? Number.POSITIVE_INFINITY),
         );
       };
-      ordered = eligible
+      const preferred = eligible
         .map((descriptor, index) => ({ descriptor, index }))
         .sort(
           (a, b) =>
@@ -156,6 +191,25 @@ export class CapabilityRegistry<Context = unknown> {
             a.index - b.index,
         )
         .map(({ descriptor }) => descriptor);
+      const routed = routeCapabilityDocuments(
+        preferred.map((descriptor) => {
+          const provider = candidates.find(
+            (candidate) => candidate.descriptor === descriptor,
+          )?.provider;
+          return capabilitySearchDocument(descriptor, provider);
+        }),
+        routing.query ?? "",
+        new Set(preferred.filter(isRequested).map(({ id }) => id)),
+        { config: routing.config, now: routing.now },
+      );
+      const byId = new Map(
+        preferred.map((descriptor) => [descriptor.id, descriptor]),
+      );
+      ordered = routed.selectedIds.flatMap((id) => {
+        const descriptor = byId.get(id);
+        return descriptor ? [descriptor] : [];
+      });
+      routingDiagnostics = routed.diagnostics;
     }
 
     return {
@@ -164,6 +218,7 @@ export class CapabilityRegistry<Context = unknown> {
       model: toMap(ordered, "model"),
       manual: toMap(ordered, "manual"),
       collisions,
+      routing: routingDiagnostics,
     };
   }
 }

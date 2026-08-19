@@ -2,9 +2,11 @@ export type {
   ArtifactRecord,
   ArtifactReference,
   ArtifactVerificationRecord,
+  ExtractedArtifactContent,
 } from "./contracts";
 export {
   ArtifactReferenceSchema,
+  extractArtifactContent,
   findArtifactReferences,
   hasArtifactClaims,
 } from "./contracts";

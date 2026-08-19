@@ -4,19 +4,15 @@ import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
-import { customModelProvider } from "lib/ai/models";
-import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
-import { irisHarness } from "lib/ai/runtime/server";
-import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
 import type {
   ApprovalPolicy,
   RuntimeToolMode,
 } from "lib/ai/agent/runtime-context";
-import { createSkillsRuntime } from "lib/ai/skill";
+import { customModelProvider } from "lib/ai/models";
 import {
+  type ParentResumeGeneration,
   createParentResumeExecutor,
   resolveParentResumeAuthorization,
-  type ParentResumeGeneration,
 } from "lib/ai/runs/parent-resume-executor";
 import {
   PARENT_RESUME_QUEUE,
@@ -25,6 +21,10 @@ import {
 } from "lib/ai/runs/parent-resume-queue";
 import { runManager } from "lib/ai/runs/server";
 import type { ClaimedParentRun } from "lib/ai/runs/types";
+import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
+import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
+import { irisHarness } from "lib/ai/runtime/server";
+import { createSkillsRuntime } from "lib/ai/skill";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import {
   agentRepository,
@@ -188,38 +188,33 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
         ReturnType<typeof createToolLoopAgent>["generate"]
       >[0]["messages"],
     ) {
-      const lifecycle = await irisHarness.generateClaimed(
-        {
-          agent: agentConfig,
-          execution: {
-            messages,
-            toolsContext: runtimeContext,
-            timeout: Math.max(
-              1,
-              (claimed.run.absoluteDeadlineAt?.getTime() ??
-                Date.now() + 30_000) - Date.now(),
-            ),
-          } as any,
-          orchestration: {
-            identity: {
-              userId: claimed.run.userId,
-              runId: claimed.run.id,
-              requestId: runtimeContext.requestId,
-              actorType: agent ? "agent" : "system",
-              actorId: agent?.id,
-              agentId: agent?.id,
-              workspaceId: claimed.run.workspaceId ?? undefined,
-              taskId: claimed.run.taskId ?? undefined,
-              threadId: recipe.threadId,
-            },
-            run: {
-              allowedTools: claimed.run.allowedTools,
-            },
-            policy: resolvedPolicy,
+      const lifecycle = await irisHarness.generateClaimed({
+        agent: agentConfig,
+        execution: {
+          messages,
+          toolsContext: runtimeContext,
+          timeout: Math.max(
+            1,
+            (claimed.run.absoluteDeadlineAt?.getTime() ?? Date.now() + 30_000) -
+              Date.now(),
+          ),
+        } as any,
+        orchestration: {
+          identity: {
+            userId: claimed.run.userId,
+            runId: claimed.run.id,
+            requestId: runtimeContext.requestId,
+            actorType: agent ? "agent" : "system",
+            actorId: agent?.id,
+            agentId: agent?.id,
+            workspaceId: claimed.run.workspaceId ?? undefined,
+            taskId: claimed.run.taskId ?? undefined,
+            threadId: recipe.threadId,
           },
+          run: { mode: "claimed", claimToken: claimed.token },
+          policy: resolvedPolicy,
         },
-        claimed.token,
-      );
+      });
       const result = lifecycle.native;
       return {
         text: result.text,

@@ -39,6 +39,21 @@ type ServerCapabilityContext = {
   remoteAgentsEnabled: boolean;
 };
 
+function capabilityRouterConfig() {
+  return {
+    topN: configuredNumber("CAPABILITY_ROUTER_TOP_N", 12),
+    minScore: configuredNumber("CAPABILITY_ROUTER_MIN_SCORE", 0.15),
+    timeoutMs: configuredNumber("CAPABILITY_ROUTER_TIMEOUT_MS", 25),
+  };
+}
+
+function configuredNumber(name: string, fallback: number) {
+  const value = Number(process.env[name]);
+  return process.env[name] !== undefined && Number.isFinite(value)
+    ? value
+    : fallback;
+}
+
 export async function resolveServerCapabilities(input: {
   context: ServerCapabilityContext;
   hints: CapabilityHints;
@@ -47,6 +62,7 @@ export async function resolveServerCapabilities(input: {
   workflowTool: (workflow: any) => Tool;
   additionalTools?: Record<string, Tool>;
   createDelegationTool: (targets: readonly DelegationTarget[]) => Tool;
+  query?: string;
 }) {
   const { context } = input;
   const requestedSkillIds = input.hints.requested.flatMap((hint) =>
@@ -142,6 +158,7 @@ export async function resolveServerCapabilities(input: {
     context,
     input.hints,
     input.allowedCapabilities,
+    { query: input.query, config: capabilityRouterConfig() },
   );
   const targets = resolved.ordered
     .filter(
@@ -189,6 +206,9 @@ function skillRuntimeProvider(
           surfaces: ["executable", "model", "manual"],
           value,
           hintIds,
+          search: {
+            skills: runtime.manifest.flatMap(({ id, name }) => [id, name]),
+          },
         }),
       );
     },

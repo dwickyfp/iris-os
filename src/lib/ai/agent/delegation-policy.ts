@@ -1,3 +1,8 @@
+import {
+  type PolicyAuthority,
+  intersectPolicyAuthority,
+} from "../runtime/policy-engine";
+
 export function intersectDelegationPermissions(input: {
   parentTools: string[];
   childTools: string[];
@@ -8,4 +13,17 @@ export function intersectDelegationPermissions(input: {
   return [...new Set(input.parentTools)].filter(
     (tool) => child.has(tool) && approved.has(tool),
   );
+}
+
+export function intersectDelegationAuthority(input: {
+  parentTools: string[];
+  childTools: string[];
+  approvedTools: string[];
+  parentPolicy: PolicyAuthority;
+  childPolicy: PolicyAuthority;
+}) {
+  return {
+    allowedTools: intersectDelegationPermissions(input),
+    policy: intersectPolicyAuthority(input.parentPolicy, input.childPolicy),
+  };
 }

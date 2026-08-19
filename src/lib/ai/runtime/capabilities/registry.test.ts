@@ -129,6 +129,36 @@ describe("CapabilityRegistry", () => {
     expect(result.ordered.map(({ key }) => key)).toEqual(["allowed"]);
   });
 
+  it("excludes policy-ineligible capabilities before semantic scoring", async () => {
+    const registry = new CapabilityRegistry([
+      provider("builtins", [
+        {
+          ...capability("builtin:allowed", "allowed"),
+          description: "Revenue summary",
+        },
+        {
+          ...capability("builtin:denied", "denied"),
+          description: "Revenue warehouse report",
+        },
+      ]),
+    ]);
+
+    const result = await registry.resolve(
+      { userId: "user-1" },
+      hints([
+        { type: "defaultTool", name: "denied", label: "Denied explicit hint" },
+      ]),
+      [{ type: "defaultTool", name: "allowed", label: "Allowed" }],
+      { query: "revenue warehouse report" },
+    );
+
+    expect(result.ordered.map(({ id }) => id)).toEqual(["builtin:allowed"]);
+    expect(result.routing.scores.map(({ id }) => id)).not.toContain(
+      "builtin:denied",
+    );
+    expect(result.routing.candidateCount).toBe(1);
+  });
+
   it("applies the hard allowlist to MCP, workflows, skills, and peers", async () => {
     const descriptors = [
       { ...capability("mcp:server-1:search", "search"), kind: "mcp" as const },

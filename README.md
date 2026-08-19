@@ -31,12 +31,14 @@ future design.
 | **Execution driver** | AI SDK `ToolLoopAgent` generation and streaming; duplicate-safe extensible driver registry | AI SDK native default and only shipped driver |
 | **Chat** | Multi-model streaming, attachments, CSV ingestion previews, temporary chats, exports, voice, persisted incoming messages, and asynchronous memory review | Available |
 | **Smart capability routing** | Server-authoritative registry for built-in tools, MCP, workflows, skills, local peers, and remote peers; requested capabilities support `prefer` and `only` routing | Available; peer delegation depends on flags |
+| **Relevance routing** | Threshold-based deterministic lexical router prunes large eligible capability sets, pins explicit hints, and falls back safely | Configured with `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, and `CAPABILITY_ROUTER_TIMEOUT_MS` |
 | **Agents** | Reusable primary agents with instructions, model selection, assigned skills, and scoped capabilities | Available |
 | **Local delegation** | Parent/child runs, permission intersection, depth/child/parallel limits, timeout, token budget, leases, heartbeat, cancellation propagation, and structured results | `IRIS_DELEGATION_V2` |
 | **Remote agents / A2A** | Agent Card discovery, authenticated JSON-RPC A2A task send/get/cancel, durable polling, input/auth waiting, resume, cancellation, and artifact ingestion | `IRIS_DELEGATION_V2` + `IRIS_REMOTE_AGENTS_A2A` |
 | **Run operations** | Queued/running/waiting/terminal states, run tree, timeline, retry-safe dispatch, stale-run sweep, and cancel tree | `IRIS_DELEGATION_V2`; requires `worker:iris` |
 | **Canonical artifacts** | Storage-backed artifact records bound to user and run, SHA-256 metadata, verification history, and Markdown report generation | Available where artifact-producing tools run |
 | **Verification** | Artifact reference, owner/run binding, storage existence, metadata, size, media type, and content hash checks; remote artifacts are canonicalized before success | Available |
+| **Goal-aware verification** | Execution, artifact, and outcome levels with required title, period, media type, sections, capability output, and analysis-only rules | Available when a completion requirement is supplied |
 | **MCP** | User-configured MCP servers, OAuth support, tool discovery, server/tool instructions, mentions, presets, and manual execution flow | Available; server creation can be disabled |
 | **Built-in tools** | Exa search/content, HTTP, JavaScript/Python execution, charts, interactive tables, image generation/editing, and verified Markdown reports | Available when configured and permitted |
 | **Workflows** | Visual model/tool graph builder, execution, publishing, and use as chat tools | Available |
@@ -47,6 +49,7 @@ future design.
 | **Automation** | Workflow/skill/agent targets, schedules, approvals, idempotency, attempts, retries, timeout, cancellation, and run history | `IRIS_AUTOMATION_V2`; requires `worker:iris` |
 | **Authentication and storage** | Better Auth, password and OAuth sign-in, PostgreSQL/pgvector, Vercel Blob or S3-compatible file storage | Available |
 | **Operations UI** | Task operations, automation history, delegation tree/timeline, waiting/resume controls, remote-agent connections, and admin diagnostics | Corresponding V2 flags |
+| **Runtime trajectory** | Sequence-backed repeated runtime events, routing/model/tool/delegation/verification milestones, and replayable run timeline | Available |
 
 Supported model providers include OpenAI, Anthropic, Google, xAI, OpenRouter,
 Ollama, Groq, and OpenAI-compatible endpoints. Foreground model selection and
@@ -80,8 +83,9 @@ run without interruption:
   delegation targets. They are capabilities of the primary agent, not
   replacements for it.
 - **Capability hints:** mention tools, MCP servers/tools, workflows, skills, or
-  peers. `Prefer` puts requested capabilities first while retaining other
-  eligible capabilities. `Only` narrows routing to requested capabilities.
+  peers. `Prefer` pins requested capabilities while deterministic lexical
+  routing selects a bounded relevant set. `Only` narrows routing to requested
+  capabilities.
 - **Standard autonomy:** tools are available and policy requires approval for
   destructive or unclassified operations.
 - **Ask first:** all tool execution requires approval.
@@ -105,8 +109,9 @@ generation are conditional model actions, not mandatory steps for every chat.
    workspace/task instructions, skills, and conversation context. Oversized
    conversation history is compacted with provenance and token diagnostics.
 3. The capability registry derives eligible built-in, MCP, workflow, skill,
-   local-peer, and remote-peer capabilities. `prefer`/`only` hints reorder or
-   narrow this server-authorized set.
+   local-peer, and remote-peer capabilities. It normalizes descriptions, Agent
+   Card skills, and provider metadata for bounded lexical routing after policy
+   filtering; `prefer` hints remain pinned and `only` remains strict.
 4. The policy engine classifies tools as read-only, explicitly low-risk,
    high-risk, or unclassified and records the effective approval policy.
 5. `IrisHarness.stream()` starts trajectory events and, when delegation is
@@ -626,6 +631,20 @@ docker/           Application image and local/full-stack Compose services
 ```
 
 ## Rollout Status and Limitations
+
+### Hardening Status
+
+The current hardening implementation also includes:
+
+- a common `RunPreparer` foundation and ContextEngine provenance/trust records;
+- threshold-based deterministic lexical relevance routing with explicit-hint pinning;
+- action/resource/destination-aware PolicyEngine decisions with authority reduction;
+- ordered runtime trajectory events with occurrence identity and replayable timelines;
+- goal-aware execution, artifact, and outcome verification;
+- a real disposable PostgreSQL north-star integration test covering fake A2A
+  working/completion, parent rejoin, report generation, artifact verification,
+  and trajectory milestones;
+- lease, continuation, outbox, cancellation, and parent-resume crash coverage.
 
 The repository implements the harness, canonical artifacts, A2A connection and
 task APIs, local/remote delegation worker, durable waiting/resume states, and

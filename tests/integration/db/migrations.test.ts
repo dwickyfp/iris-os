@@ -29,6 +29,7 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     expect(applied).toContain("0045_agent_run_join_generation.sql");
     expect(applied).toContain("0046_worker_heartbeat.sql");
     expect(applied).toContain("0047_memory_fts_indexes.sql");
+    expect(applied).toContain("0048_runtime_event_sequence.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );

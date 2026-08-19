@@ -28,6 +28,44 @@ export type ArtifactVerificationRecord = {
   createdAt: Date;
 };
 
+export type ExtractedArtifactContent = {
+  text: string;
+  title?: string;
+  sections: string[];
+  nonEmpty: boolean;
+  structured: boolean;
+};
+
+/** Cheap, deterministic metadata extraction used by goal verification. */
+export function extractArtifactContent(
+  bytes: Buffer | string,
+  mediaType: string,
+): ExtractedArtifactContent {
+  const text = Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes;
+  if (!mediaType.includes("markdown") && !mediaType.includes("text/"))
+    return {
+      text,
+      nonEmpty: Buffer.byteLength(text) > 0,
+      structured: false,
+      sections: [],
+    };
+  const lines = text.split(/\r?\n/);
+  const title = lines
+    .find((line) => /^#\s+\S/.test(line))
+    ?.replace(/^#\s+/, "")
+    .trim();
+  const sections = lines
+    .filter((line) => /^##\s+\S/.test(line))
+    .map((line) => line.replace(/^##\s+/, "").trim());
+  return {
+    text,
+    title,
+    sections,
+    nonEmpty: text.trim().length > 0,
+    structured: Boolean(title || sections.length),
+  };
+}
+
 export function findArtifactReferences(value: unknown): ArtifactReference[] {
   const found = new Map<string, ArtifactReference>();
   const visited = new Set<object>();

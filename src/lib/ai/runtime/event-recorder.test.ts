@@ -73,4 +73,47 @@ describe("EventRecorder", () => {
     await recorder.record("user-1", activityInput());
     await vi.waitFor(() => expect(order).toEqual(["committed", "published"]));
   });
+
+  test("gives repeated runtime events stable occurrence identities", async () => {
+    const inserted: Record<string, unknown>[] = [];
+    let nextId = 0;
+    const database = {
+      insert: vi.fn(() => ({
+        values: vi.fn((value) => {
+          inserted.push(value);
+          return {
+            onConflictDoUpdate: vi.fn(() => ({
+              returning: vi.fn(async () => [value]),
+            })),
+          };
+        }),
+      })),
+    };
+    const recorder = new EventRecorder({
+      database: database as never,
+      generateId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, "0")}`,
+      sanitizePayload: (payload) => payload,
+      publish: vi.fn(async () => undefined),
+      onPublishError: vi.fn(),
+    });
+    for (const eventType of ["model.completed", "tool.completed"] as const) {
+      const runtimeEvent = {
+        actorType: "system" as const,
+        eventType,
+        subjectType: "agent_run",
+        runId: "run-1",
+        payload: { stepNumber: 1 },
+      };
+      await recorder.recordRuntime("user-1", runtimeEvent);
+      await recorder.recordRuntime("user-1", runtimeEvent);
+    }
+
+    expect(inserted).toHaveLength(4);
+    expect(new Set(inserted.map(({ occurrenceId }) => occurrenceId)).size).toBe(
+      4,
+    );
+    expect(
+      new Set(inserted.map(({ idempotencyKey }) => idempotencyKey)).size,
+    ).toBe(4);
+  });
 });

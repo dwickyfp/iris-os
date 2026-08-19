@@ -1,11 +1,8 @@
 import { getSession } from "auth/server";
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
+import { getRunTrajectory } from "lib/activity/trajectory";
 import { pgDb } from "lib/db/pg/db.pg";
-import {
-  AgentRunTable,
-  DelegationRunTable,
-  IrisActivityEventTable,
-} from "lib/db/pg/schema.pg";
+import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function GET(
@@ -29,19 +26,7 @@ export async function GET(
     );
   if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
   const [events, delegations] = await Promise.all([
-    pgDb
-      .select()
-      .from(IrisActivityEventTable)
-      .where(
-        and(
-          eq(IrisActivityEventTable.userId, session.user.id),
-          or(
-            eq(IrisActivityEventTable.runId, runId),
-            eq(IrisActivityEventTable.parentRunId, runId),
-          ),
-        ),
-      )
-      .orderBy(asc(IrisActivityEventTable.createdAt)),
+    getRunTrajectory(pgDb, session.user.id, runId),
     pgDb
       .select()
       .from(DelegationRunTable)

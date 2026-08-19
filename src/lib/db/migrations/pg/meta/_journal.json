@@ -337,6 +337,13 @@
       "when": 1787137200000,
       "tag": "0047_memory_fts_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787140800000,
+      "tag": "0048_runtime_event_sequence",
+      "breakpoints": true
     }
   ]
 }

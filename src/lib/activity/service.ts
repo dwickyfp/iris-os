@@ -24,3 +24,10 @@ export async function recordActivityEvent(
 ) {
   return eventRecorder.record(userId, raw);
 }
+
+export async function recordRuntimeActivityEvent(
+  userId: string,
+  raw: Omit<ActivityEventInput, "idempotencyKey" | "occurrenceId">,
+) {
+  return eventRecorder.recordRuntime(userId, raw);
+}
