@@ -139,26 +139,30 @@ async function verifyLatestMigration(connectionString: string) {
     const result = await client.query<{
       count: string;
       has_0046: boolean;
+      has_0047: boolean;
       heartbeat_table: string | null;
     }>(
       `SELECT
          (SELECT COUNT(*)::text FROM drizzle."__drizzle_migrations") AS count,
          (SELECT BOOL_OR(created_at = 1787133600000)
             FROM drizzle."__drizzle_migrations") AS has_0046,
+         (SELECT BOOL_OR(created_at = 1787137200000)
+            FROM drizzle."__drizzle_migrations") AS has_0047,
          to_regclass('public.iris_worker_heartbeat')::text AS heartbeat_table`,
     );
     const row = result.rows[0];
     if (
       !row?.has_0046 ||
-      Number(row.count) < 47 ||
+      !row?.has_0047 ||
+      Number(row.count) < 48 ||
       row.heartbeat_table !== "iris_worker_heartbeat"
     ) {
       throw new Error(
-        `Expected migrations through 0046, received ${JSON.stringify(row)}`,
+        `Expected migrations through 0047, received ${JSON.stringify(row)}`,
       );
     }
     return {
-      latest: "0046_worker_heartbeat",
+      latest: "0047_memory_fts_indexes",
       appliedCount: Number(row.count),
       verified: true,
     };
@@ -307,7 +311,7 @@ const evidence = {
     inheritedAppDatabaseIgnored: true,
     generatedDisposableDatabase: true,
     loopbackOnly: loopbackPort !== undefined,
-    migratedThrough0046: migration?.verified === true,
+    migratedThrough0047: migration?.verified === true,
     containerRemoved: cleanedUp,
   },
   error:

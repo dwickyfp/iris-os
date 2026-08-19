@@ -11,12 +11,15 @@ describe("operations migration readiness", () => {
   it("derives the expected timestamp and hash from the latest Drizzle migration", async () => {
     const expected = getExpectedLatestMigration();
     const sql = await readFile(
-      join(process.cwd(), "src/lib/db/migrations/pg/0046_worker_heartbeat.sql"),
+      join(
+        process.cwd(),
+        "src/lib/db/migrations/pg/0047_memory_fts_indexes.sql",
+      ),
       "utf8",
     );
 
     expect(expected).toEqual({
-      createdAt: 1787133600000,
+      createdAt: 1787137200000,
       hash: createHash("sha256").update(sql).digest("hex"),
     });
   });

@@ -1,5 +1,5 @@
 import { embed } from "ai";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { MemoryKind, MemoryScope } from "app-types/memory";
 import {
   MEMORY_TOPIC_LABELS,
@@ -13,11 +13,9 @@ import {
   isSafeMemoryContent,
   sanitizeMemoryContent,
 } from "lib/ai/memory/guardrails";
-import {
-  memoryContentHash,
-  normalizeMemoryText,
-} from "lib/ai/memory/curator";
+import { memoryContentHash, normalizeMemoryText } from "lib/ai/memory/curator";
 import { memoryScopeKey } from "lib/ai/memory/scope";
+import { getMemoryRecallMode } from "lib/ai/memory/reviewer";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import {
@@ -31,6 +29,47 @@ import {
 } from "../schema.pg";
 
 type MemoryRow = typeof UserMemoryTable.$inferSelect;
+
+const LEXICAL_STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "are",
+  "but",
+  "not",
+  "you",
+  "aku",
+  "saya",
+  "kamu",
+  "dan",
+  "yang",
+  "dengan",
+  "untuk",
+  "tidak",
+  "sudah",
+]);
+
+function lexicalTerms(query: string) {
+  return normalizeMemoryText(query)
+    .split(" ")
+    .filter((term) => term.length > 2 && !LEXICAL_STOPWORDS.has(term))
+    .slice(0, 10);
+}
+
+/** websearch_to_tsquery treats spaces as AND, so lexical recall joins terms with OR. */
+function lexicalTsQuery(terms: string[]) {
+  return terms.join(" OR ");
+}
+
+function contentMatchesTerms(terms: string[]) {
+  return terms.length
+    ? sql`${UserMemoryTable.content} @@ websearch_to_tsquery('simple', ${lexicalTsQuery(terms)})`
+    : undefined;
+}
+
+function contentRank(terms: string[]) {
+  return sql`ts_rank(to_tsvector('simple', ${UserMemoryTable.content}), websearch_to_tsquery('simple', ${lexicalTsQuery(terms)}))`;
+}
 
 function exactScope(
   table: { scopeType: any; scopeId: any },
@@ -68,6 +107,7 @@ async function semanticCandidateIds(
   scopes: MemoryScope[],
   limit: number,
 ) {
+  if (getMemoryRecallMode() === "keyword") return [];
   try {
     const { customModelProvider } = await import("lib/ai/models");
     const configured = await customModelProvider.getEmbeddingModel();
@@ -94,10 +134,7 @@ async function findCandidates(input: {
   limit?: number;
 }) {
   const limit = Math.min(12, Math.max(1, input.limit ?? 12));
-  const terms = normalizeMemoryText(input.query)
-    .split(" ")
-    .filter((term) => term.length > 2)
-    .slice(0, 10);
+  const terms = lexicalTerms(input.query);
   const lexical: MemoryRow[] = [];
   for (const scope of input.scopes) {
     const rows = await db
@@ -109,17 +146,13 @@ async function findCandidates(input: {
           exactScope(UserMemoryTable, scope),
           inArray(UserMemoryTable.status, ["active", "pending"]),
           isNull(UserMemoryTable.deletedAt),
-          terms.length
-            ? or(
-                ...terms.map(
-                  (term) =>
-                    sql`${UserMemoryTable.content} ILIKE ${`%${term}%`}`,
-                ),
-              )
-            : undefined,
+          contentMatchesTerms(terms),
         ),
       )
-      .orderBy(desc(UserMemoryTable.updatedAt))
+      .orderBy(
+        ...(terms.length ? [sql`${contentRank(terms)} DESC`] : []),
+        desc(UserMemoryTable.updatedAt),
+      )
       .limit(limit);
     lexical.push(...rows);
   }
@@ -149,7 +182,10 @@ async function findCandidates(input: {
   ].slice(0, limit);
 }
 
-function scopeForType(scopes: MemoryScope[], scopeType: MemoryScope["scopeType"]) {
+function scopeForType(
+  scopes: MemoryScope[],
+  scopeType: MemoryScope["scopeType"],
+) {
   const scope = scopes.find((candidate) => candidate.scopeType === scopeType);
   if (!scope) throw new Error(`Memory scope ${scopeType} is unavailable`);
   return scope;
@@ -158,7 +194,9 @@ function scopeForType(scopes: MemoryScope[], scopeType: MemoryScope["scopeType"]
 function validateEvidence(userText: string, quote: string) {
   const evidence = quote.trim();
   if (!evidence || !userText.includes(evidence))
-    throw new Error("Memory evidence must quote the current user message exactly");
+    throw new Error(
+      "Memory evidence must quote the current user message exactly",
+    );
   return evidence;
 }
 
@@ -276,7 +314,10 @@ async function attachTaxonomy(
 
   for (const rawName of [...new Set(input.entities)].slice(0, 3)) {
     const name = sanitizeMemoryContent(rawName).slice(0, 80);
-    if (!name || normalizeMemoryText(name) === normalizeMemoryText(input.memory.content))
+    if (
+      !name ||
+      normalizeMemoryText(name) === normalizeMemoryText(input.memory.content)
+    )
       continue;
     const [entity] = await tx
       .insert(MemoryEntityTable)
@@ -501,14 +542,17 @@ async function commitOperations(input: {
         continue;
       }
       validateEvidence(input.userText, operation.evidenceQuote);
-      const target = "targetId" in operation
-        ? targetById.get(operation.targetId)
-        : undefined;
+      const target =
+        "targetId" in operation
+          ? targetById.get(operation.targetId)
+          : undefined;
       if ("targetId" in operation && !target)
         throw new Error("Memory target is no longer active");
       const scope = operationScope(operation, input.scopes, target);
       if (!scope || !input.allowedScopeTypes.includes(scope.scopeType))
-        throw new Error(`Memory scope ${scope?.scopeType ?? "unknown"} is disabled`);
+        throw new Error(
+          `Memory scope ${scope?.scopeType ?? "unknown"} is disabled`,
+        );
       if (target && memoryScopeKey(scope) !== memoryScopeKey(target))
         throw new Error("Memory operation cannot cross scopes");
       if (operation.action === "supersede") {
@@ -516,7 +560,9 @@ async function commitOperations(input: {
           (!operation.explicitCurrentCorrection && !input.consolidation) ||
           operation.confidence < 0.85
         )
-          throw new Error("Automatic supersede requires an explicit correction");
+          throw new Error(
+            "Automatic supersede requires an explicit correction",
+          );
         operation.replacements.forEach((replacement) =>
           validateContent(replacement.content),
         );
@@ -533,7 +579,8 @@ async function commitOperations(input: {
       ignore: 0,
     };
     if (input.mode !== "write") {
-      for (const operation of input.batch.operations) stats[operation.action] += 1;
+      for (const operation of input.batch.operations)
+        stats[operation.action] += 1;
       await tx
         .update(MemoryCuratorRunTable)
         .set({
@@ -552,10 +599,14 @@ async function commitOperations(input: {
         stats.ignore += 1;
         continue;
       }
-      const evidence = validateEvidence(input.userText, operation.evidenceQuote);
-      const target = "targetId" in operation
-        ? targetById.get(operation.targetId)!
-        : undefined;
+      const evidence = validateEvidence(
+        input.userText,
+        operation.evidenceQuote,
+      );
+      const target =
+        "targetId" in operation
+          ? targetById.get(operation.targetId)!
+          : undefined;
       const scope = operationScope(operation, input.scopes, target)!;
       if (operation.action === "add") {
         const result = await createOrReinforceClaim(tx, {
@@ -574,7 +625,10 @@ async function commitOperations(input: {
         const [memory] = await tx
           .update(UserMemoryTable)
           .set({
-            confidence: Math.max(target!.confidence, confidence(operation.confidence)),
+            confidence: Math.max(
+              target!.confidence,
+              confidence(operation.confidence),
+            ),
             frequency: sql`${UserMemoryTable.frequency} + 1`,
             version: sql`${UserMemoryTable.version} + 1`,
             updatedAt: new Date(),
@@ -600,7 +654,10 @@ async function commitOperations(input: {
           .set({
             kind: operation.kind,
             content: validateContent(operation.content),
-            confidence: Math.max(target!.confidence, confidence(operation.confidence)),
+            confidence: Math.max(
+              target!.confidence,
+              confidence(operation.confidence),
+            ),
             version: sql`${UserMemoryTable.version} + 1`,
             updatedAt: new Date(),
           })

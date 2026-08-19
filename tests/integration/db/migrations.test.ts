@@ -28,10 +28,28 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     expect(applied).toContain("0044_agent_run_parent_rejoin.sql");
     expect(applied).toContain("0045_agent_run_join_generation.sql");
     expect(applied).toContain("0046_worker_heartbeat.sql");
+    expect(applied).toContain("0047_memory_fts_indexes.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );
     expect(result.rows[0].count).toBeGreaterThan(20);
+  });
+
+  test("creates full-text search indexes for memory keyword recall", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client);
+    const indexes = await client.query(
+      `SELECT indexname AS name
+       FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND indexname IN ('user_memory_content_fts_idx',
+                           'chat_message_search_content_fts_idx')
+       ORDER BY indexname`,
+    );
+    expect(indexes.rows).toEqual([
+      { name: "chat_message_search_content_fts_idx" },
+      { name: "user_memory_content_fts_idx" },
+    ]);
   });
 
   test("records worker heartbeats and exposes an empty pg-boss snapshot", async () => {

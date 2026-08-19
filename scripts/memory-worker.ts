@@ -10,7 +10,10 @@ import {
 } from "lib/ai/models";
 import { memoryContentHash } from "lib/ai/memory/curator";
 import { runMemoryReviewAgent } from "lib/ai/memory/review-agent";
-import { getMemoryCuratorMode } from "lib/ai/memory/reviewer";
+import {
+  getMemoryCuratorMode,
+  getMemoryRecallMode,
+} from "lib/ai/memory/reviewer";
 import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
 import {
   isSafeMemoryContent,
@@ -498,6 +501,7 @@ async function embedNode(
   scope: MemoryScope,
 ) {
   try {
+    if (getMemoryRecallMode() === "keyword") return false;
     const configured = await customModelProvider.getEmbeddingModel();
     if (!configured) return false;
     const result = await embed({ model: configured.model, value: content });
@@ -549,6 +553,7 @@ async function embedNode(
 }
 
 async function reembedAll() {
+  if (getMemoryRecallMode() === "keyword") return;
   const claims = await pgDb
     .select({
       id: UserMemoryTable.id,

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, ilike, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ChatMessageSearchTable, ChatThreadTable } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
@@ -8,6 +8,22 @@ import { buildRecallScopes } from "./scope";
 import type { UIMessage } from "ai";
 
 const MAX_MEMORY_CHARS = 3_200;
+
+function chatSearchExpression(query: string) {
+  const terms = query
+    .normalize("NFKC")
+    .toLocaleLowerCase("id-ID")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((term) => term.length > 2)
+    .slice(0, 10);
+  if (!terms.length) return null;
+  const tsQuery = terms.join(" OR ");
+  return {
+    condition: sql`${ChatMessageSearchTable.content} @@ websearch_to_tsquery('simple', ${tsQuery})`,
+    rank: sql`ts_rank(to_tsvector('simple', ${ChatMessageSearchTable.content}), websearch_to_tsquery('simple', ${tsQuery}))`,
+  };
+}
 
 export function buildMemoryInjectionPrompt({
   memories,
@@ -51,31 +67,30 @@ export async function buildMemoryContext(
       .slice(0, 10),
   };
 
-  const term = query.trim().replace(/[%_]/g, "").slice(0, 160);
-  const excerpts =
-    term.length >= 3
-      ? await pgDb
-          .select({
-            content: ChatMessageSearchTable.content,
-            threadId: ChatMessageSearchTable.threadId,
-          })
-          .from(ChatMessageSearchTable)
-          .innerJoin(
-            ChatThreadTable,
-            eq(ChatMessageSearchTable.threadId, ChatThreadTable.id),
-          )
-          .where(
-            and(
-              eq(ChatMessageSearchTable.userId, userId),
-              context.workspaceId
-                ? eq(ChatThreadTable.workspaceId, context.workspaceId)
-                : isNull(ChatThreadTable.workspaceId),
-              ilike(ChatMessageSearchTable.content, `%${term}%`),
-            ),
-          )
-          .orderBy(desc(ChatMessageSearchTable.createdAt))
-          .limit(4)
-      : [];
+  const search = chatSearchExpression(query.slice(0, 160));
+  const excerpts = search
+    ? await pgDb
+        .select({
+          content: ChatMessageSearchTable.content,
+          threadId: ChatMessageSearchTable.threadId,
+        })
+        .from(ChatMessageSearchTable)
+        .innerJoin(
+          ChatThreadTable,
+          eq(ChatMessageSearchTable.threadId, ChatThreadTable.id),
+        )
+        .where(
+          and(
+            eq(ChatMessageSearchTable.userId, userId),
+            context.workspaceId
+              ? eq(ChatThreadTable.workspaceId, context.workspaceId)
+              : isNull(ChatThreadTable.workspaceId),
+            search.condition,
+          ),
+        )
+        .orderBy(search.rank, desc(ChatMessageSearchTable.createdAt))
+        .limit(4)
+    : [];
 
   const selected = graph.nodes
     .map((node) => {

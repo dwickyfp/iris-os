@@ -4,11 +4,21 @@ import { MemoryKindSchema, MemoryScopeTypeSchema } from "app-types/memory";
 export const MemoryCuratorModeSchema = z.enum(["off", "shadow", "write"]);
 export type MemoryCuratorMode = z.infer<typeof MemoryCuratorModeSchema>;
 
+export const MemoryRecallModeSchema = z.enum(["keyword", "hybrid"]);
+export type MemoryRecallMode = z.infer<typeof MemoryRecallModeSchema>;
+
 export function getMemoryCuratorMode(
   env: Record<string, string | undefined> = process.env,
 ): MemoryCuratorMode {
   const configured = env.IRIS_MEMORY_CURATOR_MODE;
   return MemoryCuratorModeSchema.catch("shadow").parse(configured);
+}
+
+export function getMemoryRecallMode(
+  env: Record<string, string | undefined> = process.env,
+): MemoryRecallMode {
+  const configured = env.IRIS_MEMORY_RECALL_MODE;
+  return MemoryRecallModeSchema.catch("hybrid").parse(configured);
 }
 
 export const MemoryTopicKeySchema = z.enum([

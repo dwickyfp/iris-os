@@ -330,6 +330,13 @@
       "when": 1787133600000,
       "tag": "0046_worker_heartbeat",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1787137200000,
+      "tag": "0047_memory_fts_indexes",
+      "breakpoints": true
     }
   ]
 }
