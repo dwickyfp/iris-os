@@ -413,8 +413,8 @@ IRIS_REMOTE_AGENTS_A2A=1
 # Keep curation non-mutating until output has been reviewed in your environment.
 IRIS_MEMORY_CURATOR_MODE=shadow
 
-# Memory recall strategy: hybrid (lexical + semantic) or keyword (FTS only).
-IRIS_MEMORY_RECALL_MODE=hybrid
+# Memory recall defaults to keyword FTS; set hybrid only when an embedding model is configured.
+IRIS_MEMORY_RECALL_MODE=keyword
 
 # Base64-encoded, independent 32-byte keys.
 MODEL_SETTINGS_ENCRYPTION_KEY=
@@ -429,11 +429,11 @@ REMOTE_AGENT_ENCRYPTION_KEY=
 | `IRIS_DELEGATION_V2` | Durable root/child agent runs, local delegation, timeline, resume, and cancellation | Web application + `worker:iris` |
 | `IRIS_REMOTE_AGENTS_A2A` | Remote connection UI/API and A2A peers; effective delegation also requires `IRIS_DELEGATION_V2` | Web application + `worker:iris` |
 | `IRIS_MEMORY_CURATOR_MODE` | `shadow` evaluation or reviewed memory writes | `worker:memory` |
-| `IRIS_MEMORY_RECALL_MODE` | `hybrid` lexical plus semantic recall, or `keyword`-only full-text recall without embeddings | Web application + `worker:memory` |
+| `IRIS_MEMORY_RECALL_MODE` | `keyword` FTS-only recall by default; `hybrid` adds optional semantic embeddings | Web application + `worker:memory` |
 
 ## Migrations and Workers
 
-The latest checked-in migration is `0047_memory_fts_indexes.sql`. Application
+The latest checked-in migration is `0048_runtime_event_sequence.sql`. Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -445,7 +445,8 @@ pnpm db:migrate
 The current additive schema includes remote connections and A2A state, durable
 delegation and waiting/continuation state, canonical artifacts and verification,
 parent/child rejoin fencing, and the `iris_worker_heartbeat` table added by
-`0046`, and the memory full-text search GIN indexes added by `0047`. Treat the
+`0046`, the memory full-text search GIN indexes added by `0047`, and ordered
+runtime trajectory sequence allocation added by `0048`. Treat the
 complete checked-in migration set, not an older numeric range, as the release
 unit.
 
@@ -596,7 +597,7 @@ for audit-only checks.
 - `pnpm benchmark:a2a` requires Docker, creates its own uniquely named pgvector
   17 container and database on a random loopback-only port, ignores inherited
   application database URLs and service credentials, applies migrations through
-  `0047`, verifies a generated database guard, and removes the container. It
+`0048`, verifies a generated database guard, and removes the container. It
   exercises pg-boss delivery, lease reclaim/fencing, and exactly-once parent
   rejoin for 10 iterations by default; set `A2A_BENCHMARK_ITERATIONS` from 1 to
   100. Each run writes local JSON evidence to
@@ -693,7 +694,7 @@ Do not describe a deployment as production-ready from repository tests alone.
 Before enabling production traffic or V2 flags, require deployment-specific
 evidence for all of the following:
 
-1. Run the explicit migration job through `0047`; rehearse the exact current
+1. Run the explicit migration job through `0048`; rehearse the exact current
    migration set against a representative staging snapshot, pass independent
    integrity and rollback drills, review migration hazards, and pass
    `MIGRATION_ROLLOUT_POLICY=staging pnpm migration:rollout-gate` with retained
