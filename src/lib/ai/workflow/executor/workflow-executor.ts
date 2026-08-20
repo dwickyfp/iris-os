@@ -10,6 +10,8 @@ import {
   toolNodeExecutor,
   httpNodeExecutor,
   templateNodeExecutor,
+  computeNodeExecutor,
+  WorkflowExecutionContext,
 } from "./node-executor";
 import { toAny } from "lib/utils";
 import { addEdgeBranchLabel } from "./add-edge-branch-label";
@@ -39,6 +41,8 @@ function getExecutorByKind(kind: NodeKind): NodeExecutor {
       return httpNodeExecutor;
     case NodeKind.Template:
       return templateNodeExecutor;
+    case NodeKind.Compute:
+      return computeNodeExecutor;
     case "NOOP" as any:
       return () => {
         return {
@@ -68,6 +72,7 @@ export const createWorkflowExecutor = (workflow: {
   nodes: DBNode[];
   edges: DBEdge[];
   logger?: ConsolaInstance;
+  context?: WorkflowExecutionContext;
 }) => {
   // Create runtime state store for the workflow
   const store = createGraphStore({
@@ -128,6 +133,7 @@ export const createWorkflowExecutor = (workflow: {
         const result = await executor({
           node: convertDBNodeToUINode(node).data,
           state,
+          context: workflow.context,
         });
 
         // Store the execution results in the workflow state

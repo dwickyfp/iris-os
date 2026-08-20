@@ -1,0 +1,30 @@
+name: Capability Routing Evaluation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "evals/capability-routing/**"
+      - "scripts/eval-capability-routing.ts"
+      - "src/lib/ai/runtime/capabilities/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/capability-routing-eval.yml"
+  push:
+    branches: [main]
+
+jobs:
+  routing-evaluation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.2.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Enforce capability-routing release thresholds
+        run: pnpm eval:capability-routing

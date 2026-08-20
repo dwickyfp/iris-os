@@ -369,4 +369,36 @@ describe("CapabilityRegistry", () => {
       modelDescriptor: { contextWindow: 32_000 },
     });
   });
+
+  it("does not list capabilities from a provider that is not ready", async () => {
+    const eligible = vi.fn(async () => [capability("sandbox:python_compute")]);
+    const registry = new CapabilityRegistry([
+      {
+        name: "sandbox",
+        metadata: { domain: "compute" },
+        readiness: vi.fn(async () => ({
+          ready: false,
+          reason: "disabled",
+          metadata: { provider: "iris-runner" },
+        })),
+        eligible,
+      },
+    ]);
+
+    const result = await registry.resolve({ userId: "user-1" });
+
+    expect(eligible).not.toHaveBeenCalled();
+    expect(result.ordered).toEqual([]);
+    expect(result.providers).toEqual([
+      {
+        name: "sandbox",
+        ready: false,
+        reason: "disabled",
+        metadata: {
+          domain: "compute",
+          provider: "iris-runner",
+        },
+      },
+    ]);
+  });
 });

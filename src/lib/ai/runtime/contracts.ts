@@ -55,6 +55,7 @@ export type HarnessOrchestration = {
   policy?: ResolvedPolicySnapshot;
   completionRequirement?: CompletionRequirement;
   budget?: RunBudget;
+  sandbox?: unknown;
 };
 
 export type HarnessFailure = {

@@ -8,6 +8,8 @@ artifact verification. It combines chat, reusable agents, tools, MCP servers,
 visual workflows, skills, scoped memory, local delegation, and remote
 Agent-to-Agent (A2A) delegation in one operator-controlled deployment.
 
+Local development, CI, and container builds require Node.js 22.x.
+
 The native execution path uses the Vercel AI SDK. An `ExecutionDriver` registry
 exists so additional drivers can be implemented, but **AI SDK is the only
 execution driver shipped today**. Codex and Claude execution drivers are not
@@ -47,10 +49,11 @@ future design.
 | **Memory** | Claims, topics, entities, edges, evidence, embeddings, provenance, conflict/correction lineage, exact global/workspace/task/agent scopes, recall, and 3D graph UI | Available; agentic writes default to shadow mode |
 | **Workspaces and tasks** | Owner-scoped workspaces, instructions, thread/task association, task ledger, checkpoints, resources, Continue Work, archive, and explicit purge | `IRIS_WORKSPACES_V2` |
 | **Learning** | Sanitized activity events, observations, candidates, evidence, review, suppression, and memory/skill/automation promotion paths | `IRIS_LEARNING_V2`; requires `worker:iris` |
-| **Automation** | Workflow/skill/agent targets, schedules, approvals, idempotency, attempts, retries, timeout, cancellation, and run history | `IRIS_AUTOMATION_V2`; requires `worker:iris` |
+| **Automation** | Workflow/skill/agent targets, schedules, approvals, idempotency, attempts, retries, timeout, cancellation, and run history; headless agents resolve authorized built-in, MCP, workflow, skill, local-peer, remote-peer, and code/sandbox-backed tool capabilities under exact worker authority | `IRIS_AUTOMATION_V2`; requires `worker:iris` |
 | **Authentication and storage** | Better Auth, password and OAuth sign-in, PostgreSQL/pgvector, Vercel Blob or S3-compatible file storage | Available |
 | **Operations UI** | Task operations, automation history, delegation tree/timeline, waiting/resume controls, remote-agent connections, and admin diagnostics | Corresponding V2 flags |
 | **Runtime trajectory** | Sequence-backed repeated runtime events, routing/model/tool/delegation/verification milestones, and replayable run timeline | Available |
+| **Trusted Sandbox** | Optional server-side `python_compute` through a dedicated runner, runsc/gVisor enforcement, non-root/read-only/no-network containers, artifact bridge, budgets, cancellation, and cleanup | Disabled by default; Linux Docker host with registered `runsc` required |
 
 Supported model providers include OpenAI, Anthropic, Google, xAI, OpenRouter,
 Ollama, Groq, and OpenAI-compatible endpoints. Foreground model selection and
@@ -320,8 +323,8 @@ timeline.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) **18 or newer**, matching
-  `package.json#engines.node` (`>=18`)
+- [Node.js](https://nodejs.org/) **22.x**, matching
+  `package.json#engines.node`, Docker, and CI
 - [pnpm](https://pnpm.io/) 10; the repository pins `pnpm@10.2.1`
 - PostgreSQL with the `pgvector` extension
 - At least one supported AI provider API key
@@ -437,7 +440,48 @@ REMOTE_AGENT_ENCRYPTION_KEY=
 
 ## Migrations and Workers
 
-The latest checked-in migration is `0051_agent_run_root_trajectory.sql`. Application
+### Trusted Sandbox
+
+Sandbox is a compute plane, not an `ExecutionDriver` or a second agent loop.
+The main Harness remains the control plane; `python_compute` is a capability that
+uses `SandboxManager` and the dedicated `sandbox-runner` service.
+
+```bash
+# Validate package policy and Compose security invariants
+pnpm sandbox:check
+
+# Build images only; no production runner secret is required or embedded
+pnpm sandbox:build
+
+# Start the opt-in sandbox control plane (requires SANDBOX_RUNNER_TOKEN)
+pnpm sandbox:up
+
+# Run the runsc smoke profile (requires SANDBOX_RUNNER_TOKEN)
+pnpm sandbox:smoke
+
+# Stop sandbox services
+pnpm sandbox:down
+```
+
+Required behavior:
+
+- `IRIS_SANDBOX_ENABLED=1` is required to expose the capability.
+- The trusted runner alone receives Docker socket access; the app and workers do
+  not receive the socket.
+- Every user sandbox must use Docker `Runtime: runsc`; no `runc` fallback exists.
+- Workloads run non-root with read-only root, dropped capabilities,
+  `no-new-privileges`, bounded CPU/memory/PIDs/output, ephemeral workspace, and
+  network disabled by default.
+- Input artifacts are authorized by canonical artifact ID and outputs are
+  ingested through `ArtifactService` and verified before completion.
+- On macOS Docker Desktop/OrbStack without registered gVisor, readiness is
+  intentionally unavailable. Do not enable unsafe host or runc execution.
+
+See [Trusted Sandbox operations](docs/operations/trusted-sandbox.md) for Linux
+gVisor setup, runner authentication, Docker topology, package policy, cleanup,
+and production deployment guidance.
+
+The latest checked-in migration is `0059_sandbox_durable_compute_budget.sql`. Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -451,9 +495,12 @@ delegation and waiting/continuation state, canonical artifacts and verification,
 parent/child rejoin fencing, and the `iris_worker_heartbeat` table added by
 `0046`, memory full-text search GIN indexes added by `0047`, ordered runtime
 trajectory sequence allocation added by `0048`, runtime budget states added by
-`0049`, and root trajectory identity added by `0051`. Treat the
-complete checked-in migration set, not an older numeric range, as the release
-unit.
+`0049`, root trajectory identity added by `0051`, sandbox artifact provenance
+added by `0054`, the sandbox control plane added by `0055`, distributed creation
+fencing added by `0056`, bounded accounting and artifact cleanup added by
+`0057`, pre-upload orphan cleanup added by `0058`, and distributed durable
+compute accounting added by `0059`. Treat the complete checked-in migration
+set, not an older numeric range, as the release unit.
 
 For general database integration verification, use only a disposable database:
 
@@ -601,8 +648,9 @@ for audit-only checks.
   release evidence system.
 - `pnpm benchmark:a2a` requires Docker, creates its own uniquely named pgvector
   17 container and database on a random loopback-only port, ignores inherited
-  application database URLs and service credentials, applies migrations through
-   `0051`, verifies a generated database guard, and removes the container. It
+  application database URLs and service credentials, applies the complete
+  checked-in migration set, verifies a generated database guard, and removes
+  the container. It
   exercises pg-boss delivery, lease reclaim/fencing, and exactly-once parent
   rejoin for 10 iterations by default; set `A2A_BENCHMARK_ITERATIONS` from 1 to
   100. Each run writes local JSON evidence to
@@ -699,8 +747,8 @@ Do not describe a deployment as production-ready from repository tests alone.
 Before enabling production traffic or V2 flags, require deployment-specific
 evidence for all of the following:
 
-1. Run the explicit migration job through `0051`; rehearse the exact current
-   migration set against a representative staging snapshot, pass independent
+1. Run the explicit complete checked-in migration set; rehearse that exact set
+   against a representative staging snapshot, pass independent
    integrity and rollback drills, review migration hazards, and pass
    `MIGRATION_ROLLOUT_POLICY=staging pnpm migration:rollout-gate` with retained
    evidence.

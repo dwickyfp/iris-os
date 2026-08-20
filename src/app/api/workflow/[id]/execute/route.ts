@@ -5,6 +5,9 @@ import { encodeWorkflowEvent } from "lib/ai/workflow/shared.workflow";
 import logger from "logger";
 import { colorize } from "consola/utils";
 import { safeJSONParse, toAny } from "lib/utils";
+import { generateUUID } from "lib/utils";
+import { sandboxManager, workflowSandboxServices } from "lib/sandbox/server";
+import { runManager } from "lib/ai/runs/server";
 
 export async function POST(
   request: Request,
@@ -28,10 +31,23 @@ export async function POST(
   const wfLogger = logger.withDefaults({
     message: colorize("cyan", `WORKFLOW '${workflow.name}' `),
   });
+  const runId = generateUUID();
+  await runManager.start({
+    id: runId,
+    userId: session.user.id,
+    context: { executionSource: "workflow", workflowId: id },
+    timeoutMs: 1000 * 60 * 5,
+  });
   const app = createWorkflowExecutor({
     edges: workflow.edges,
     nodes: workflow.nodes,
     logger: wfLogger,
+    context: {
+      runId,
+      userId: session.user.id,
+      signal: request.signal,
+      services: workflowSandboxServices(runId),
+    },
   });
 
   const encoder = new TextEncoder();
@@ -73,6 +89,7 @@ export async function POST(
       request.signal.addEventListener("abort", async () => {
         isAborted = true;
         void app.exit();
+        void runManager.cancel(runId, "Workflow request aborted", "CANCELLED");
         controller.close();
       });
 
@@ -88,7 +105,13 @@ export async function POST(
         .then((result) => {
           if (!result.isOk) {
             logger.error("Workflow execution error:", result.error);
+            void runManager.fail(runId, String(result.error), "WORKFLOW_FAILED");
+          } else {
+            void runManager.succeed(runId, { workflowId: id });
           }
+        })
+        .finally(() => {
+          void sandboxManager.cancelByRun(runId).catch(() => undefined);
         });
     },
   });

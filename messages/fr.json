@@ -582,6 +582,7 @@
       "tool": "Exécute des outils MCP ou des services externes.\n\nÉcrivez des instructions dans les messages, et LLM générera les paramètres d'outil requis à partir de votre contexte.",
       "note": "Ajoute de la documentation et des commentaires pour organiser la logique de votre flux de travail.\n\nAide les membres de l'équipe à comprendre les processus complexes de flux de travail.",
       "code": "Exécute des scripts de code personnalisé avec accès aux données de nœuds précédents.\n\nExécute JavaScript, Python ou d'autres langages dans votre flux de travail (bientôt disponible).",
+      "compute": "Exécute Python de manière déterministe dans un bac à sable serveur isolé avec des entrées typées et une sortie validée.",
       "http": "Récupère des données d'APIs externes et de services web via des requêtes HTTP.\n\nIntègre avec des APIs REST, webhooks et services tiers.",
       "template": "Crée des documents dynamiques en combinant du texte avec des données de nœuds précédents.\n\nGénère des emails, rapports ou contenu formaté en utilisant la substitution de variables.",
       "condition": "Ajoute une logique conditionnelle pour brancher votre flux de travail basé sur l'évaluation des données.\n\nCrée une logique if-else pour gérer différents scénarios et conditions de données."

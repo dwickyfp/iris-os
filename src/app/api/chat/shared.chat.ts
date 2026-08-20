@@ -38,6 +38,7 @@ import {
 } from "app-types/workflow";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import { NodeKind } from "lib/ai/workflow/workflow.interface";
+import type { WorkflowExecutionContext } from "lib/ai/workflow/executor/node-executor";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { AppDefaultToolkit } from "lib/ai/tools";
@@ -228,12 +229,14 @@ export const workflowToVercelAITool = ({
   schema,
   dataStream,
   name,
+  executionContext,
 }: {
   id: string;
   name: string;
   description?: string;
   schema: ObjectJsonSchema7;
   dataStream: UIMessageStreamWriter;
+  executionContext?: WorkflowExecutionContext;
 }): VercelAIWorkflowTool => {
   const toolName = name
     .replace(/[^a-zA-Z0-9\s]/g, "")
@@ -267,6 +270,9 @@ export const workflowToVercelAITool = ({
           const executor = createWorkflowExecutor({
             nodes: workflow.nodes,
             edges: workflow.edges,
+            context: executionContext
+              ? { ...executionContext, signal: abortSignal }
+              : undefined,
           });
           toolResult.workflowIcon = workflow.icon;
 

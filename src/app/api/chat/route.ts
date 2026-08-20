@@ -42,9 +42,8 @@ import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
-import { contextEngine } from "lib/ai/context-compaction";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
-import { RunPreparer } from "lib/ai/runtime/run-preparer";
+import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
 import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-resolver";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
@@ -71,6 +70,11 @@ import {
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import {
+  sandboxCapability,
+  sandboxManager,
+  workflowSandboxServices,
+} from "lib/sandbox/server";
 import { serverFileStorage } from "lib/file-storage";
 import { isChatCorrection } from "lib/learning/policy";
 import { buildTaskContextPrompt } from "lib/task/context";
@@ -425,7 +429,17 @@ export async function POST(request: Request) {
           allowedCapabilities: agentAllowedCapabilities,
           skillsRuntime,
           workflowTool: (workflow) =>
-            workflowToVercelAITool({ ...workflow, dataStream } as any),
+            workflowToVercelAITool({
+              ...workflow,
+              dataStream,
+              executionContext: {
+                runId,
+                userId: session.user.id,
+                workspaceId: workspace?.id,
+                taskId: task?.id,
+                services: workflowSandboxServices(runId),
+              },
+            } as any),
           additionalTools: {
             ...(isToolCallAllowed ? BACKGROUND_CONTROL_TOOLS : {}),
             ...(useImageTool
@@ -443,6 +457,7 @@ export async function POST(request: Request) {
               userId: session.user.id,
               targets,
             }),
+          sandbox: sandboxCapability,
         });
         const MCP_TOOLS = Object.fromEntries(
           capabilities.ordered
@@ -535,13 +550,12 @@ export async function POST(request: Request) {
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
         const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
-        const preparedRun = await new RunPreparer(contextEngine, {
+        const preparedRun = await serverRunPreparer({
           resolveCapabilities: async () => ({
             value: capabilities,
             snapshot: {
               descriptorIds: capabilities.ordered.map(({ id }) => id),
-              eligibleDelegationTargets:
-                capabilities.eligibleDelegationTargets,
+              eligibleDelegationTargets: capabilities.eligibleDelegationTargets,
               diagnostics: capabilities.routing,
             },
           }),
@@ -607,7 +621,10 @@ export async function POST(request: Request) {
             {
               id: "agent-and-skills",
               kind: "agent",
-              content: [agent?.instructions, buildSkillManifestPrompt(capabilities.skillManifest)]
+              content: [
+                agent?.instructions,
+                buildSkillManifestPrompt(capabilities.skillManifest),
+              ]
                 .filter(Boolean)
                 .join("\n\n"),
               trust: "trusted",
@@ -616,7 +633,9 @@ export async function POST(request: Request) {
             {
               id: "workspace",
               kind: "workspace",
-              content: workspace ? buildWorkspaceInstructionsPrompt(workspace) : "",
+              content: workspace
+                ? buildWorkspaceInstructionsPrompt(workspace)
+                : "",
               trust: "trusted",
               priority: 80,
             },
@@ -637,14 +656,20 @@ export async function POST(request: Request) {
             {
               id: "mcp-customization",
               kind: "mcp",
-              content: buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
+              content: buildMcpServerCustomizationsSystemPrompt(
+                mcpServerCustomizations,
+              ),
               trust: "mixed",
               priority: 50,
             },
             {
               id: "user-preferences",
               kind: "user_preferences",
-              content: buildUserSystemPrompt(session.user, userPreferences, agent),
+              content: buildUserSystemPrompt(
+                session.user,
+                userPreferences,
+                agent,
+              ),
               trust: "trusted",
               priority: 40,
             },
@@ -653,7 +678,9 @@ export async function POST(request: Request) {
           contextWindow: modelConfig.contextWindow,
         });
         const preparedContext = preparedRun.context;
-        const modelMessages = await convertToModelMessages(preparedRun.messages);
+        const modelMessages = await convertToModelMessages(
+          preparedRun.messages,
+        );
         checkpointModelMessages = modelMessages;
         checkpointPreparationSnapshot = preparedRun.snapshot;
         checkpointGoalRequirement = preparedRun.goalRequirement;
@@ -895,9 +922,12 @@ export async function POST(request: Request) {
           await harnessStream?.finalize(responseMessage, {
             assistantMessageId: responseMessage.id,
           });
+        if (!delegated)
+          await sandboxManager.cancelByRun(runId).catch(() => undefined);
       },
       onError: (error) => {
         const errorMessage = handleError(error);
+        void sandboxManager.cancelByRun(runId).catch(() => undefined);
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
           actorId: agent?.id,

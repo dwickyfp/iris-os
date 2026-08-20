@@ -18,6 +18,7 @@ import { pgTaskRepository } from "./pg/repositories/task-repository.pg";
 import { pgAgentRunRepository } from "./pg/repositories/agent-run-repository.pg";
 import { pgRemoteAgentRepository } from "./pg/repositories/remote-agent-repository.pg";
 import { pgArtifactRepository } from "./pg/repositories/artifact-repository.pg";
+import { pgSandboxRepository } from "./pg/repositories/sandbox-repository.pg";
 
 export const chatRepository = pgChatRepository;
 export const userRepository = pgUserRepository;
@@ -42,3 +43,4 @@ export const taskRepository = pgTaskRepository;
 export const agentRunRepository = pgAgentRunRepository;
 export const remoteAgentRepository = pgRemoteAgentRepository;
 export const artifactRepository = pgArtifactRepository;
+export const sandboxRepository = pgSandboxRepository;

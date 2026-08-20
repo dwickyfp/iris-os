@@ -19,6 +19,12 @@ export type ArtifactRecord = ArtifactReference & {
   updatedAt: Date;
 };
 
+export type ArtifactOutputProvenance = {
+  executionId: string;
+  relativePath: string;
+  sha256: string;
+};
+
 export type ArtifactVerificationRecord = {
   id: string;
   artifactId: string;
@@ -26,6 +32,16 @@ export type ArtifactVerificationRecord = {
   reason: string | null;
   details: Record<string, unknown>;
   createdAt: Date;
+};
+
+export type ArtifactCleanupRecord = {
+  cleanupId: string;
+  artifactId?: string;
+  storageKey: string;
+  status: "pending" | "processing" | "retrying" | "completed" | "failed";
+  attempts: number;
+  nextAttemptAt: Date;
+  lastError?: string;
 };
 
 export type ExtractedArtifactContent = {

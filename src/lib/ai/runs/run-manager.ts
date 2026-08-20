@@ -173,6 +173,19 @@ export class RunManager {
     });
   }
 
+  exhaustBudgetWithLease(
+    runId: string,
+    leaseToken: string,
+    error: string,
+    errorCode = "BUDGET_EXHAUSTED",
+  ) {
+    return this.finish(runId, leaseToken, {
+      status: "budget_exhausted",
+      error,
+      errorCode,
+    });
+  }
+
   cancelWithLease(
     runId: string,
     leaseToken: string,

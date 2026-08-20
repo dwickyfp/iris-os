@@ -7,6 +7,7 @@ export type RunBudget = {
   maxDepth?: number;
   maxParallel?: number;
   maxCost?: number;
+  maxComputeMs?: number;
 };
 
 export type RunUsage = {
@@ -18,6 +19,7 @@ export type RunUsage = {
   parallel: number;
   cost: number;
   durationMs: number;
+  computeMs: number;
 };
 
 export type BudgetKind = keyof RunBudget;
@@ -42,6 +44,7 @@ const zeroUsage = (): RunUsage => ({
   parallel: 0,
   cost: 0,
   durationMs: 0,
+  computeMs: 0,
 });
 
 /** In-memory accounting for one run. Parent guards may be supplied for aggregate enforcement. */
@@ -49,6 +52,9 @@ export class BudgetGuard {
   readonly startedAt: number;
   private readonly current: RunUsage;
   private active = 0;
+  private readonly computeReservations = new Map<string, number>();
+  private reservedComputeMs = 0;
+  private nextReservation = 0;
 
   constructor(
     readonly budget: RunBudget = {},
@@ -102,6 +108,40 @@ export class BudgetGuard {
   afterTool() {
     this.active = Math.max(0, this.active - 1);
   }
+  reserveCompute(maxDurationMs: number) {
+    if (!Number.isFinite(maxDurationMs) || maxDurationMs <= 0)
+      throw new RangeError("Compute reservation must be positive");
+    const limit = this.budget.maxComputeMs;
+    if (
+      limit !== undefined &&
+      this.current.computeMs + this.reservedComputeMs + maxDurationMs > limit
+    )
+      throw new BudgetExhaustedError("maxComputeMs", this.usage);
+    this.parent?.reserveChildCompute(maxDurationMs);
+    const id = `compute-${++this.nextReservation}`;
+    this.computeReservations.set(id, maxDurationMs);
+    this.reservedComputeMs += maxDurationMs;
+    return id;
+  }
+  commitCompute(reservationId: string, durationMs: number) {
+    const reserved = this.computeReservations.get(reservationId);
+    if (reserved === undefined)
+      throw new Error("COMPUTE_RESERVATION_NOT_FOUND");
+    if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > reserved)
+      throw new RangeError("Compute usage exceeds reservation");
+    this.computeReservations.delete(reservationId);
+    this.reservedComputeMs -= reserved;
+    this.current.computeMs += durationMs;
+    this.parent?.commitChildCompute(reserved, durationMs);
+  }
+  releaseCompute(reservationId: string) {
+    const reserved = this.computeReservations.get(reservationId);
+    if (reserved === undefined)
+      throw new Error("COMPUTE_RESERVATION_NOT_FOUND");
+    this.computeReservations.delete(reservationId);
+    this.reservedComputeMs -= reserved;
+    this.parent?.releaseChildCompute(reserved);
+  }
   beforeDelegation() {
     this.assert("maxDelegations", 1, "delegations");
     this.current.delegations++;
@@ -146,10 +186,37 @@ export class BudgetGuard {
               ? "parallel"
               : kind === "maxCost"
                 ? "cost"
-                : kind;
-    return limit === undefined
-      ? undefined
-      : Math.max(0, limit - (this.usage[key as keyof RunUsage] as number));
+                : kind === "maxComputeMs"
+                  ? "computeMs"
+                  : kind;
+    if (limit === undefined) return undefined;
+    const used = this.usage[key as keyof RunUsage] as number;
+    return Math.max(
+      0,
+      limit - used - (kind === "maxComputeMs" ? this.reservedComputeMs : 0),
+    );
+  }
+
+  private reserveChildCompute(maxDurationMs: number) {
+    const limit = this.budget.maxComputeMs;
+    if (
+      limit !== undefined &&
+      this.current.computeMs + this.reservedComputeMs + maxDurationMs > limit
+    )
+      throw new BudgetExhaustedError("maxComputeMs", this.usage);
+    this.parent?.reserveChildCompute(maxDurationMs);
+    this.reservedComputeMs += maxDurationMs;
+  }
+
+  private releaseChildCompute(reservedMs: number) {
+    this.reservedComputeMs -= reservedMs;
+    this.parent?.releaseChildCompute(reservedMs);
+  }
+
+  private commitChildCompute(reservedMs: number, durationMs: number) {
+    this.reservedComputeMs -= reservedMs;
+    this.current.computeMs += durationMs;
+    this.parent?.commitChildCompute(reservedMs, durationMs);
   }
 }
 

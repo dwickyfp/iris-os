@@ -127,16 +127,26 @@ async function execute(runId: string) {
     ? "retry_scheduled"
     : result.status === "succeeded"
       ? "succeeded"
-      : result.status;
+      : result.status === "budget_exhausted"
+        ? "failed"
+        : result.status;
   const error = result.status === "succeeded" ? null : result.message;
-  const errorCode = result.status === "failed" ? result.errorCode : null;
+  const errorCode =
+    result.status === "failed"
+      ? result.errorCode
+      : result.status === "budget_exhausted"
+        ? "BUDGET_EXHAUSTED"
+        : null;
   const output = result.status === "succeeded" ? result.output : null;
 
   await pgDb.transaction(async (tx) => {
     await tx
       .update(AutomationRunAttemptTable)
       .set({
-        status: result.status === "failed" ? "failed" : result.status,
+        status:
+          result.status === "failed" || result.status === "budget_exhausted"
+            ? "failed"
+            : result.status,
         result: output,
         error,
         errorCode,

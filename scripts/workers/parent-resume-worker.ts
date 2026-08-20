@@ -9,7 +9,6 @@ import type {
   RuntimeToolMode,
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
-import { contextEngine } from "lib/ai/context-compaction";
 import {
   type ParentResumeGeneration,
   createParentResumeExecutor,
@@ -23,10 +22,10 @@ import {
 import { runManager } from "lib/ai/runs/server";
 import type { ClaimedParentRun } from "lib/ai/runs/types";
 import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
-import { RunPreparer } from "lib/ai/runtime/run-preparer";
 import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
 import { irisHarness } from "lib/ai/runtime/server";
+import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
 import { createSkillsRuntime } from "lib/ai/skill";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
@@ -40,6 +39,7 @@ import type { DelegationTarget } from "lib/delegation/targets";
 import { generateUUID } from "lib/utils";
 import type PgBoss from "pg-boss";
 import { workflowToVercelAITool } from "../../src/app/api/chat/shared.chat";
+import { sandboxCapability } from "lib/sandbox/server";
 
 type Recipe = {
   userId: string;
@@ -152,6 +152,7 @@ async function resolveRuntime(
     createDelegationTool: () => {
       throw new Error("UNEXPECTED_DELEGATION_CAPABILITY");
     },
+    sandbox: sandboxCapability,
   });
   const tools = Object.fromEntries(
     capabilities.ordered
@@ -195,7 +196,7 @@ async function resolveRuntime(
         toolMode: toolChoice,
         approvalPolicy: resolvedPolicy.approvalPolicy as ApprovalPolicy,
       });
-  const prepared = await new RunPreparer(contextEngine, {
+  const prepared = await serverRunPreparer({
     resolveCapabilities: async () => ({
       value: tools,
       snapshot: recipe.routingSnapshot ?? {

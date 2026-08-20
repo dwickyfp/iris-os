@@ -40,6 +40,14 @@ export type PolicyAuthority = {
   maximumRisks?: PolicyRisk[];
 };
 
+export const SANDBOX_POLICY_ACTIONS = [
+  "sandbox.create",
+  "sandbox.execute_python",
+  "sandbox.cancel",
+  "sandbox.destroy",
+  "sandbox.reap",
+] as const;
+
 export type PolicyEvaluationInput = {
   actor: PolicyActor;
   capability: PolicyCapability;

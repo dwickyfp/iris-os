@@ -41,6 +41,51 @@ export type ToolLoopAgentConfig = {
   budget?: BudgetGuard;
 };
 
+export function runtimeEventCallbacks(
+  onRuntimeEvent?: ToolLoopAgentConfig["onRuntimeEvent"],
+) {
+  return {
+    onLanguageModelCallStart: async (event: {
+      callId: string;
+      provider: string;
+      modelId: string;
+    }) =>
+      onRuntimeEvent?.("model.requested", {
+        callId: event.callId,
+        provider: event.provider,
+        model: event.modelId,
+      }),
+    onLanguageModelCallEnd: async (event: {
+      callId: string;
+      finishReason: string;
+      usage: { totalTokens?: number };
+    }) =>
+      onRuntimeEvent?.("model.completed", {
+        callId: event.callId,
+        finishReason: event.finishReason,
+        totalTokens: event.usage.totalTokens,
+      }),
+    onToolExecutionStart: async (event: {
+      callId: string;
+      toolCall: { toolCallId: string; toolName: string };
+    }) =>
+      onRuntimeEvent?.("tool.requested", {
+        callId: event.callId,
+        toolCallId: event.toolCall.toolCallId,
+        toolName: event.toolCall.toolName,
+      }),
+    onToolExecutionEnd: async (event: {
+      callId: string;
+      toolCall: { toolCallId: string; toolName: string };
+    }) =>
+      onRuntimeEvent?.("tool.completed", {
+        callId: event.callId,
+        toolCallId: event.toolCall.toolCallId,
+        toolName: event.toolCall.toolName,
+      }),
+  };
+}
+
 export function getToolLoopAgentReasoningMode(profile: ToolLoopAgentProfile) {
   return profile.type === "custom"
     ? (profile.agent.instructions.reasoningMode ?? "auto")
@@ -108,6 +153,7 @@ export function createToolLoopAgent({
   budget,
 }: ToolLoopAgentConfig) {
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
+  const eventCallbacks = runtimeEventCallbacks(onRuntimeEvent);
   let accountedTokens = 0;
   const guardedTools = Object.fromEntries(
     Object.entries(tools).map(([name, candidate]) => {
@@ -152,6 +198,7 @@ export function createToolLoopAgent({
       },
     },
     reasoning: reasoningMode === "auto" ? undefined : { effort: reasoningMode },
+    ...eventCallbacks,
     toolApproval: ({ toolCall }) => {
       budget?.assertDuration();
       const decision = evaluateToolCallPolicy({
@@ -168,32 +215,10 @@ export function createToolLoopAgent({
       stepNumber,
       finishReason,
       usage,
-      toolCalls,
-      toolResults,
     }) => {
       const totalTokens = usage.totalTokens ?? 0;
       budget?.afterStep({ tokens: Math.max(0, totalTokens - accountedTokens) });
       accountedTokens = Math.max(accountedTokens, totalTokens);
-      await onRuntimeEvent?.("model.requested", { stepNumber });
-      await onRuntimeEvent?.("model.completed", {
-        stepNumber,
-        finishReason,
-        totalTokens: usage.totalTokens,
-      });
-      for (const toolCall of toolCalls ?? []) {
-        await onRuntimeEvent?.("tool.requested", {
-          stepNumber,
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName,
-        });
-      }
-      for (const toolResult of toolResults ?? []) {
-        await onRuntimeEvent?.("tool.completed", {
-          stepNumber,
-          toolCallId: toolResult.toolCallId,
-          toolName: toolResult.toolName,
-        });
-      }
       logger.info("agent step completed", {
         agentType: runtimeContext.agentType,
         ...(runtimeContext.agentId ? { agentId: runtimeContext.agentId } : {}),

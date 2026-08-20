@@ -15,6 +15,64 @@ afterAll(async () => {
 });
 
 describe("IRIS V2 PostgreSQL migrations", () => {
+  test("persists bounded sandbox sessions and executions", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client);
+    const userId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    const executionId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Sandbox Owner', $2, 'hash')`,
+      [userId, `sandbox-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO agent_run (id, user_id, root_run_id, status)
+       VALUES ($1, $2, $1, 'queued')`,
+      [runId, userId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_session
+         (id, run_id, user_id, provider, profile, status, last_used_at,
+          expires_at, created_at)
+       VALUES ($1, $2, $3, 'iris-runner', $4::json, 'creating', NOW(),
+               NOW() + interval '5 minutes', NOW())`,
+      [sessionId, runId, userId, JSON.stringify({ id: "data_compute" })],
+    );
+    await client.query(
+       `INSERT INTO sandbox_execution
+          (id, session_id, run_id, status, reservation_token,
+           reserved_compute_ms, reservation_expires_at, settlement_deadline_at,
+           started_at)
+        VALUES ($1, $2, $3, 'running', gen_random_uuid(), 1000,
+                NOW() + interval '1 minute', NOW() + interval '2 minutes', NOW())`,
+      [executionId, sessionId, runId],
+    );
+    await expect(
+      client.query(
+        `UPDATE sandbox_execution SET status = 'succeeded', exit_code = 0
+         WHERE id = $1`,
+        [executionId],
+      ),
+    ).rejects.toThrow(/sandbox_execution_terminal_check/i);
+    await expect(
+      client.query(
+        `UPDATE sandbox_execution
+         SET status = 'failed', duration_ms = 1001,
+             observed_wall_duration_ms = 1200, completed_at = NOW()
+         WHERE id = $1`,
+        [executionId],
+      ),
+    ).rejects.toThrow(/sandbox_execution_compute_check/i);
+    await client.query(
+      `UPDATE sandbox_execution
+       SET status = 'failed', duration_ms = 1000,
+           observed_wall_duration_ms = 1200, completed_at = NOW()
+       WHERE id = $1`,
+      [executionId],
+    );
+  });
   test("applies every migration to an empty database", async () => {
     await recreatePublicSchema(client);
     const applied = await applyMigrations(client);
@@ -30,6 +88,14 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     expect(applied).toContain("0046_worker_heartbeat.sql");
     expect(applied).toContain("0047_memory_fts_indexes.sql");
     expect(applied).toContain("0048_runtime_event_sequence.sql");
+    expect(applied).toContain("0049_agent_run_budget_exhausted.sql");
+    expect(applied).toContain("0051_agent_run_root_trajectory.sql");
+    expect(applied).toContain("0054_sandbox_artifact_outputs.sql");
+    expect(applied).toContain("0055_sandbox_control_plane.sql");
+    expect(applied).toContain("0057_sandbox_accounting_artifact_cleanup.sql");
+    expect(applied).toContain("0058_orphan_artifact_cleanup.sql");
+    expect(applied).toContain("0059_sandbox_durable_compute_budget.sql");
+    expect(applied).toContain("0056_sandbox_creation_fencing.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );

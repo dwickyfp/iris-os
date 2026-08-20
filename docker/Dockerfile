@@ -1,4 +1,4 @@
-FROM node:23-alpine AS builder
+FROM node:22-alpine AS builder
 ARG DOCKER_BUILD="1"
 WORKDIR /app
 
@@ -15,7 +15,7 @@ ENV NEXT_STANDALONE_OUTPUT="true"
 
 RUN pnpm build
 
-FROM node:23-alpine AS worker
+FROM node:22-alpine AS worker
 
 WORKDIR /app
 ENV NODE_ENV=production
@@ -33,7 +33,7 @@ USER nextjs
 
 CMD ["node", "--conditions=react-server", "--import", "tsx", "scripts/iris-worker.ts"]
 
-FROM node:23-alpine AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 

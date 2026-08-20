@@ -474,6 +474,10 @@ export function ChatMentionInputSuggestion({
           label = "python-execution";
           description = "Execute simple python code";
           break;
+        case DefaultToolName.PythonCompute:
+          label = "python-compute";
+          description = "Run Python in the trusted isolated sandbox";
+          break;
       }
       return {
         id: toolName,

@@ -1,5 +1,7 @@
 export type {
   ArtifactRecord,
+  ArtifactCleanupRecord,
+  ArtifactOutputProvenance,
   ArtifactReference,
   ArtifactVerificationRecord,
   ExtractedArtifactContent,

@@ -6,6 +6,7 @@ import {
   inputNodeValidate,
   outputNodeValidate,
   llmNodeValidate,
+  computeNodeValidate,
 } from "./node-validate";
 import { UINode, NodeKind } from "./workflow.interface";
 
@@ -167,6 +168,54 @@ describe("node-validate", () => {
       expect(() => {
         llmNodeValidate({ node: llmNode.data, nodes: [], edges: [] });
       }).toThrow();
+    });
+  });
+
+  describe("computeNodeValidate", () => {
+    it("validates typed bindings and Python configuration", () => {
+      const input = createInputNodeData("input", "Input");
+      expect(() =>
+        computeNodeValidate({
+          node: {
+            id: "compute",
+            name: "Compute",
+            kind: NodeKind.Compute,
+            language: "python",
+            code: "output = inputs",
+            timeoutMs: 5000,
+            inputBindings: [
+              {
+                name: "input",
+                source: { nodeId: "input", path: ["input"] },
+                schema: { type: "string" },
+              },
+            ],
+            outputSchema: { type: "object", properties: {} },
+          },
+          nodes: [input],
+          edges: [],
+        }),
+      ).not.toThrow();
+    });
+
+    it("rejects non-Python and mismatched binding types", () => {
+      const input = createInputNodeData("input", "Input");
+      expect(() =>
+        computeNodeValidate({
+          node: {
+            id: "compute",
+            name: "Compute",
+            kind: NodeKind.Compute,
+            language: "javascript" as any,
+            code: "output = inputs",
+            timeoutMs: 5000,
+            inputBindings: [],
+            outputSchema: { type: "object", properties: {} },
+          },
+          nodes: [input],
+          edges: [],
+        }),
+      ).toThrow("only supports Python");
     });
   });
 

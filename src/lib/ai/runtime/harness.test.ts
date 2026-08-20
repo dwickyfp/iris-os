@@ -25,6 +25,10 @@ function dependencies() {
       heartbeat: vi.fn(async () => "active" as const),
       succeedWithLease: vi.fn(async () => ({ id: "run-1" })),
       failWithLease: vi.fn(async () => ({ id: "run-1" })),
+      exhaustBudgetWithLease: vi.fn(async () => ({
+        id: "run-1",
+        status: "budget_exhausted",
+      })),
       cancelWithLease: vi.fn(async () => ({ id: "run-1" })),
       timeOutWithLease: vi.fn(async () => ({ id: "run-1" })),
       requestCancellation: vi.fn(),
@@ -378,6 +382,79 @@ describe("IrisHarness", () => {
       "trajectory.failed",
       "run.failed",
     ]);
+  });
+
+  test("persists budget exhaustion as a terminal create-run status", async () => {
+    const { runs, recorder } = dependencies();
+    const harness = new IrisHarness(
+      {
+        id: "test",
+        generate: vi.fn(async () => {
+          throw new Error("BUDGET_EXHAUSTED");
+        }),
+        stream: vi.fn(),
+      } as never,
+      runs as never,
+      [],
+      recorder,
+    );
+
+    await expect(
+      harness.generate({
+        agent: {},
+        execution: {},
+        orchestration: orchestration(),
+      } as never),
+    ).rejects.toThrow("BUDGET_EXHAUSTED");
+
+    expect(runs.exhaustBudgetWithLease).toHaveBeenCalledWith(
+      "run-1",
+      "lease-1",
+      "BUDGET_EXHAUSTED",
+      "BUDGET_EXHAUSTED",
+    );
+    expect(runs.failWithLease).not.toHaveBeenCalled();
+    expect(
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
+    ).toContain("run.budget_exhausted");
+  });
+
+  test("persists budget exhaustion for claimed resume generations", async () => {
+    const { runs, recorder } = dependencies();
+    const harness = new IrisHarness(
+      {
+        id: "test",
+        generate: vi.fn(async () => {
+          throw new Error("BUDGET_EXHAUSTED");
+        }),
+        stream: vi.fn(),
+      } as never,
+      runs as never,
+      [],
+      recorder,
+    );
+
+    await expect(
+      harness.generateClaimed({
+        agent: {},
+        execution: {},
+        orchestration: orchestration({
+          run: { mode: "claimed", claimToken: "claim-1" },
+        }),
+      } as never),
+    ).rejects.toThrow("BUDGET_EXHAUSTED");
+
+    expect(runs.finishParentResume).toHaveBeenCalledWith(
+      "run-1",
+      "claim-1",
+      expect.objectContaining({
+        status: "budget_exhausted",
+        errorCode: "BUDGET_EXHAUSTED",
+      }),
+    );
+    expect(
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
+    ).toContain("run.budget_exhausted");
   });
 
   test("does not conflict with worker-owned lifecycle in claimed mode", async () => {

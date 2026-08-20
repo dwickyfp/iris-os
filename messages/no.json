@@ -151,6 +151,7 @@
       "tool": "Utfør MCP-verktøy eller eksterne tjenester.\n\nSkriv instruksjoner i meldinger, og LLM vil generere de nødvendige verktøyparametrene fra konteksten din.",
       "note": "Legg til dokumentasjon og kommentarer for å organisere arbeidsflytlogikken din.\n\nHjelp teammedlemmer med å forstå komplekse arbeidsflytprosesser.",
       "code": "Utfør egendefinerte kodeskript med tilgang til data fra tidligere noder.\n\nKjør JavaScript, Python eller andre språk i arbeidsflyten din (kommer snart).",
+      "compute": "Kjør deterministisk Python i en isolert serversandkasse med typede inndata og validert utdata.",
       "http": "Hent data fra eksterne APIer og webtjenester via HTTP-forespørsler.\n\nIntegrer med REST-APIer, webhooks og tredjepartstjenester.",
       "template": "Opprett dynamiske dokumenter ved å kombinere tekst med data fra tidligere noder.\n\nGenerer e-poster, rapporter eller formatert innhold ved hjelp av variabelsubstitusjon.",
       "condition": "Legg til betinget logikk for å forgrene arbeidsflyten din basert på dataevaluering.\n\nOpprett hvis-ellers-logikk for å håndtere ulike scenarier og databetingelser."

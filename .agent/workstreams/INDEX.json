@@ -6,6 +6,13 @@
       "status": "active",
       "path": ".agent/workstreams/active/iris-v2",
       "updated_at": "2026-08-14T11:26:35.000000+00:00"
+    },
+    {
+      "id": "sandbox-control-plane",
+      "title": "Sandbox domain and control plane",
+      "status": "active",
+      "path": ".agent/workstreams/active/sandbox-control-plane",
+      "updated_at": "2026-08-20T00:00:00.000000+00:00"
     }
   ]
 }

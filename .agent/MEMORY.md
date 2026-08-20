@@ -23,6 +23,9 @@ skills, visual workflows, voice, file storage, and persistent user memory.
 - `IrisHarness` owns foreground/headless execution lifecycle. Stream consumers
   use `{ native, finalize, fail }`; `generate()` verifies and finalizes while
   returning the exact native generation result for migration compatibility.
+- Optional Python compute runs through a run-scoped `SandboxManager` and trusted
+  Docker/gVisor runner. Cancellation, compute accounting, and artifact cleanup
+  are PostgreSQL-backed and fail closed.
 
 ## Stable constraints
 
@@ -61,6 +64,9 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   currently fail explicitly instead of reporting false success.
 - Repository defaults keep agentic memory curation in shadow mode. The local
   development environment may explicitly enable write mode after verification.
+- Trusted sandbox production enablement requires a dedicated Linux Docker
+  Engine host with gVisor `runsc`; local macOS runtimes do not establish the
+  required production isolation boundary.
 
 ## Active work
 

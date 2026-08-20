@@ -241,7 +241,12 @@ class DurableRunFixture {
   private finish = async (
     id: string,
     token: string,
-    status: "succeeded" | "failed" | "cancelled" | "timed_out",
+    status:
+      | "succeeded"
+      | "failed"
+      | "cancelled"
+      | "timed_out"
+      | "budget_exhausted",
     values: Partial<AgentRun>,
   ) => {
     if (!this.ownsLease(id, token)) return null;
@@ -350,6 +355,11 @@ class DurableRunFixture {
         this.finish(id, token, "failed", {
           error,
           errorCode: errorCode ?? null,
+        }),
+      exhaustBudgetWithLease: (id, token, error, errorCode) =>
+        this.finish(id, token, "budget_exhausted", {
+          error,
+          errorCode: errorCode ?? "BUDGET_EXHAUSTED",
         }),
       cancelWithLease: (id, token, error, errorCode) =>
         this.finish(id, token, "cancelled", {

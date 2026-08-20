@@ -129,7 +129,15 @@ async function recordRemoteEvent(
 
 async function recordTerminalEvent(child: AgentRun) {
   const status = child.status;
-  if (!["succeeded", "failed", "cancelled", "timed_out"].includes(status))
+  if (
+    ![
+      "succeeded",
+      "failed",
+      "cancelled",
+      "timed_out",
+      "budget_exhausted",
+    ].includes(status)
+  )
     return;
   const eventType =
     status === "succeeded"

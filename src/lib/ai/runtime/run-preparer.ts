@@ -26,6 +26,7 @@ export type RunPreparationSnapshot = {
   completion?: unknown;
   model?: unknown;
   driver?: unknown;
+  sandbox?: unknown;
 };
 
 export type RunPreparationDependencies<Capabilities = unknown, Model = unknown> = {
@@ -52,6 +53,10 @@ export type RunPreparationDependencies<Capabilities = unknown, Model = unknown> 
     descriptor: unknown;
   }>;
   resolveDriver?(input: RunPreparationInput): Promise<{ descriptor: unknown }>;
+  resolveSandbox?(input: RunPreparationInput): Promise<{
+    ready: boolean;
+    descriptor: unknown;
+  }>;
 };
 
 export type RunPreparationInput = {
@@ -82,6 +87,7 @@ export type PreparedRun<Capabilities = unknown, Model = unknown> = {
   completionRequirement?: CompletionRequirement;
   goalRequirement: NormalizedGoalRequirement;
   model?: Model;
+  sandbox?: { ready: boolean; descriptor: unknown };
   snapshot: RunPreparationSnapshot;
 };
 
@@ -96,7 +102,7 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
   ) {}
 
   async prepare(input: RunPreparationInput): Promise<PreparedRun<Capabilities, Model>> {
-    const [context, capabilities, budget, completion, model, driver] =
+    const [context, capabilities, budget, completion, model, driver, sandbox] =
       await Promise.all([
         this.contextEngine.resolve({
           currentRequest: input.request,
@@ -113,6 +119,7 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
         this.dependencies.resolveCompletion?.(input),
         this.dependencies.resolveModel?.(input),
         this.dependencies.resolveDriver?.(input),
+        this.dependencies.resolveSandbox?.(input),
       ]);
     const policy = await this.dependencies.resolvePolicy?.({
       request: input,
@@ -169,6 +176,7 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
       completionRequirement: completion?.requirement,
       goalRequirement,
       model: model?.value,
+      sandbox,
       snapshot: {
         context: contextSnapshot,
         routing: input.restore?.routing ?? capabilities?.snapshot,
@@ -177,6 +185,7 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
           input.restore?.completion ?? completion?.snapshot ?? goalRequirement,
         model: input.restore?.model ?? model?.descriptor,
         driver: input.restore?.driver ?? driver?.descriptor,
+        sandbox: input.restore?.sandbox ?? sandbox?.descriptor,
       },
     };
   }

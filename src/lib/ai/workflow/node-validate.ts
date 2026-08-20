@@ -11,6 +11,7 @@ import {
   ToolNodeData,
   HttpNodeData,
   TemplateNodeData,
+  ComputeNodeData,
 } from "lib/ai/workflow/workflow.interface";
 import { cleanVariableName } from "lib/utils";
 import { safe } from "ts-safe";
@@ -109,6 +110,8 @@ export const nodeValidate: NodeValidate<WorkflowNodeData> = ({
       return httpNodeValidate({ node, nodes, edges });
     case NodeKind.Template:
       return templateNodeValidate({ node, nodes, edges });
+    case NodeKind.Compute:
+      return computeNodeValidate({ node, nodes, edges });
   }
 };
 
@@ -269,4 +272,38 @@ export const templateNodeValidate: NodeValidate<TemplateNodeData> = ({
 
   // Template content can be undefined/empty - that's valid
   // The actual content validation is handled by the TipTap editor
+};
+
+export const computeNodeValidate: NodeValidate<ComputeNodeData> = ({
+  node,
+  nodes,
+}) => {
+  if (node.language !== "python")
+    throw new Error("Compute node only supports Python");
+  if (!node.code?.trim()) throw new Error("Compute node must have code");
+  if (!Number.isInteger(node.timeoutMs) || node.timeoutMs < 1000)
+    throw new Error("Compute timeout must be at least 1000ms");
+  if (node.timeoutMs > 60000)
+    throw new Error("Compute timeout cannot exceed 60000ms");
+  if (node.outputSchema.type !== "object")
+    throw new Error("Compute output schema must be an object");
+  validateSchema("output", node.outputSchema);
+
+  const names = node.inputBindings.map(({ name }) => name);
+  if (new Set(names).size !== names.length)
+    throw new Error("Compute input binding names must be unique");
+  for (const binding of node.inputBindings) {
+    validateSchema(binding.name, binding.schema);
+    const sourceNode = nodes.find(
+      ({ data }) => data.id === binding.source.nodeId,
+    );
+    if (!sourceNode) throw new Error("Compute input source node not found");
+    const sourceSchema = findJsonSchemaByPath(
+      sourceNode.data.outputSchema,
+      binding.source.path,
+    );
+    if (!sourceSchema) throw new Error("Compute input source schema not found");
+    if (sourceSchema.type !== binding.schema.type)
+      throw new Error(`Compute input binding '${binding.name}' type mismatch`);
+  }
 };

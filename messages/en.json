@@ -151,6 +151,7 @@
       "tool": "Execute MCP tools or external services.\n\nWrite instructions in messages, and LLM will generate the required tool parameters from your context.",
       "note": "Add documentation and comments to organize your workflow logic.\n\nHelp team members understand complex workflow processes.",
       "code": "Execute custom code scripts with access to previous node data.\n\nRun JavaScript, Python, or other languages within your workflow (coming soon).",
+      "compute": "Run deterministic Python in an isolated server-side sandbox.\n\nBind typed values from previous nodes and validate the result against an expected output schema.",
       "http": "Fetch data from external APIs and web services via HTTP requests.\n\nIntegrate with REST APIs, webhooks, and third-party services.",
       "template": "Create dynamic documents by combining text with data from previous nodes.\n\nGenerate emails, reports, or formatted content using variable substitution.",
       "condition": "Add conditional logic to branch your workflow based on data evaluation.\n\nCreate if-else logic to handle different scenarios and data conditions."

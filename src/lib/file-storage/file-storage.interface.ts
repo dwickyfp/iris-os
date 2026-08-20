@@ -16,6 +16,7 @@ export interface FileMetadata {
 }
 
 export interface UploadOptions {
+  key?: string;
   filename?: string;
   contentType?: string;
   sha256?: string;

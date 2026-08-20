@@ -34,7 +34,11 @@ describe("VerificationEngine", () => {
         executed: false,
         value: { artifact: "ignored" },
       }),
-    ).resolves.toEqual({ verified: false, reason: "CAPABILITY_NOT_EXECUTED" });
+    ).resolves.toEqual({
+      verified: false,
+      verificationKind: "capability",
+      reason: "CAPABILITY_NOT_EXECUTED",
+    });
     await expect(
       capabilityResultVerifier.verify({
         kind: "capability_result",
@@ -42,6 +46,9 @@ describe("VerificationEngine", () => {
         executed: true,
         value: { artifactId: "artifact-1" },
       }),
-    ).resolves.toMatchObject({ verified: true });
+    ).resolves.toMatchObject({
+      verified: true,
+      verificationKind: "capability",
+    });
   });
 });

@@ -27,6 +27,8 @@ import {
   type CapabilityProvider,
   CapabilityRegistry,
 } from "./registry";
+import type { SandboxProvider } from "lib/sandbox";
+import { sandboxCapabilityProvider } from "lib/sandbox";
 
 type ServerCapabilityContext = {
   userId: string;
@@ -68,6 +70,10 @@ export async function resolveServerCapabilities(input: {
   additionalTools?: Record<string, Tool>;
   createDelegationTool: (targets: readonly DelegationTarget[]) => Tool;
   query?: string;
+  sandbox?: {
+    provider: SandboxProvider;
+    pythonCompute: Tool;
+  };
 }) {
   const { context } = input;
   const requestedSkillIds = input.hints.requested.flatMap((hint) =>
@@ -158,6 +164,11 @@ export async function resolveServerCapabilities(input: {
       }),
     }),
     skillRuntimeProvider(routedSkillsRuntime),
+    ...(input.sandbox
+      ? [
+          sandboxCapabilityProvider(input.sandbox),
+        ]
+      : []),
   ];
   const resolved = await new CapabilityRegistry(providers).resolve(
     context,

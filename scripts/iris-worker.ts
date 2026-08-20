@@ -10,6 +10,8 @@ import { registerParentResumeWorkers } from "./workers/parent-resume-worker";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { parseOperationsConfig } from "lib/operations/config";
 import { startWorkerHeartbeat } from "lib/operations/heartbeat";
+import { sandboxServerConfig } from "lib/sandbox/config.server";
+import { sandboxManager } from "lib/sandbox/server";
 
 const config = parseOperationsConfig(process.env);
 const workerId =
@@ -27,6 +29,17 @@ if (isV2FeatureEnabled("delegation")) {
   await registerDelegationWorkers(boss);
   await registerParentResumeWorkers(boss);
 }
+const sandboxConfig = sandboxServerConfig();
+const sandboxReaper = setInterval(
+  () =>
+    void (
+      sandboxConfig.enabled
+        ? sandboxManager.reap()
+        : sandboxManager.reapArtifactCleanup()
+    ).catch((error) => console.error("sandbox reaper failed", error)),
+  30_000,
+);
+sandboxReaper?.unref();
 
 let shuttingDown = false;
 const heartbeat = startWorkerHeartbeat(
@@ -54,6 +67,7 @@ const heartbeat = startWorkerHeartbeat(
 async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (sandboxReaper) clearInterval(sandboxReaper);
   const forcedExit = setTimeout(() => {
     console.error("iris-worker graceful shutdown timed out");
     process.exit(1);

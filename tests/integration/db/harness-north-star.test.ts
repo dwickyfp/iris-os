@@ -34,7 +34,7 @@ type StoredFile = { bytes: Buffer; contentType: string; filename: string };
 class FakeStorage {
   readonly files = new Map<string, StoredFile>();
   async upload(content: UploadContent, options: UploadOptions = {}) {
-    const key = `test/${randomUUID()}/${options.filename ?? "file"}`;
+    const key = options.key ?? `test/${randomUUID()}/${options.filename ?? "file"}`;
     const bytes = Buffer.isBuffer(content) ? content : Buffer.from(typeof content === "string" ? content : await new Response(content as BodyInit).arrayBuffer());
     this.files.set(key, { bytes, contentType: options.contentType ?? "application/octet-stream", filename: options.filename ?? "file" });
     return { key, sourceUrl: `memory://${key}`, metadata: { key, filename: options.filename ?? "file", contentType: options.contentType ?? "application/octet-stream", size: this.files.get(key)!.bytes.length } };

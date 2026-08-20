@@ -194,6 +194,76 @@ describe("createWorkflowExecutor", () => {
     expect(noopIndex).toBeLessThan(endIndex);
   });
 
+  it("executes compute nodes with scoped sandbox context", async () => {
+    const nodes = [
+      createNode("start", NodeKind.Input, "Start"),
+      createNode("compute", NodeKind.Compute, "Compute", {
+        language: "python",
+        code: 'output = {"doubled": inputs["value"] * 2}',
+        timeoutMs: 2000,
+        inputBindings: [
+          {
+            name: "value",
+            source: { nodeId: "start", path: ["value"] },
+            schema: { type: "number" },
+          },
+        ],
+        outputSchema: {
+          type: "object",
+          properties: { doubled: { type: "number" } },
+          required: ["doubled"],
+        },
+      }),
+      createNode("end", NodeKind.Output, "End", {
+        outputData: [
+          {
+            key: "result",
+            source: { nodeId: "compute", path: ["doubled"] },
+          },
+        ],
+      }),
+    ];
+    const executePython = vi.fn(async () => ({
+      executionId: "execution-1",
+      exitCode: 0,
+      stdout: '__IRIS_WORKFLOW_OUTPUT__:{"doubled":8}',
+      stderr: "",
+      durationMs: 1,
+      files: [],
+      artifacts: [],
+    }));
+    const nodeExecutorModule = await import("./node-executor");
+    (nodeExecutorModule as any).__setTestInputData({ value: 4 });
+    const signal = new AbortController().signal;
+    const executor = createWorkflowExecutor({
+      nodes,
+      edges: [
+        createEdge("e1", "start", "compute"),
+        createEdge("e2", "compute", "end"),
+      ],
+      context: {
+        runId: "run-1",
+        userId: "user-1",
+        signal,
+        services: {
+          sandbox: {
+            manager: { executePython } as any,
+            profile: {} as any,
+            maxComputeMs: 5_000,
+          },
+        },
+      },
+    });
+
+    const result = await executor.run({ query: {} }, { disableHistory: true });
+
+    expect(result.isOk).toBe(true);
+    expect(result.output?.outputs.end).toEqual({ result: 8 });
+    expect(executePython).toHaveBeenCalledWith(
+      expect.objectContaining({ signal }),
+    );
+  });
+
   it("2. should handle REAL conditional branching with actual condition evaluation", async () => {
     const nodes: DBNode[] = [
       createNode("start", NodeKind.Input, "Start Node"),

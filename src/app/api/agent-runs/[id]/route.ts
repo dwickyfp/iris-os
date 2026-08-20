@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { runManager } from "lib/ai/runs/server";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
+import { sandboxManager } from "lib/sandbox/server";
 
 export async function GET(
   _request: Request,
@@ -45,6 +46,8 @@ export async function DELETE(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   const runId = (await params).id;
   const run = await runManager.requestCancellation(runId, session.user.id);
+  if (run)
+    await sandboxManager.cancelByRootRun(run.rootRunId).catch(() => undefined);
   return run
     ? Response.json(run)
     : Response.json({ error: "Run not found" }, { status: 404 });

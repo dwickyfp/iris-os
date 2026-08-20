@@ -62,7 +62,7 @@ export const createVercelBlobStorage = (): FileStorage => {
     async upload(content, options: UploadOptions = {}) {
       const buffer = await toBuffer(content);
       const filename = options.filename ?? "file";
-      const pathname = buildPathname(filename);
+      const pathname = options.key ?? buildPathname(filename);
 
       const result = await put(pathname, buffer, {
         access: "public",

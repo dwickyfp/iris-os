@@ -344,6 +344,62 @@
       "when": 1787140800000,
       "tag": "0048_runtime_event_sequence",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1787144400000,
+      "tag": "0049_agent_run_budget_exhausted",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787151600000,
+      "tag": "0051_agent_run_root_trajectory",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1787155200000,
+      "tag": "0054_sandbox_artifact_outputs",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1787158800000,
+      "tag": "0055_sandbox_control_plane",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1787162400000,
+      "tag": "0056_sandbox_creation_fencing",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787166000000,
+      "tag": "0057_sandbox_accounting_artifact_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1787169600000,
+      "tag": "0058_orphan_artifact_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1787173200000,
+      "tag": "0059_sandbox_durable_compute_budget",
+      "breakpoints": true
     }
   ]
 }

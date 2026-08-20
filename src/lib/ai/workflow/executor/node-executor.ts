@@ -9,6 +9,7 @@ import {
   HttpNodeData,
   TemplateNodeData,
   OutputSchemaSourceKey,
+  ComputeNodeData,
 } from "../workflow.interface";
 import { WorkflowRuntimeState } from "./graph-store";
 import {
@@ -31,6 +32,22 @@ import {
   exaContentsToolForWorkflow,
 } from "lib/ai/tools/web/web-search";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
+import type { SandboxManager, SandboxProfile } from "lib/sandbox";
+
+export type WorkflowExecutionContext = {
+  runId: string;
+  userId: string;
+  workspaceId?: string;
+  taskId?: string;
+  signal?: AbortSignal;
+  services: {
+    sandbox: {
+      manager: SandboxManager;
+      profile: SandboxProfile;
+      maxComputeMs: number;
+    };
+  };
+};
 
 /**
  * Interface for node executor functions.
@@ -42,6 +59,7 @@ import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 export type NodeExecutor<T extends WorkflowNodeData = any> = (input: {
   node: T;
   state: WorkflowRuntimeState;
+  context?: WorkflowExecutionContext;
 }) =>
   | Promise<{
       input?: any; // Input data used by this node (for debugging/history)
@@ -506,5 +524,68 @@ export const templateNodeExecutor: NodeExecutor<TemplateNodeData> = ({
     output: {
       template: text,
     },
+  };
+};
+
+const COMPUTE_OUTPUT_PREFIX = "__IRIS_WORKFLOW_OUTPUT__:";
+
+export const computeNodeExecutor: NodeExecutor<ComputeNodeData> = async ({
+  node,
+  state,
+  context,
+}) => {
+  if (!context) throw new Error("WORKFLOW_COMPUTE_CONTEXT_REQUIRED");
+  if (node.language !== "python")
+    throw new Error("WORKFLOW_COMPUTE_LANGUAGE_UNSUPPORTED");
+
+  const inputs = Object.fromEntries(
+    node.inputBindings.map((binding) => [
+      binding.name,
+      jsonSchemaToZod(binding.schema).parse(state.getOutput(binding.source)),
+    ]),
+  );
+  const encodedInputs = Buffer.from(JSON.stringify(inputs)).toString("base64");
+  const encodedCode = Buffer.from(node.code).toString("base64");
+  const code = `import base64, json
+inputs = json.loads(base64.b64decode("${encodedInputs}").decode("utf-8"))
+namespace = {"inputs": inputs, "output": None}
+exec(compile(base64.b64decode("${encodedCode}").decode("utf-8"), "<workflow-compute>", "exec"), namespace)
+print("${COMPUTE_OUTPUT_PREFIX}" + json.dumps(namespace["output"], separators=(",", ":"), sort_keys=True))`;
+
+  const result = await context.services.sandbox.manager.executePython({
+    scope: {
+      runId: context.runId,
+      userId: context.userId,
+      workspaceId: context.workspaceId,
+      taskId: context.taskId,
+    },
+    profile: context.services.sandbox.profile,
+    request: { code, timeoutMs: node.timeoutMs },
+    maxComputeMs: context.services.sandbox.maxComputeMs,
+    signal: context.signal,
+  });
+  if (result.exitCode !== 0)
+    throw new Error(
+      result.stderr || `Python exited with code ${result.exitCode}`,
+    );
+
+  const outputLine = result.stdout
+    .split(/\r?\n/)
+    .findLast((line) => line.startsWith(COMPUTE_OUTPUT_PREFIX));
+  if (!outputLine) throw new Error("WORKFLOW_COMPUTE_OUTPUT_MISSING");
+  let output: unknown;
+  try {
+    output = JSON.parse(outputLine.slice(COMPUTE_OUTPUT_PREFIX.length));
+  } catch {
+    throw new Error("WORKFLOW_COMPUTE_OUTPUT_INVALID_JSON");
+  }
+  const validatedOutput = jsonSchemaToZod(node.outputSchema).parse(output);
+  return {
+    input: {
+      bindings: inputs,
+      executionId: result.executionId,
+      artifacts: result.artifacts,
+    },
+    output: validatedOutput,
   };
 };

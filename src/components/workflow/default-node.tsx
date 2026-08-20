@@ -197,6 +197,9 @@ export const DefaultNode = memo(function DefaultNode({
             )}
             {data.kind === NodeKind.Tool && <ToolNodeStack data={data} />}
             {data.kind === NodeKind.Http && <HttpNodeDataStack data={data} />}
+            {data.kind === NodeKind.Compute && (
+              <OutputSchemaStack data={data} />
+            )}
             {data.description && (
               <div className="px-4 mt-2">
                 <div className="text-xs text-muted-foreground">

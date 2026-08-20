@@ -582,6 +582,7 @@
       "tool": "Ejecuta herramientas MCP o servicios externos.\n\nEscribe instrucciones en mensajes, y LLM generará los parámetros de herramienta requeridos desde tu contexto.",
       "note": "Agrega documentación y comentarios para organizar la lógica de tu flujo de trabajo.\n\nAyuda a los miembros del equipo a entender procesos complejos de flujo de trabajo.",
       "code": "Ejecuta scripts de código personalizado con acceso a datos de nodos anteriores.\n\nEjecuta JavaScript, Python u otros lenguajes dentro de tu flujo de trabajo (próximamente).",
+      "compute": "Ejecuta Python determinista en un entorno aislado del servidor con entradas tipadas y salida validada.",
       "http": "Obtén datos de APIs externas y servicios web vía peticiones HTTP.\n\nIntégrate con APIs REST, webhooks y servicios de terceros.",
       "template": "Crea documentos dinámicos combinando texto con datos de nodos anteriores.\n\nGenera correos, reportes o contenido formateado usando sustitución de variables.",
       "condition": "Agrega lógica condicional para ramificar tu flujo de trabajo basado en evaluación de datos.\n\nCrea lógica if-else para manejar diferentes escenarios y condiciones de datos."

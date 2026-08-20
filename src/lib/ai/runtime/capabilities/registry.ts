@@ -14,6 +14,7 @@ export type CapabilityKind =
   | "skill"
   | "localPeer"
   | "remotePeer"
+  | "sandbox"
   | "model";
 
 export type CapabilitySurface = "executable" | "model" | "manual";
@@ -37,11 +38,25 @@ export type CapabilityDescriptor<T = unknown> = {
   };
   /** Trusted, additive governance classification. Request hints never alter it. */
   risks?: readonly PolicyRisk[];
+  metadata?: Record<string, unknown>;
 };
 
 export type CapabilityProvider<Context = unknown> = {
   name: string;
+  metadata?: Record<string, unknown>;
+  readiness?(context: Context): Promise<{
+    ready: boolean;
+    reason?: string;
+    metadata?: Record<string, unknown>;
+  }>;
   eligible(context: Context): Promise<readonly CapabilityDescriptor[]>;
+};
+
+export type CapabilityProviderResolution = {
+  name: string;
+  ready: boolean;
+  reason?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type CapabilityCollision = {
@@ -57,6 +72,7 @@ export type ResolvedCapabilities = {
   manual: Record<string, unknown>;
   collisions: CapabilityCollision[];
   routing: CapabilityRoutingDiagnostics;
+  providers: CapabilityProviderResolution[];
 };
 
 export type CapabilityRoutingRequest = {
@@ -113,10 +129,21 @@ export class CapabilityRegistry<Context = unknown> {
     routing: CapabilityRoutingRequest = {},
   ): Promise<ResolvedCapabilities> {
     const batches = await Promise.all(
-      this.providers.map(async (provider) => ({
-        provider: provider.name,
-        descriptors: await provider.eligible(context),
-      })),
+      this.providers.map(async (provider) => {
+        const readiness = (await provider.readiness?.(context)) ?? {
+          ready: true,
+        };
+        return {
+          provider: provider.name,
+          providerResolution: {
+            name: provider.name,
+            ready: readiness.ready,
+            reason: readiness.reason,
+            metadata: { ...provider.metadata, ...readiness.metadata },
+          },
+          descriptors: readiness.ready ? await provider.eligible(context) : [],
+        };
+      }),
     );
     const candidates = batches.flatMap(({ provider, descriptors }) =>
       descriptors.map((descriptor) => ({ descriptor, provider })),
@@ -225,6 +252,7 @@ export class CapabilityRegistry<Context = unknown> {
       manual: toMap(ordered, "manual"),
       collisions,
       routing: routingDiagnostics,
+      providers: batches.map(({ providerResolution }) => providerResolution),
     };
   }
 }

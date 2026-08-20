@@ -36,6 +36,8 @@ function dependencies(downloaded = bytes) {
       createdAt: new Date(),
       updatedAt: new Date(),
     })),
+    selectByOutputProvenance: vi.fn(async () => null),
+    archive: vi.fn(async () => undefined),
     recordVerification: vi.fn(async (input) => ({
       id: randomUUID(),
       artifactId: input.artifactId,
@@ -44,7 +46,7 @@ function dependencies(downloaded = bytes) {
       details: input.details ?? {},
       createdAt: new Date(),
     })),
-  } as ArtifactRepository;
+  } as unknown as ArtifactRepository;
   return { storage, repository };
 }
 

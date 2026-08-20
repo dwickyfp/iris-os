@@ -90,7 +90,7 @@ export const createS3FileStorage = (): FileStorage => {
     async upload(content, options: UploadOptions = {}) {
       const buffer = await toBuffer(content);
       const filename = options.filename ?? "file";
-      const key = buildKey(filename);
+      const key = options.key ?? buildKey(filename);
 
       await s3.send(
         new PutObjectCommand({

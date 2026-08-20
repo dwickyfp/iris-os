@@ -109,6 +109,12 @@ type RunManagerDependency = {
     error: string,
     errorCode?: string,
   ): Promise<AgentRun | null>;
+  exhaustBudgetWithLease(
+    runId: string,
+    token: string,
+    error: string,
+    errorCode?: string,
+  ): Promise<AgentRun | null>;
   cancelWithLease(
     runId: string,
     token: string,
@@ -401,12 +407,18 @@ export function createDelegationWorkerExecutor(
                 result.message,
                 "CANCELLED",
               )
-            : await dependencies.runs.failWithLease(
-                run.id,
-                token,
-                result.message,
-                result.errorCode,
-              );
+            : result.status === "budget_exhausted"
+              ? await dependencies.runs.exhaustBudgetWithLease(
+                  run.id,
+                  token,
+                  result.message,
+                )
+              : await dependencies.runs.failWithLease(
+                  run.id,
+                  token,
+                  result.message,
+                  result.errorCode,
+                );
     if (finished) crashAt("after_child_terminal_before_event");
     if (finished)
       await dependencies.recordEvent({ kind: "terminal", child: finished });

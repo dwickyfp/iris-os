@@ -2,20 +2,23 @@ import "server-only";
 
 import type { Tool } from "ai";
 import type { Agent } from "app-types/agent";
+import type { CapabilityRef } from "app-types/chat";
 import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
-import { contextEngine } from "lib/ai/context-compaction";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import {
   type DriverGenerateInput,
   type HarnessOrchestration,
 } from "lib/ai/runtime";
-import { RunPreparer } from "lib/ai/runtime/run-preparer";
+import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
 import { policyEngine } from "lib/ai/runtime/policy-engine";
 import { irisHarness } from "lib/ai/runtime/server";
+import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
+import { createSkillsRuntime } from "lib/ai/skill";
+import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import {
@@ -24,6 +27,14 @@ import {
   workflowRepository,
 } from "lib/db/repository";
 import { generateUUID } from "lib/utils";
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import {
+  sandboxCapability,
+  sandboxManager,
+  workflowSandboxServices,
+} from "lib/sandbox/server";
+import { runManager } from "lib/ai/runs/server";
+import { workflowToVercelAITool } from "../../app/api/chat/shared.chat";
 
 export type AutomationTarget = "workflow" | "skill" | "agent";
 
@@ -36,7 +47,8 @@ export type AutomationExecutionResult =
       retryable: boolean;
     }
   | { status: "cancelled"; message?: string }
-  | { status: "timed_out"; message: string };
+  | { status: "timed_out"; message: string }
+  | { status: "budget_exhausted"; message: string };
 
 type AutomationExecutionRequestBase = {
   runId: string;
@@ -87,6 +99,122 @@ function availableTools(allowedTools: string[]) {
   );
 }
 
+function mcpAllowlist(capabilities: readonly CapabilityRef[]) {
+  const allowed: Record<string, { tools: string[] }> = {};
+  for (const capability of capabilities) {
+    if (capability.type !== "mcpTool") continue;
+    const server = (allowed[capability.serverId] ??= { tools: [] });
+    if (!server.tools.includes(capability.name))
+      server.tools.push(capability.name);
+  }
+  return allowed;
+}
+
+type HeadlessDescriptor = {
+  id: string;
+  key: string;
+  kind: string;
+  risks?: readonly (
+    | "read"
+    | "write"
+    | "destructive"
+    | "network"
+    | "code"
+    | "remote"
+  )[];
+};
+
+async function resolveHeadlessTools(input: {
+  request: AutomationExecutionRequest;
+  profile: { type: "base" } | { type: "custom"; agent: Agent };
+  allowedTools: string[];
+  runId: string;
+}): Promise<{
+  tools: Record<string, Tool>;
+  descriptors: HeadlessDescriptor[];
+  snapshot: Record<string, unknown>;
+}> {
+  if (input.profile.type === "base") {
+    const tools = availableTools(input.allowedTools);
+    return {
+      tools,
+      descriptors: Object.keys(tools).map(
+        (key): HeadlessDescriptor => ({
+          id: `builtin:${key}`,
+          key,
+          kind: "builtin",
+        }),
+      ),
+      snapshot: {
+        descriptorIds: Object.keys(tools).map((key) => `builtin:${key}`),
+      },
+    };
+  }
+  const allowedCapabilities =
+    input.profile.agent.instructions.capabilities ?? [];
+  const capabilities = await resolveServerCapabilities({
+    query: objective(input.request.input),
+    context: {
+      userId: input.request.userId,
+      primaryAgentId: input.profile.agent.id,
+      allowedMcpServers: mcpAllowlist(allowedCapabilities),
+      toolsEnabled: true,
+      workflowsEnabled: true,
+      delegationEnabled: isV2FeatureEnabled("delegation"),
+      remoteAgentsEnabled: isV2FeatureEnabled("remoteAgents"),
+    },
+    hints: { mode: "prefer", requested: [] },
+    allowedCapabilities,
+    skillsRuntime: await createSkillsRuntime({
+      repository: skillRepository,
+      agentId: input.profile.agent.id,
+      userId: input.request.userId,
+    }),
+    workflowTool: (workflow) =>
+      workflowToVercelAITool({
+        ...workflow,
+        dataStream: { write() {} } as any,
+        executionContext: {
+          runId: input.runId,
+          userId: input.request.userId,
+          workspaceId: input.request.workspaceId,
+          signal: input.request.signal,
+          services: workflowSandboxServices(input.runId),
+        },
+      }),
+    createDelegationTool: (targets) =>
+      createDelegateWorkTool({
+        parentRunId: input.runId,
+        userId: input.request.userId,
+        targets,
+      }),
+    sandbox: sandboxCapability,
+  });
+  const explicitlyAllowed = new Set(input.allowedTools);
+  const descriptors = capabilities.ordered.filter(
+    ({ key }) => explicitlyAllowed.size === 0 || explicitlyAllowed.has(key),
+  );
+  const tools = Object.fromEntries(
+    descriptors
+      .filter(({ key }) => Object.hasOwn(capabilities.model, key))
+      .map(({ key }) => [key, capabilities.model[key] as Tool]),
+  );
+  if (
+    capabilities.model.delegate_agent &&
+    (explicitlyAllowed.size === 0 || explicitlyAllowed.has("delegate_agent"))
+  )
+    tools.delegate_agent = capabilities.model.delegate_agent as Tool;
+  return {
+    tools,
+    descriptors: descriptors as HeadlessDescriptor[],
+    snapshot: {
+      descriptorIds: descriptors.map(({ id }) => id),
+      eligibleDelegationTargets: capabilities.eligibleDelegationTargets,
+      diagnostics: capabilities.routing,
+    },
+  };
+}
+
 export function mapWorkflowOutput(output: unknown): Record<string, unknown> {
   if (!output || typeof output !== "object") return { output };
   const outputs = (output as { outputs?: unknown }).outputs;
@@ -102,7 +230,6 @@ export async function runHeadlessAgent(input: {
   allowedTools: string[];
   harness?: AutomationHarness;
 }) {
-  const tools = availableTools(input.allowedTools);
   const runId =
     input.request.executionSource === "delegation"
       ? input.request.runId
@@ -111,15 +238,24 @@ export async function runHeadlessAgent(input: {
     input.request.executionSource === "delegation"
       ? "delegation-runner"
       : "automation-runner";
-  const prepared = await new RunPreparer(contextEngine, {
+  const resolved = await resolveHeadlessTools({ ...input, runId });
+  const tools = resolved.tools;
+  const prepared = await serverRunPreparer({
     resolveCapabilities: async () => ({
       value: tools,
-      snapshot: {
-        descriptorIds: Object.keys(tools).map((key) => `builtin:${key}`),
-      },
+      snapshot: resolved.snapshot,
     }),
     resolvePolicy: async () =>
-      policyEngine.resolveSnapshot(Object.keys(tools), "never"),
+      policyEngine.resolveSnapshot(
+        Object.keys(tools),
+        "never",
+        resolved.descriptors.map(({ id, key, kind, risks }) => ({
+          id,
+          key,
+          kind,
+          risks,
+        })),
+      ),
     resolveRuntimeContext: async ({ policy }) => {
       const common = {
         requestId: generateUUID(),
@@ -155,7 +291,7 @@ export async function runHeadlessAgent(input: {
     agent: {
       profile: input.profile,
       model: prepared.model!,
-       instructions: prepared.instructions,
+      instructions: prepared.instructions,
       tools,
       runtimeContext,
     },
@@ -246,13 +382,41 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           message: "Automation workflow was not found",
           retryable: false,
         };
+      const sandboxRunId = generateUUID();
+      await runManager.start({
+        id: sandboxRunId,
+        userId: request.userId,
+        workspaceId: request.workspaceId,
+        context: {
+          executionSource: "automation-workflow",
+          automationRunId: request.runId,
+          workflowId: request.targetId,
+        },
+        timeoutMs: request.timeoutMs,
+      });
       const result = await createWorkflowExecutor({
         edges: workflow.edges,
         nodes: workflow.nodes,
+        context: {
+          runId: sandboxRunId,
+          userId: request.userId,
+          workspaceId: request.workspaceId,
+          signal: request.signal,
+          services: workflowSandboxServices(sandboxRunId),
+        },
       }).run(request.input as never, {
         disableHistory: true,
         timeout: request.timeoutMs,
       });
+      if (result.isOk)
+        await runManager.succeed(sandboxRunId, mapWorkflowOutput(result.output));
+      else
+        await runManager.fail(
+          sandboxRunId,
+          String(result.error).slice(0, 2_000),
+          "WORKFLOW_FAILED",
+        );
+      await sandboxManager.cancelByRun(sandboxRunId).catch(() => undefined);
       return result.isOk
         ? {
             status: "succeeded",
@@ -300,21 +464,13 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           message: "Automation agent is no longer accessible",
           retryable: false,
         };
-      const skills = await skillRepository.selectSkillsByAgentId(
-        agent.id,
-        request.userId,
-      );
-      const allowed = skills.flatMap((skill) => skill.allowedTools ?? []);
-      const effective = request.allowedTools
-        ? allowed.filter((tool) => request.allowedTools?.includes(tool))
-        : allowed;
       return runHeadlessAgent({
         request,
         profile: { type: "custom", agent },
         instructions: [agent.instructions.role, agent.instructions.systemPrompt]
           .filter(Boolean)
           .join("\n\n"),
-        allowedTools: effective,
+        allowedTools: request.allowedTools ?? [],
       });
     },
   };
@@ -337,6 +493,11 @@ export function createAutomationExecutionAdapter(
           errorCode: "VERIFICATION_REQUIRED",
           message: message.slice(0, 2_000),
           retryable: false,
+        };
+      if (message === "BUDGET_EXHAUSTED" || /budget exhausted/i.test(message))
+        return {
+          status: "budget_exhausted" as const,
+          message: message.slice(0, 2_000),
         };
       if (/timeout/i.test(message))
         return {

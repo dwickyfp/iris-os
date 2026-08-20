@@ -13,13 +13,13 @@ describe("operations migration readiness", () => {
     const sql = await readFile(
       join(
         process.cwd(),
-        "src/lib/db/migrations/pg/0048_runtime_event_sequence.sql",
+        "src/lib/db/migrations/pg/0059_sandbox_durable_compute_budget.sql",
       ),
       "utf8",
     );
 
     expect(expected).toEqual({
-      createdAt: 1787140800000,
+      createdAt: 1787173200000,
       hash: createHash("sha256").update(sql).digest("hex"),
     });
   });

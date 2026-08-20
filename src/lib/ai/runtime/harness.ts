@@ -417,8 +417,15 @@ export class IrisHarness {
   ) {
     if (leaseState === "lease_lost") throw leaseLost();
     const message = error instanceof Error ? error.message : String(error);
+    const exhausted = isBudgetExhausted(error);
     const outcome: RunOutcome =
-      leaseState === "cancelled"
+      exhausted
+        ? {
+            status: "budget_exhausted",
+            error: message,
+            errorCode: "BUDGET_EXHAUSTED",
+          }
+        : leaseState === "cancelled"
         ? { status: "cancelled", error: message, errorCode: "CANCELLED" }
         : leaseState === "timed_out"
           ? { status: "timed_out", error: message, errorCode: "TIMED_OUT" }
@@ -437,7 +444,9 @@ export class IrisHarness {
     await this.recordClaimedTerminal(
       orchestration,
       status,
-      status === "failed" ? outcome.errorCode : undefined,
+      status === "failed" || status === "budget_exhausted"
+        ? outcome.errorCode
+        : undefined,
     );
     return run;
   }
@@ -464,13 +473,23 @@ export class IrisHarness {
             ? "CANCELLED"
             : status === "timed_out"
               ? "TIMED_OUT"
-              : errorCode,
+               : status === "budget_exhausted"
+                 ? "BUDGET_EXHAUSTED"
+                 : errorCode,
       },
     );
     await this.record(
       orchestration,
-      status === "cancelled" ? "run.cancelled" : "run.failed",
-      { toStatus: status, errorCode },
+      status === "cancelled"
+        ? "run.cancelled"
+        : status === "budget_exhausted"
+          ? "run.budget_exhausted"
+          : "run.failed",
+       {
+         toStatus: status,
+         errorCode:
+           status === "budget_exhausted" ? "BUDGET_EXHAUSTED" : errorCode,
+       },
     );
   }
 
@@ -574,6 +593,13 @@ export class IrisHarness {
         );
       } else if (status === "timed_out") {
         run = await this.runs?.timeOutWithLease(
+          orchestration.identity.runId,
+          lease.token,
+          message.slice(0, 2_000),
+          errorCode,
+        );
+      } else if (status === "budget_exhausted") {
+        run = await this.runs?.exhaustBudgetWithLease(
           orchestration.identity.runId,
           lease.token,
           message.slice(0, 2_000),

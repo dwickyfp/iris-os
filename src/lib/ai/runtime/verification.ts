@@ -29,8 +29,16 @@ export type GoalVerificationSpec = {
 };
 
 export type VerificationResult =
-  | { verified: true; details?: Record<string, unknown> }
-  | { verified: false; reason: string };
+  | {
+      verified: true;
+      verificationKind?: "capability" | "outcome";
+      details?: Record<string, unknown>;
+    }
+  | {
+      verified: false;
+      verificationKind?: "capability" | "outcome";
+      reason: string;
+    };
 
 export interface Verifier {
   supports(target: VerificationTarget): boolean;
@@ -41,12 +49,28 @@ export const capabilityResultVerifier: Verifier = {
   supports: (target) => target.kind === "capability_result",
   async verify(target) {
     if (target.kind !== "capability_result")
-      return { verified: false, reason: "CAPABILITY_RESULT_INVALID" };
+      return {
+        verified: false,
+        verificationKind: "capability",
+        reason: "CAPABILITY_RESULT_INVALID",
+      };
     if (!target.executed)
-      return { verified: false, reason: "CAPABILITY_NOT_EXECUTED" };
+      return {
+        verified: false,
+        verificationKind: "capability",
+        reason: "CAPABILITY_NOT_EXECUTED",
+      };
     if (!nonEmptyStructuredOutput(target.value))
-      return { verified: false, reason: "CAPABILITY_RESULT_EMPTY" };
-    return { verified: true, details: { capability: target.capability } };
+      return {
+        verified: false,
+        verificationKind: "capability",
+        reason: "CAPABILITY_RESULT_EMPTY",
+      };
+    return {
+      verified: true,
+      verificationKind: "capability",
+      details: { capability: target.capability },
+    };
   },
 };
 
