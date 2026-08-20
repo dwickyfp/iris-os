@@ -1,0 +1,117 @@
+[
+  {
+    "id": "finance-revenue",
+    "category": "finance",
+    "query": "Analyze revenue and forecast cash flow",
+    "required": ["finance:revenue", "finance:forecast"]
+  },
+  {
+    "id": "crm-pipeline",
+    "category": "CRM",
+    "query": "Update the CRM sales pipeline opportunity",
+    "required": ["crm:pipeline"]
+  },
+  {
+    "id": "email-campaign",
+    "category": "email",
+    "query": "Draft and send the customer email campaign",
+    "required": ["email:send", "email:draft"]
+  },
+  {
+    "id": "calendar-schedule",
+    "category": "calendar",
+    "query": "Schedule a calendar meeting with the team",
+    "required": ["calendar:schedule"]
+  },
+  {
+    "id": "coding-review",
+    "category": "coding",
+    "query": "Review code and fix the TypeScript bug",
+    "required": ["coding:review", "coding:edit"]
+  },
+  {
+    "id": "research-web",
+    "category": "research",
+    "query": "Research the web and collect literature sources",
+    "required": ["research:web", "research:citations"]
+  },
+  {
+    "id": "reporting-dashboard",
+    "category": "reporting",
+    "query": "Generate an executive dashboard report",
+    "required": ["reporting:generate"]
+  },
+  {
+    "id": "workflow-automation",
+    "category": "workflow",
+    "query": "Run the approval automation workflow",
+    "required": ["workflow:approval"]
+  },
+  {
+    "id": "multi-research-report",
+    "category": "multi",
+    "query": "Research market sources then generate an executive report",
+    "required": ["research:web", "research:citations", "reporting:generate"]
+  },
+  {
+    "id": "explicit-hint",
+    "category": "hints",
+    "query": "Analyze revenue",
+    "required": ["finance:revenue"],
+    "hinted": ["calendar:schedule"]
+  },
+  {
+    "id": "only-authorized",
+    "category": "only",
+    "query": "Do anything useful",
+    "required": ["email:send"],
+    "hinted": ["email:send"],
+    "mode": "only"
+  },
+  {
+    "id": "only-unauthorized",
+    "category": "unauthorized",
+    "query": "Send email with the admin console",
+    "required": ["email:send"],
+    "hinted": ["email:send", "admin:console"],
+    "mode": "only",
+    "unauthorized": ["admin:console"]
+  },
+  {
+    "id": "policy-denied",
+    "category": "unauthorized",
+    "query": "Analyze revenue and delete the production database",
+    "required": ["finance:revenue"],
+    "policyDenied": ["danger:database-delete"]
+  },
+  {
+    "id": "ambiguous-help",
+    "category": "ambiguous",
+    "query": "Can you help me with this?",
+    "required": [],
+    "expectClarification": true
+  },
+  {
+    "id": "empty-query",
+    "category": "ambiguous",
+    "query": "...",
+    "required": [],
+    "expectClarification": true
+  },
+  {
+    "id": "degraded-timeout",
+    "category": "degraded",
+    "query": "Analyze revenue",
+    "required": [],
+    "degraded": true,
+    "expectClarification": true
+  },
+  {
+    "id": "threshold-preserve",
+    "category": "ambiguous",
+    "query": "help",
+    "required": ["finance:revenue"],
+    "catalogSize": 20,
+    "expectPreserveAll": true
+  }
+]

@@ -360,8 +360,8 @@ describe("agent run durable external lifecycle", () => {
     );
     await client.query(
       `INSERT INTO agent_run
-         (id, user_id, status, absolute_deadline_at)
-       VALUES ($1, $2, 'waiting_external', NOW() + interval '10 minutes')`,
+         (id, user_id, root_run_id, status, absolute_deadline_at)
+       VALUES ($1, $2, $1, 'waiting_external', NOW() + interval '10 minutes')`,
       [parentRunId, userId],
     );
     await client.query(
@@ -407,8 +407,8 @@ describe("agent run durable external lifecycle", () => {
       [remoteAgentId, userId],
     );
     await client.query(
-      `INSERT INTO agent_run (id, user_id, status, absolute_deadline_at)
-       VALUES ($1, $2, 'queued', NOW() + interval '10 minutes')`,
+      `INSERT INTO agent_run (id, user_id, root_run_id, status, absolute_deadline_at)
+       VALUES ($1, $2, $1, 'queued', NOW() + interval '10 minutes')`,
       [parentRunId, userId],
     );
     await repository.createDelegated({

@@ -51,7 +51,20 @@ export type {
   ResolvedContext,
 } from "./context-engine";
 export { RunPreparer } from "./run-preparer";
-export type { PreparedRun, RunPreparationInput } from "./run-preparer";
+export type {
+  PreparedRun,
+  RunPreparationDependencies,
+  RunPreparationInput,
+  RunPreparationSnapshot,
+} from "./run-preparer";
+export {
+  GoalRequirementResolver,
+  goalRequirementResolver,
+} from "./goal-requirement-resolver";
+export type {
+  GoalCapability,
+  NormalizedGoalRequirement,
+} from "./goal-requirement-resolver";
 export { PolicyEngine, policyEngine } from "./policy-engine";
 export type { PolicyDecision } from "./policy-engine";
 export { EventRecorder } from "./event-recorder";

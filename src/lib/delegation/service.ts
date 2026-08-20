@@ -21,6 +21,7 @@ import { assertDelegationTargetEligible } from "lib/delegation/targets";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { generateUUID } from "lib/utils";
 import { enqueueDelegatedRun } from "./queue";
+import { BudgetGuard, type RunBudget } from "lib/ai/runtime/budget";
 
 export const DELEGATION_LIMITS = {
   maxDepth: 3,
@@ -166,6 +167,14 @@ export async function createDelegatedRun(input: {
     200_000,
     Math.max(1_000, input.tokenBudget ?? DELEGATION_LIMITS.defaultTokenBudget),
   );
+  const parentBudget = parent.context.budget as RunBudget | undefined;
+  const parentGuard = parentBudget ? new BudgetGuard(parentBudget) : undefined;
+  const childBudget: RunBudget = {
+    maxTokens: tokenBudget,
+    maxDurationMs: timeoutMs,
+    maxDepth: DELEGATION_LIMITS.maxDepth,
+  };
+  if (parentGuard) parentGuard.child(childBudget, parent.depth + 1);
   const idempotencyKey =
     input.idempotencyKey ??
     createHash("sha256")
@@ -201,6 +210,7 @@ export async function createDelegatedRun(input: {
     timeoutMs,
     depth: parent.depth + 1,
     tokenBudget,
+    budget: childBudget,
     idempotencyKey,
     toolCallId: input.toolCallId,
   });

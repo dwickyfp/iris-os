@@ -8,11 +8,13 @@ import {
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
 import { contextEngine } from "lib/ai/context-compaction";
+import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import {
   type DriverGenerateInput,
   type HarnessOrchestration,
 } from "lib/ai/runtime";
 import { RunPreparer } from "lib/ai/runtime/run-preparer";
+import { policyEngine } from "lib/ai/runtime/policy-engine";
 import { irisHarness } from "lib/ai/runtime/server";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
@@ -100,47 +102,61 @@ export async function runHeadlessAgent(input: {
   allowedTools: string[];
   harness?: AutomationHarness;
 }) {
-  const prepared = await new RunPreparer(contextEngine).prepare({
+  const tools = availableTools(input.allowedTools);
+  const runId =
+    input.request.executionSource === "delegation"
+      ? input.request.runId
+      : generateUUID();
+  const engine =
+    input.request.executionSource === "delegation"
+      ? "delegation-runner"
+      : "automation-runner";
+  const prepared = await new RunPreparer(contextEngine, {
+    resolveCapabilities: async () => ({
+      value: tools,
+      snapshot: {
+        descriptorIds: Object.keys(tools).map((key) => `builtin:${key}`),
+      },
+    }),
+    resolvePolicy: async () =>
+      policyEngine.resolveSnapshot(Object.keys(tools), "never"),
+    resolveRuntimeContext: async ({ policy }) => {
+      const common = {
+        requestId: generateUUID(),
+        runId,
+        userId: input.request.userId,
+        workspaceId: input.request.workspaceId,
+        toolMode: "auto" as const,
+        approvalPolicy: policy?.approvalPolicy ?? "never",
+      };
+      return input.profile.type === "custom"
+        ? createAgentRuntimeContext({ ...common, agent: input.profile.agent })
+        : createBaseAgentRuntimeContext(common);
+    },
+    resolveModel: async () => ({
+      value: await customModelProvider.getEngineModel(engine),
+      descriptor: { engine },
+    }),
+    resolveDriver: async () => ({ descriptor: { id: "ai-sdk" } }),
+  }).prepare({
+    surface: "automation",
+    userId: input.request.userId,
+    workspaceId: input.request.workspaceId,
+    agentId:
+      input.profile.type === "custom" ? input.profile.agent.id : undefined,
     request: objective(input.request.input),
+    goal: objective(input.request.input),
+    selectedCapabilities: input.allowedTools,
     instructions: input.instructions,
     contextWindow: 12_000,
   });
-  const model = await customModelProvider.getEngineModel(
-    input.request.executionSource === "delegation"
-      ? "delegation-runner"
-      : "automation-runner",
-  );
-  const runtimeContext =
-    input.profile.type === "custom"
-      ? createAgentRuntimeContext({
-          requestId: generateUUID(),
-          runId:
-            input.request.executionSource === "delegation"
-              ? input.request.runId
-              : generateUUID(),
-          userId: input.request.userId,
-          workspaceId: input.request.workspaceId,
-          agent: input.profile.agent,
-          toolMode: "auto",
-          approvalPolicy: "never",
-        })
-      : createBaseAgentRuntimeContext({
-          requestId: generateUUID(),
-          runId:
-            input.request.executionSource === "delegation"
-              ? input.request.runId
-              : generateUUID(),
-          userId: input.request.userId,
-          workspaceId: input.request.workspaceId,
-          toolMode: "auto",
-          approvalPolicy: "never",
-        });
+  const runtimeContext = prepared.runtimeContext!;
   const execution = {
     agent: {
       profile: input.profile,
-      model,
+      model: prepared.model!,
        instructions: prepared.instructions,
-      tools: availableTools(input.allowedTools),
+      tools,
       runtimeContext,
     },
     execution: {
@@ -177,15 +193,22 @@ export async function runHeadlessAgent(input: {
                   targetType: input.request.targetType,
                   targetId: input.request.targetId,
                   objective: objective(input.request.input),
+                  goalRequirement: prepared.goalRequirement,
                 },
                 allowedTools: input.allowedTools,
                 timeoutMs: input.request.timeoutMs,
               },
             },
       policy: {
-        approvalPolicy: "never",
-        tools: {},
+        ...prepared.policy!,
       },
+      context: prepared.context,
+      budget: prepared.budget,
+      completionRequirement:
+        prepared.completionRequirement ??
+        (prepared.goalRequirement.level === "execution"
+          ? undefined
+          : createGoalVerificationRequirement(prepared.goalRequirement)),
     } satisfies HarnessOrchestration,
   };
   const result = await (input.harness ?? irisHarness).generate(execution);

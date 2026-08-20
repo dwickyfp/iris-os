@@ -11,7 +11,13 @@ import {
   type DelegationWorkerEvent,
   type DelegationWorkerExecutorDependencies,
   createDelegationWorkerExecutor,
+  DelegationWorkerCrash,
 } from "./worker-executor";
+import {
+  H10_CRASH_POINTS,
+  formatH10MatrixReport,
+  type H10MatrixRow,
+} from "./h10-recovery-matrix";
 
 vi.mock("server-only", () => ({}));
 
@@ -118,6 +124,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     userId: "user-1",
     agentId: null,
     parentRunId: "parent-1",
+    rootRunId: "parent-1",
     workspaceId: null,
     taskId: null,
     status: "queued",
@@ -445,6 +452,99 @@ class DurableRunFixture {
 }
 
 describe("durable delegation worker with fake A2A", () => {
+  it("covers the H10 worker crash/recovery matrix", async () => {
+    const rows: H10MatrixRow[] = [];
+
+    for (const point of H10_CRASH_POINTS) {
+      const fake = fakeA2A(
+        point === "during_polling"
+          ? ["working", "completed"]
+          : point === "after_waiting_persistence"
+            ? ["working", "completed"]
+            : ["completed"],
+      );
+      const fixture = new DurableRunFixture();
+      const dependencies: DelegationWorkerExecutorDependencies =
+        fixture.dependencies(remoteService(fake.fetcher));
+      const artifactWrites = vi.spyOn(dependencies, "ingestRemoteArtifacts");
+      dependencies.crashAt = point;
+
+      if (point === "during_polling") {
+        await createDelegationWorkerExecutor(dependencies)("child-1");
+        dependencies.crashAt = point;
+        fixture.expireLease();
+        await expect(
+          createDelegationWorkerExecutor(dependencies)("child-1"),
+        ).rejects.toBeInstanceOf(DelegationWorkerCrash);
+      } else {
+        let crashed = false;
+        try {
+          await createDelegationWorkerExecutor(dependencies)("child-1");
+        } catch (error) {
+          crashed = error instanceof DelegationWorkerCrash;
+        }
+        expect(crashed, `H10 crash point was not reached: ${point}`).toBe(true);
+      }
+
+      fixture.expireLease();
+      dependencies.crashAt = undefined;
+      await createDelegationWorkerExecutor(dependencies)("child-1");
+      if (fixture.runs.get("child-1")?.status === "waiting_external") {
+        await createDelegationWorkerExecutor(dependencies)("child-1");
+      }
+
+      const terminalEvents = fixture.events.filter(
+        (event) => event.kind === "terminal",
+      );
+      const staleToken = "lease-1";
+      await expect(
+        dependencies.runs.succeedWithLease("child-1", staleToken, {
+          stale: true,
+        }),
+      ).resolves.toBeNull();
+      rows.push({
+        point,
+        recovered: fixture.runs.get("child-1")?.status === "succeeded",
+        remoteSubmissions: new Set(
+          fake.requests
+            .filter((request) => request.method === "message/send")
+            .map((request) => request.id),
+        ).size,
+        artifactWrites: new Set(
+          artifactWrites.mock.calls.flatMap((call) =>
+            (call[0] as Array<{ artifactId?: string }>).map(
+              (artifact) => artifact.artifactId ?? "unknown",
+            ),
+          ),
+        ).size,
+        terminalEvents: terminalEvents.length,
+        credentialClean: fixture.encryptedCredential === null,
+        trajectoryCoherent:
+          terminalEvents.length === 1 &&
+          fixture.runs.get("child-1")?.status === "succeeded",
+      });
+    }
+
+    expect(rows).toHaveLength(H10_CRASH_POINTS.length);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recovered: true,
+          remoteSubmissions: 1,
+          terminalEvents: 1,
+          credentialClean: true,
+          trajectoryCoherent: true,
+        }),
+      ]),
+    );
+    expect(rows.every((row) => row.recovered)).toBe(true);
+    expect(rows.every((row) => row.remoteSubmissions === 1)).toBe(true);
+    expect(rows.every((row) => row.artifactWrites <= 1)).toBe(true);
+    expect(formatH10MatrixReport(rows)).toContain(
+      "after_artifact_persist_before_verification",
+    );
+  });
+
   it("uses a deterministic initial submission id across crash/reclaim and rejects the old lease", async () => {
     const fake = fakeA2A(["completed"]);
     const fixture = new DurableRunFixture();

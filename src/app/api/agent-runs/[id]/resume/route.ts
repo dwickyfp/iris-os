@@ -13,8 +13,6 @@ export async function POST(
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isV2FeatureEnabled("delegation"))
-    return Response.json({ error: "Not found" }, { status: 404 });
   const runId = (await params).id;
   const parsed = AgentRunResumeSchema.safeParse(
     await request.json().catch(() => null),
@@ -39,6 +37,7 @@ export async function POST(
   });
   if (!resumed)
     return Response.json({ error: "Run is not waiting" }, { status: 409 });
-  if (await enqueueDelegatedRun(runId)) await runManager.markDispatched(runId);
+  if (isV2FeatureEnabled("delegation") && (await enqueueDelegatedRun(runId)))
+    await runManager.markDispatched(runId);
   return Response.json(resumed);
 }

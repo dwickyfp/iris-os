@@ -318,6 +318,68 @@ describe("parent resume executor", () => {
     );
   });
 
+  it("retains the normalized goal requirement across another resume", async () => {
+    const next = claimed();
+    next.checkpoint.goalRequirement = {
+      goal: "create Q2 revenue PDF report",
+      level: "artifact",
+      requiredArtifactKinds: ["report"],
+      requiredMediaTypes: ["application/pdf"],
+      requiredPeriod: "Q2",
+      requiredSections: [],
+      requiredCapabilities: ["analysis", "generate_report"],
+      analysisOnlyAllowed: false,
+    };
+    const checkpoint = vi.fn(async () => undefined);
+    const execute = createParentResumeExecutor({
+      claim: vi.fn(async () => next),
+      resolve: vi.fn(async () => ({
+        generate: async () => ({
+          text: "Delegating again",
+          responseMessages: [
+            {
+              role: "assistant" as const,
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-2",
+                  toolName: "delegate_agent",
+                },
+              ],
+            },
+            {
+              role: "tool" as const,
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-2",
+                  toolName: "delegate_agent",
+                  output: {
+                    type: "json",
+                    value: { status: "accepted", childRunId: "child-2" },
+                  },
+                },
+              ],
+            },
+          ],
+          signal: new AbortController().signal,
+          assertActive: vi.fn(),
+          fail: vi.fn(async () => undefined),
+          finalize: vi.fn(async () => undefined),
+          checkpoint,
+        }),
+      })),
+      saveAssistant: vi.fn(async () => undefined),
+      fail: vi.fn(async () => undefined),
+    });
+
+    await execute("root-1");
+
+    expect((checkpoint.mock.calls as any[][])[0][0].goalRequirement).toEqual(
+      next.checkpoint.goalRequirement,
+    );
+  });
+
   it("accumulates response messages across resumed rounds", async () => {
     const prior = {
       role: "assistant" as const,
@@ -375,6 +437,98 @@ describe("parent resume executor", () => {
       expect.objectContaining({ role: "tool" }),
       expect.objectContaining({ role: "assistant" }),
     ]);
+  });
+
+  it("preserves joined observations and preparation snapshots across rounds", async () => {
+    const next = claimed();
+    next.checkpoint.authorizationRecipe = {
+      threadId: "thread-1",
+      routingSnapshot: { selectedIds: ["local-peer:child-1"] },
+      budgetSnapshot: { maxTokens: 500 },
+      completionSnapshot: { goal: "produce report" },
+      contextSnapshot: {
+        trustBoundaries: ["remote_observation:untrusted"],
+      },
+    };
+    const checkpoint = vi.fn(async () => undefined);
+    const resolve = vi.fn(async (_claimed: any, messages: any[]) => {
+      expect(messages[1].content[0].output.value).toMatchObject({
+        childRunId: "child-1",
+        status: "succeeded",
+      });
+      return {
+        preparationSnapshot: {
+          routing: { selectedIds: ["local-peer:child-1"] },
+          budget: { maxTokens: 500 },
+          completion: { goal: "produce report" },
+          context: {
+            sourceRecords: [],
+            estimatedTokens: 0,
+            truncatedSources: [],
+            trustBoundaries: ["remote_observation:untrusted"],
+            provenance: [],
+            diagnostics: {} as any,
+          },
+          model: { provider: "fake", model: "fake-a2a" },
+          driver: { id: "ai-sdk" },
+        },
+        generate: async () => ({
+          text: "Delegating again",
+          responseMessages: [
+            {
+              role: "assistant" as const,
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-2",
+                  toolName: "delegate_agent",
+                },
+              ],
+            },
+            {
+              role: "tool" as const,
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-2",
+                  toolName: "delegate_agent",
+                  output: {
+                    type: "json",
+                    value: { status: "accepted", childRunId: "child-2" },
+                  },
+                },
+              ],
+            },
+          ],
+          signal: new AbortController().signal,
+          assertActive: vi.fn(),
+          fail: vi.fn(async () => undefined),
+          finalize: vi.fn(async () => undefined),
+          checkpoint,
+        }),
+      };
+    });
+    const execute = createParentResumeExecutor({
+      claim: vi.fn(async () => next),
+      resolve,
+      saveAssistant: vi.fn(async () => undefined),
+      fail: vi.fn(async () => undefined),
+    });
+
+    await execute("root-1");
+
+    const recipe = (checkpoint.mock.calls as any[][])[0][0]
+      .authorizationRecipe;
+    expect(recipe).toMatchObject({
+      routingSnapshot: { selectedIds: ["local-peer:child-1"] },
+      budgetSnapshot: { maxTokens: 500 },
+      completionSnapshot: { goal: "produce report" },
+      contextSnapshot: {
+        trustBoundaries: ["remote_observation:untrusted"],
+      },
+      modelSnapshot: { provider: "fake", model: "fake-a2a" },
+      driverSnapshot: { id: "ai-sdk" },
+    });
   });
 
   it.each(["CANCELLED", "TIMED_OUT"])(

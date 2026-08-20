@@ -9,6 +9,7 @@ import type {
   RuntimeToolMode,
 } from "lib/ai/agent/runtime-context";
 import { customModelProvider } from "lib/ai/models";
+import { contextEngine } from "lib/ai/context-compaction";
 import {
   type ParentResumeGeneration,
   createParentResumeExecutor,
@@ -22,10 +23,13 @@ import {
 import { runManager } from "lib/ai/runs/server";
 import type { ClaimedParentRun } from "lib/ai/runs/types";
 import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
+import { RunPreparer } from "lib/ai/runtime/run-preparer";
+import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
 import { irisHarness } from "lib/ai/runtime/server";
 import { createSkillsRuntime } from "lib/ai/skill";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
+import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import {
   agentRepository,
   chatRepository,
@@ -51,6 +55,12 @@ type Recipe = {
   toolChoice: RuntimeToolMode;
   autonomy: "standard" | "ask" | "off";
   resolvedPolicy: ResolvedPolicySnapshot;
+  routingSnapshot?: RunPreparationSnapshot["routing"];
+  budgetSnapshot?: RunPreparationSnapshot["budget"];
+  completionSnapshot?: RunPreparationSnapshot["completion"];
+  contextSnapshot?: RunPreparationSnapshot["context"];
+  modelSnapshot?: RunPreparationSnapshot["model"];
+  driverSnapshot?: RunPreparationSnapshot["driver"];
 };
 
 async function currentDelegationTargets(
@@ -82,7 +92,12 @@ async function currentDelegationTargets(
   ];
 }
 
-async function resolveRuntime(claimed: ClaimedParentRun) {
+async function resolveRuntime(
+  claimed: ClaimedParentRun,
+  joinedMessages: Parameters<
+    ReturnType<typeof createToolLoopAgent>["generate"]
+  >[0]["messages"],
+) {
   const recipe = claimed.checkpoint.authorizationRecipe as Recipe;
   const modelRef = claimed.checkpoint.modelConfig as {
     provider?: string;
@@ -90,6 +105,15 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
   };
   if (!modelRef.provider || !modelRef.model)
     throw new Error("PARENT_RESUME_MODEL_REQUIRED");
+  const persistedModel = (recipe.modelSnapshot ?? modelRef) as {
+    provider?: string;
+    model?: string;
+  };
+  if (
+    persistedModel.provider !== modelRef.provider ||
+    persistedModel.model !== modelRef.model
+  )
+    throw new Error("PARENT_RESUME_MODEL_SNAPSHOT_MISMATCH");
   const configured = await customModelProvider.getModelConfiguration({
     provider: modelRef.provider,
     model: modelRef.model,
@@ -171,18 +195,64 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
         toolMode: toolChoice,
         approvalPolicy: resolvedPolicy.approvalPolicy as ApprovalPolicy,
       });
+  const prepared = await new RunPreparer(contextEngine, {
+    resolveCapabilities: async () => ({
+      value: tools,
+      snapshot: recipe.routingSnapshot ?? {
+        descriptorIds: [...descriptorIds],
+        eligibleDelegationTargets: recipe.eligibleDelegationTargets ?? [],
+      },
+    }),
+    resolvePolicy: async () => resolvedPolicy,
+    resolveBudget: async () => recipe.budgetSnapshot,
+    resolveRuntimeContext: async () => runtimeContext,
+    resolveModel: async () => ({
+      value: await customModelProvider.getModel({
+        provider: modelRef.provider!,
+        model: modelRef.model!,
+      }),
+      descriptor: recipe.modelSnapshot ?? modelRef,
+    }),
+    resolveDriver: async () => ({
+      descriptor: recipe.driverSnapshot ?? { id: "ai-sdk" },
+    }),
+    resolveCompletion: async () => ({
+      snapshot: recipe.completionSnapshot,
+    }),
+  }).prepare({
+    surface: "resume",
+    userId: recipe.userId,
+    workspaceId: recipe.workspaceId,
+    agentId: recipe.agentId,
+    instructions: recipe.instructions ?? "Continue the task.",
+    sources: currentGenerationObservations(claimed).map((observation, index) => ({
+      id: `joined-observation-${index}`,
+      kind: "remote_observation" as const,
+      content: JSON.stringify(observation),
+      trust: "untrusted" as const,
+      priority: 100,
+    })),
+    restore: {
+      routing: recipe.routingSnapshot,
+      budget: recipe.budgetSnapshot,
+      completion: recipe.completionSnapshot,
+      context: recipe.contextSnapshot,
+      model: recipe.modelSnapshot,
+      driver: recipe.driverSnapshot,
+    },
+    goal: claimed.checkpoint.goalRequirement?.goal,
+    selectedCapabilities: capabilities.ordered,
+  });
   const agentConfig = {
     profile: agent ? { type: "custom", agent } : { type: "base" },
-    model: await customModelProvider.getModel({
-      provider: modelRef.provider,
-      model: modelRef.model,
-    }),
-    instructions: recipe.instructions ?? "Continue the task.",
+    model: prepared.model!,
+    instructions: prepared.instructions,
     tools,
     runtimeContext,
     resolvedPolicy,
   } as Parameters<typeof irisHarness.generateClaimed>[0]["agent"];
   return {
+    preparationSnapshot: prepared.snapshot,
     async generate(
       messages: Parameters<
         ReturnType<typeof createToolLoopAgent>["generate"]
@@ -191,7 +261,7 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
       const lifecycle = await irisHarness.generateClaimed({
         agent: agentConfig,
         execution: {
-          messages,
+          messages: messages ?? joinedMessages,
           toolsContext: runtimeContext,
           timeout: Math.max(
             1,
@@ -213,6 +283,13 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
           },
           run: { mode: "claimed", claimToken: claimed.token },
           policy: resolvedPolicy,
+          completionRequirement: claimed.checkpoint.goalRequirement
+            ? createGoalVerificationRequirement(
+                claimed.checkpoint.goalRequirement,
+              )
+            : undefined,
+          context: prepared.context,
+          budget: prepared.budget,
         },
       });
       const result = lifecycle.native;
@@ -228,6 +305,14 @@ async function resolveRuntime(claimed: ClaimedParentRun) {
       } as ParentResumeGeneration;
     },
   };
+}
+
+function currentGenerationObservations(claimed: ClaimedParentRun) {
+  return claimed.joins
+    .filter(
+      (join) => join.checkpointGeneration === claimed.checkpoint.generation,
+    )
+    .map((join) => join.observation);
 }
 
 const execute = createParentResumeExecutor({

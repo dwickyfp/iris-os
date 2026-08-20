@@ -3,7 +3,6 @@ import { and, asc, eq } from "drizzle-orm";
 import { getRunTrajectory } from "lib/activity/trajectory";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
-import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function GET(
   _request: Request,
@@ -12,8 +11,6 @@ export async function GET(
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isV2FeatureEnabled("delegation"))
-    return Response.json({ error: "Not found" }, { status: 404 });
   const runId = (await params).id;
   const [run] = await pgDb
     .select()
@@ -26,7 +23,7 @@ export async function GET(
     );
   if (!run) return Response.json({ error: "Run not found" }, { status: 404 });
   const [events, delegations] = await Promise.all([
-    getRunTrajectory(pgDb, session.user.id, runId),
+    getRunTrajectory(pgDb, session.user.id, run.rootRunId),
     pgDb
       .select()
       .from(DelegationRunTable)

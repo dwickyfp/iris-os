@@ -15,6 +15,7 @@ import type {
   ExecutionDriver,
 } from "./execution-driver";
 import type { CompletionRequirement, VerificationResult } from "./verification";
+import { isBudgetExhausted } from "./budget";
 
 const FOREGROUND_LEASE_MS = 30_000;
 const FOREGROUND_HEARTBEAT_MS = 10_000;
@@ -40,6 +41,10 @@ function stoppedError(state: Exclude<RunLeaseState, "active">): Error {
   return new Error(state === "cancelled" ? "CANCELLED" : "TIMED_OUT");
 }
 
+function budgetStoppedError(): Error {
+  return new Error("BUDGET_EXHAUSTED");
+}
+
 function terminalStatus(
   status: unknown,
   fallback: RunOutcome["status"],
@@ -47,7 +52,8 @@ function terminalStatus(
   return status === "succeeded" ||
     status === "failed" ||
     status === "cancelled" ||
-    status === "timed_out"
+    status === "timed_out" ||
+    status === "budget_exhausted"
     ? status
     : fallback;
 }
@@ -182,7 +188,9 @@ export class IrisHarness {
               if (status !== "succeeded") {
                 throw status === "failed"
                   ? new Error("PARENT_RESUME_FAILED")
-                  : stoppedError(status);
+                  : status === "budget_exhausted"
+                    ? budgetStoppedError()
+                    : stoppedError(status);
               }
               return { run, verification };
             })
@@ -316,6 +324,7 @@ export class IrisHarness {
           contextProvenance: context?.provenance,
           contextDiagnostics: context?.diagnostics,
           resolvedPolicy: policy,
+          budget: orchestration.budget,
         },
       });
       if (!started.leaseToken) throw leaseLost();
@@ -547,7 +556,11 @@ export class IrisHarness {
       failure.error instanceof Error
         ? failure.error.message
         : String(failure.error);
-    const status = failure.status ?? "failed";
+    const exhausted = isBudgetExhausted(failure.error);
+    const status = exhausted
+      ? "budget_exhausted"
+      : (failure.status ?? "failed");
+    const errorCode = exhausted ? "BUDGET_EXHAUSTED" : failure.errorCode;
     if (orchestration.run.mode === "create") {
       if (!lease) throw leaseLost();
       lease.assertActive();
@@ -557,21 +570,21 @@ export class IrisHarness {
           orchestration.identity.runId,
           lease.token,
           message.slice(0, 2_000),
-          failure.errorCode,
+          errorCode,
         );
       } else if (status === "timed_out") {
         run = await this.runs?.timeOutWithLease(
           orchestration.identity.runId,
           lease.token,
           message.slice(0, 2_000),
-          failure.errorCode,
+          errorCode,
         );
       } else {
         run = await this.runs?.failWithLease(
           orchestration.identity.runId,
           lease.token,
           message.slice(0, 2_000),
-          failure.errorCode,
+          errorCode,
         );
       }
       if (!run) throw leaseLost();
@@ -582,16 +595,20 @@ export class IrisHarness {
         status === "cancelled" ? "trajectory.cancelled" : "trajectory.failed",
         {
           toStatus: status,
-          errorCode: failure.errorCode,
+          errorCode,
           message: message.slice(0, 2_000),
         },
       );
       await this.record(
         orchestration,
-        status === "cancelled" ? "run.cancelled" : "run.failed",
+        status === "cancelled"
+          ? "run.cancelled"
+          : status === "budget_exhausted"
+            ? "run.budget_exhausted"
+            : "run.failed",
         {
           toStatus: status,
-          errorCode: failure.errorCode,
+          errorCode,
           message: message.slice(0, 2_000),
         },
       );

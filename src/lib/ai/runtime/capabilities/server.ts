@@ -41,9 +41,14 @@ type ServerCapabilityContext = {
 
 function capabilityRouterConfig() {
   return {
+    threshold: configuredNumber("CAPABILITY_ROUTER_THRESHOLD", 20),
     topN: configuredNumber("CAPABILITY_ROUTER_TOP_N", 12),
     minScore: configuredNumber("CAPABILITY_ROUTER_MIN_SCORE", 0.15),
     timeoutMs: configuredNumber("CAPABILITY_ROUTER_TIMEOUT_MS", 25),
+    fallbackHardCap: configuredNumber(
+      "CAPABILITY_ROUTER_FALLBACK_HARD_CAP",
+      100,
+    ),
   };
 }
 

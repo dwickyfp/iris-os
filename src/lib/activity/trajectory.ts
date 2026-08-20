@@ -1,6 +1,6 @@
 import { and, asc, eq, or } from "drizzle-orm";
-import { IrisActivityEventTable } from "lib/db/pg/schema.pg";
 import type { ActivityDatabase } from "lib/ai/runtime/event-recorder";
+import { IrisActivityEventTable } from "lib/db/pg/schema.pg";
 
 type TrajectoryDatabase = ActivityDatabase & {
   select: () => any;

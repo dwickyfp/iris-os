@@ -16,6 +16,91 @@ function includesRequired(actual: string[], required: string[]) {
   return required.every((item) => normalized.has(item.trim().toLowerCase()));
 }
 
+function mediaTypeMatches(actual: string, required: string) {
+  return required.endsWith("/*")
+    ? actual.startsWith(required.slice(0, -1))
+    : actual === required;
+}
+
+function artifactKindMatches(
+  reference: { filename: string; mediaType: string },
+  kind: string,
+) {
+  const normalized = kind.toLowerCase();
+  const filename = reference.filename.toLowerCase();
+  return (
+    filename.endsWith(normalized) ||
+    filename.split(".")[0] === normalized ||
+    normalized === "file" ||
+    (normalized === "report" &&
+      (reference.mediaType === "text/markdown" ||
+        reference.mediaType === "application/pdf")) ||
+    (normalized === "image" && reference.mediaType.startsWith("image/"))
+  );
+}
+
+function capabilityExecutions(value: unknown) {
+  const executions = new Map<string, CapabilityVerification>();
+  const visited = new Set<object>();
+  const visit = (candidate: unknown) => {
+    if (!candidate || typeof candidate !== "object" || visited.has(candidate))
+      return;
+    visited.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    if (Array.isArray(record.capabilityResults)) {
+      for (const item of record.capabilityResults) {
+        if (!item || typeof item !== "object") continue;
+        const execution = item as Record<string, unknown>;
+        if (typeof execution.capability === "string")
+          executions.set(execution.capability, {
+            capability: execution.capability,
+            executed: execution.executed === true,
+            result: execution.result,
+          });
+      }
+    }
+    const toolName =
+      typeof record.toolName === "string" ? record.toolName : undefined;
+    if (record.type === "tool-result" && toolName) {
+      const output =
+        record.output &&
+        typeof record.output === "object" &&
+        (record.output as Record<string, unknown>).type === "json"
+          ? (record.output as Record<string, unknown>).value
+          : record.output;
+      executions.set(toolName, {
+        capability: toolName,
+        executed: true,
+        result: output,
+      });
+    }
+    if (
+      typeof record.type === "string" &&
+      record.type.startsWith("tool-") &&
+      record.state === "output-available"
+    ) {
+      const capability = record.type.slice("tool-".length);
+      executions.set(capability, {
+        capability,
+        executed: true,
+        result: record.output,
+      });
+    }
+    for (const nested of Array.isArray(candidate)
+      ? candidate
+      : Object.values(record))
+      visit(nested);
+  };
+  visit(value);
+  if (nonEmptyStructuredOutput(value) && !executions.has("analysis"))
+    executions.set("analysis", {
+      capability: "analysis",
+      executed: true,
+      result: value,
+    });
+  return executions;
+}
+
 export class GoalAwareVerificationRequirement implements CompletionRequirement {
   constructor(
     private readonly engine: VerificationEngine,
@@ -44,24 +129,11 @@ export class GoalAwareVerificationRequirement implements CompletionRequirement {
         return { verified: true };
       return { verified: false, reason: "REQUIRED_ARTIFACT_MISSING" };
     }
-    const verifiedArtifacts: ReturnType<typeof extractArtifactContent>[] = [];
-    const executions = new Map<string, CapabilityVerification>();
-    if (value && typeof value === "object") {
-      const candidate = value as Record<string, unknown>;
-      const raw = Array.isArray(candidate.capabilityResults)
-        ? candidate.capabilityResults
-        : [];
-      for (const item of raw) {
-        if (!item || typeof item !== "object") continue;
-        const execution = item as Record<string, unknown>;
-        if (typeof execution.capability === "string")
-          executions.set(execution.capability, {
-            capability: execution.capability,
-            executed: execution.executed === true,
-            result: execution.result,
-          });
-      }
-    }
+    const verifiedArtifacts: Array<{
+      reference: (typeof references)[number];
+      content?: ReturnType<typeof extractArtifactContent>;
+    }> = [];
+    const executions = capabilityExecutions(value);
     for (const capability of this.spec.requiredCapabilities ?? []) {
       const execution = executions.get(capability);
       if (!execution)
@@ -86,43 +158,54 @@ export class GoalAwareVerificationRequirement implements CompletionRequirement {
       const content = result.details?.content as
         | ReturnType<typeof extractArtifactContent>
         | undefined;
-      if (content) verifiedArtifacts.push(content);
-      if (
-        this.spec.requiredMediaTypes?.length &&
-        !this.spec.requiredMediaTypes.includes(reference.mediaType)
-      )
-        return { verified: false, reason: "REQUIRED_MEDIA_TYPE_MISSING" };
-      if (
-        this.spec.requiredArtifactKinds?.length &&
-        !this.spec.requiredArtifactKinds.some((kind) => {
-          const normalized = kind.toLowerCase();
-          const filename = reference.filename.toLowerCase();
-          return (
-            filename.endsWith(normalized) ||
-            filename.split(".")[0] === normalized ||
-            (normalized === "report" && reference.mediaType === "text/markdown")
-          );
-        })
-      )
-        return { verified: false, reason: "REQUIRED_ARTIFACT_KIND_MISSING" };
+      verifiedArtifacts.push({ reference, content });
     }
-    const content = verifiedArtifacts[0] as
-      | ReturnType<typeof extractArtifactContent>
-      | undefined;
-    if (this.spec.requiredTitle && content?.title !== this.spec.requiredTitle)
+    const matchingArtifacts = verifiedArtifacts.filter(
+      ({ reference }) =>
+        (!this.spec.requiredMediaTypes?.length ||
+          this.spec.requiredMediaTypes.some((required) =>
+            mediaTypeMatches(reference.mediaType, required),
+          )) &&
+        (!this.spec.requiredArtifactKinds?.length ||
+          this.spec.requiredArtifactKinds.some((kind) =>
+            artifactKindMatches(reference, kind),
+          )),
+    );
+    if (
+      this.spec.requiredMediaTypes?.length &&
+      !verifiedArtifacts.some(({ reference }) =>
+        this.spec.requiredMediaTypes?.some((required) =>
+          mediaTypeMatches(reference.mediaType, required),
+        ),
+      )
+    )
+      return { verified: false, reason: "REQUIRED_MEDIA_TYPE_MISSING" };
+    if (this.spec.requiredArtifactKinds?.length && !matchingArtifacts.length)
+      return { verified: false, reason: "REQUIRED_ARTIFACT_KIND_MISSING" };
+    const contentMatches = matchingArtifacts.map(({ content }) => content);
+    if (
+      this.spec.requiredTitle &&
+      !contentMatches.some(
+        (content) => content?.title === this.spec.requiredTitle,
+      )
+    )
       return { verified: false, reason: "REQUIRED_TITLE_MISSING" };
     if (
       this.spec.requiredPeriod &&
-      (!content ||
-        !content.text
+      !contentMatches.some((content) =>
+        content?.text
           .toLowerCase()
-          .includes(this.spec.requiredPeriod.toLowerCase()))
+          .includes(this.spec.requiredPeriod!.toLowerCase()),
+      )
     )
       return { verified: false, reason: "REQUIRED_PERIOD_MISSING" };
     if (
       this.spec.requiredSections?.length &&
-      (!content ||
-        !includesRequired(content.sections, this.spec.requiredSections))
+      !contentMatches.some(
+        (content) =>
+          content &&
+          includesRequired(content.sections, this.spec.requiredSections!),
+      )
     )
       return { verified: false, reason: "REQUIRED_SECTION_MISSING" };
     if (level === "artifact" && references.length === 0)

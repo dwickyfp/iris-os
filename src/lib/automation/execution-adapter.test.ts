@@ -125,6 +125,34 @@ describe("automation execution adapter", () => {
     );
   });
 
+  test("persists and enforces the normalized automation goal requirement", async () => {
+    const input = request("agent");
+    input.input = { objective: "create Q2 revenue PDF report" };
+    input.allowedTools = ["generate_report"];
+    const generate = vi.fn(async () => ({
+      text: "complete",
+      usage: { totalTokens: 1 },
+    }));
+    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue({} as never);
+
+    await runHeadlessAgent({
+      request: input,
+      profile: { type: "base" },
+      instructions: "Execute",
+      allowedTools: input.allowedTools,
+      harness: { generate },
+    });
+
+    const orchestration = (generate.mock.calls as any[][])[0][0].orchestration;
+    expect(orchestration.run.spec.context.goalRequirement).toMatchObject({
+      level: "artifact",
+      requiredMediaTypes: ["application/pdf"],
+      requiredPeriod: "Q2",
+      requiredCapabilities: ["analysis", "generate_report"],
+    });
+    expect(orchestration.completionRequirement).toBeDefined();
+  });
+
   test.each(["workflow", "skill", "agent"] as const)(
     "dispatches %s to the existing-runtime adapter",
     async (targetType) => {

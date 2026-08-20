@@ -3,6 +3,7 @@ import { UserPreferences } from "app-types/user";
 import { MCPServerConfig, MCPToolInfo } from "app-types/mcp";
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   pgTable,
   text,
   timestamp,
@@ -1318,6 +1319,7 @@ export const AutomationRunTable = pgTable(
         "failed",
         "cancelled",
         "timed_out",
+        "budget_exhausted",
       ],
     })
       .notNull()
@@ -1392,6 +1394,9 @@ export const AgentRunTable = pgTable(
       onDelete: "set null",
     }),
     parentRunId: uuid("parent_run_id"),
+    rootRunId: uuid("root_run_id")
+      .notNull()
+      .references((): AnyPgColumn => AgentRunTable.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
       onDelete: "set null",
     }),
@@ -1409,6 +1414,7 @@ export const AgentRunTable = pgTable(
         "failed",
         "cancelled",
         "timed_out",
+        "budget_exhausted",
       ],
     })
       .notNull()
@@ -1444,6 +1450,7 @@ export const AgentRunTable = pgTable(
       sql`${table.tokenBudget} BETWEEN 1000 AND 200000`,
     ),
     index("agent_run_parent_idx").on(table.parentRunId),
+    index("agent_run_root_idx").on(table.rootRunId),
     index("agent_run_reclaim_idx").on(table.status, table.leaseExpiresAt),
   ],
 );
@@ -1493,6 +1500,7 @@ export const DelegationRunTable = pgTable(
         "failed",
         "cancelled",
         "timed_out",
+        "budget_exhausted",
       ],
     })
       .notNull()

@@ -13,29 +13,38 @@ export type CapabilitySearchDocument = {
 };
 
 export type CapabilityRouterConfig = {
+  threshold: number;
   topN: number;
   minScore: number;
   timeoutMs: number;
+  fallbackHardCap: number;
 };
 
 export type CapabilityRoutingDiagnostics = {
   event: "capability.routing";
-  strategy: "stage1-lexical" | "fallback" | "only";
+  strategy: "preserve-all" | "stage1-lexical" | "fallback" | "only";
   candidateCount: number;
   selectedCount: number;
+  threshold: number;
   topN: number;
+  fallbackHardCap: number;
   minScore: number;
   elapsedMs: number;
+  reductionRate: number;
+  signal: "not-evaluated" | "sufficient" | "low" | "degraded";
+  clarificationRequired: boolean;
   pinnedIds: string[];
   selectedIds: string[];
   scores: Array<{ id: string; score: number }>;
-  fallbackReason?: "empty_query" | "timeout" | "scoring_error";
+  fallbackReason?: "empty_query" | "low_signal" | "timeout" | "scoring_error";
 };
 
 export const DEFAULT_CAPABILITY_ROUTER_CONFIG: CapabilityRouterConfig = {
+  threshold: 20,
   topN: 12,
   minScore: 0.15,
   timeoutMs: 25,
+  fallbackHardCap: 100,
 };
 
 type RouterOptions = {
@@ -99,13 +108,31 @@ export function routeCapabilityDocuments(
   const startedAt = now();
   const pinned = documents.filter((document) => pinnedIds.has(document.id));
   const boundedCount = Math.max(config.topN, pinned.length);
+
+  if (documents.length <= config.threshold) {
+    return {
+      selectedIds: documents.map(({ id }) => id),
+      diagnostics: diagnostics({
+        strategy: "preserve-all",
+        documents,
+        selected: documents,
+        pinned,
+        config,
+        startedAt,
+        now,
+        scores: [],
+        signal: "not-evaluated",
+      }),
+    };
+  }
+
   const fallback = (
     reason: NonNullable<CapabilityRoutingDiagnostics["fallbackReason"]>,
   ) => {
-    const selected = uniqueDocuments([...pinned, ...documents]).slice(
-      0,
-      boundedCount,
-    );
+    const preserveAll = documents.length <= config.fallbackHardCap;
+    const selected = preserveAll
+      ? uniqueDocuments([...pinned, ...documents])
+      : pinned;
     return {
       selectedIds: selected.map(({ id }) => id),
       diagnostics: diagnostics({
@@ -118,6 +145,8 @@ export function routeCapabilityDocuments(
         startedAt,
         now,
         scores: [],
+        signal: reason === "timeout" ? "degraded" : "low",
+        clarificationRequired: !preserveAll,
       }),
     };
   };
@@ -161,6 +190,7 @@ export function routeCapabilityDocuments(
     const relevant = scores
       .filter(({ score }) => score >= config.minScore)
       .map(({ document }) => document);
+    if (relevant.length === 0) return fallback("low_signal");
     const selected = uniqueDocuments([...pinned, ...relevant]).slice(
       0,
       boundedCount,
@@ -183,6 +213,7 @@ export function routeCapabilityDocuments(
             id: document.id,
             score: Number(score.toFixed(6)),
           })),
+        signal: "sufficient",
       }),
     };
   } catch (error) {
@@ -196,6 +227,10 @@ function normalizeConfig(
   input: Partial<CapabilityRouterConfig> | undefined,
 ): CapabilityRouterConfig {
   return {
+    threshold: positiveInteger(
+      input?.threshold,
+      DEFAULT_CAPABILITY_ROUTER_CONFIG.threshold,
+    ),
     topN: positiveInteger(input?.topN, DEFAULT_CAPABILITY_ROUTER_CONFIG.topN),
     minScore:
       typeof input?.minScore === "number" && input.minScore >= 0
@@ -204,6 +239,10 @@ function normalizeConfig(
     timeoutMs: positiveInteger(
       input?.timeoutMs,
       DEFAULT_CAPABILITY_ROUTER_CONFIG.timeoutMs,
+    ),
+    fallbackHardCap: positiveInteger(
+      input?.fallbackHardCap,
+      DEFAULT_CAPABILITY_ROUTER_CONFIG.fallbackHardCap,
     ),
   };
 }
@@ -240,15 +279,27 @@ function diagnostics(input: {
   startedAt: number;
   now: () => number;
   scores: CapabilityRoutingDiagnostics["scores"];
+  signal: CapabilityRoutingDiagnostics["signal"];
+  clarificationRequired?: boolean;
 }): CapabilityRoutingDiagnostics {
   return {
     event: "capability.routing",
     strategy: input.strategy,
     candidateCount: input.documents.length,
     selectedCount: input.selected.length,
+    threshold: input.config.threshold,
     topN: input.config.topN,
+    fallbackHardCap: input.config.fallbackHardCap,
     minScore: input.config.minScore,
     elapsedMs: Math.max(0, input.now() - input.startedAt),
+    reductionRate:
+      input.documents.length === 0
+        ? 0
+        : Number(
+            (1 - input.selected.length / input.documents.length).toFixed(6),
+          ),
+    signal: input.signal,
+    clarificationRequired: input.clarificationRequired ?? false,
     pinnedIds: input.pinned.map(({ id }) => id),
     selectedIds: input.selected.map(({ id }) => id),
     scores: input.scores,

@@ -88,12 +88,21 @@ export const pgAgentRunRepository: AgentRunRepository = {
   async createRunning(input) {
     const now = new Date();
     const leaseToken = randomUUID();
-    const [created] = await db
+    let parent: { rootRunId: string } | undefined;
+    if (input.parentRunId) {
+      const parents = await db
+        .select({ rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(eq(AgentRunTable.id, input.parentRunId));
+      parent = parents[0];
+    }
+    const inserted = await db
       .insert(AgentRunTable)
       .values({
         ...input,
         agentId: input.agentId ?? null,
         parentRunId: input.parentRunId ?? null,
+        rootRunId: parent?.rootRunId ?? input.id,
         workspaceId: input.workspaceId ?? null,
         taskId: input.taskId ?? null,
         status: "running",
@@ -110,6 +119,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
       })
       .onConflictDoNothing()
       .returning();
+    const created = Array.isArray(inserted) ? inserted[0] : undefined;
     if (created) return created;
     const existing = await this.selectById(input.id, input.userId);
     if (!existing) throw new Error("RUN_CREATE_CONFLICT");
@@ -146,17 +156,18 @@ export const pgAgentRunRepository: AgentRunRepository = {
       if (active >= 8)
         throw new Error("DELEGATION_ACTIVE_CHILD_LIMIT_EXCEEDED");
       const now = new Date();
-      const [parent] = await tx
+      const parentRows = await tx
         .select({ absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt })
         .from(AgentRunTable)
         .where(eq(AgentRunTable.id, input.parentRunId));
+      const parent = Array.isArray(parentRows) ? parentRows[0] : undefined;
       const requestedDeadline = new Date(now.getTime() + input.timeoutMs);
       const absoluteDeadlineAt =
         parent?.absoluteDeadlineAt &&
         parent.absoluteDeadlineAt < requestedDeadline
           ? parent.absoluteDeadlineAt
           : requestedDeadline;
-      const [run] = await tx
+      const inserted = await tx
         .insert(AgentRunTable)
         .values({
           id: input.id,
@@ -172,8 +183,16 @@ export const pgAgentRunRepository: AgentRunRepository = {
           depth: input.depth,
           tokenBudget: input.tokenBudget,
           absoluteDeadlineAt,
+          rootRunId:
+            (await tx
+              .select({ rootRunId: AgentRunTable.rootRunId })
+              .from(AgentRunTable)
+              .where(eq(AgentRunTable.id, input.parentRunId)))[0]?.rootRunId ??
+            input.parentRunId,
         })
         .returning();
+      const run = Array.isArray(inserted) ? inserted[0] : undefined;
+      if (!run) throw new Error("DELEGATED_RUN_CREATE_FAILED");
       await tx.insert(DelegationRunTable).values({
         id: input.delegationId,
         parentRunId: input.parentRunId,

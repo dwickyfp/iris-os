@@ -98,6 +98,9 @@ describe("semantic capability router", () => {
     const documents = [
       descriptor("builtin:hinted", { description: "Edit an image" }),
       descriptor("builtin:revenue", { description: "Analyze revenue" }),
+      ...Array.from({ length: 20 }, (_, index) =>
+        descriptor(`builtin:noise-${index}`, { description: "Calendar" }),
+      ),
     ].map((item) => capabilitySearchDocument(item));
 
     const result = routeCapabilityDocuments(
@@ -111,7 +114,20 @@ describe("semantic capability router", () => {
     expect(result.diagnostics.pinnedIds).toEqual(["builtin:hinted"]);
   });
 
-  it("falls back to a deterministic bounded set while preserving hints", () => {
+  it("preserves every candidate at or below the independent threshold", () => {
+    const documents = Array.from({ length: 20 }, (_, index) =>
+      capabilitySearchDocument(descriptor(`builtin:${index}`)),
+    );
+
+    const result = routeCapabilityDocuments(documents, "revenue", new Set(), {
+      config: { threshold: 20, topN: 1 },
+    });
+
+    expect(result.selectedIds).toHaveLength(20);
+    expect(result.diagnostics.strategy).toBe("preserve-all");
+  });
+
+  it("preserves all on degraded fallback within the safe hard cap", () => {
     const documents = Array.from({ length: 30 }, (_, index) =>
       capabilitySearchDocument(descriptor(`builtin:${index}`)),
     );
@@ -127,17 +143,33 @@ describe("semantic capability router", () => {
       },
     );
 
-    expect(result.selectedIds).toEqual([
-      "builtin:29",
-      "builtin:0",
-      "builtin:1",
-      "builtin:2",
-      "builtin:3",
-    ]);
+    expect(result.selectedIds).toHaveLength(30);
+    expect(result.selectedIds).toContain("builtin:29");
     expect(result.diagnostics).toMatchObject({
       strategy: "fallback",
       fallbackReason: "timeout",
-      selectedCount: 5,
+      selectedCount: 30,
+      clarificationRequired: false,
+    });
+  });
+
+  it("requests clarification instead of selecting arbitrary first-N candidates", () => {
+    const documents = Array.from({ length: 101 }, (_, index) =>
+      capabilitySearchDocument(descriptor(`builtin:${index}`)),
+    );
+
+    const result = routeCapabilityDocuments(
+      documents,
+      "please help",
+      new Set(["builtin:100"]),
+      { config: { fallbackHardCap: 100, topN: 5 } },
+    );
+
+    expect(result.selectedIds).toEqual(["builtin:100"]);
+    expect(result.diagnostics).toMatchObject({
+      strategy: "fallback",
+      signal: "low",
+      clarificationRequired: true,
     });
   });
 });

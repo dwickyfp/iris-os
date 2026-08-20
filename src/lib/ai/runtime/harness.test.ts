@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { H10_HARNESS_POINTS } from "../../delegation/h10-recovery-matrix";
 import type { HarnessOrchestration } from "./contracts";
 import { IrisHarness } from "./harness";
 
@@ -42,6 +43,36 @@ function dependencies() {
 }
 
 describe("IrisHarness", () => {
+  test.each(H10_HARNESS_POINTS)("H10 recovery seam: %s", async (point) => {
+    const { runs } = dependencies();
+    const harness = new IrisHarness(
+      {
+        id: "test",
+        generate: vi.fn(async () => ({ text: "complete" })),
+        stream: vi.fn(),
+      } as never,
+      runs as never,
+    );
+    const generated = await harness.generateClaimed({
+      agent: {},
+      execution: {},
+      orchestration: orchestration({
+        run: { mode: "claimed", claimToken: "claim-1" },
+      }),
+    } as never);
+
+    await generated.finalize({ text: "complete" });
+    await generated.finalize({ text: "duplicate" });
+
+    expect(runs.finishParentResume).toHaveBeenCalledOnce();
+    expect(runs.finishParentResume).toHaveBeenCalledWith(
+      "run-1",
+      "claim-1",
+      expect.objectContaining({ status: "succeeded" }),
+    );
+    expect(point).toMatch(/parent_observation|verification/);
+  });
+
   test("preserves the exact native stream and owns start/finalization", async () => {
     const native = { consumeStream: vi.fn(), toUIMessageStream: vi.fn() };
     const driver = {

@@ -93,11 +93,11 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     );
     await client.query(
       `INSERT INTO agent_run
-        (id, user_id, status, lease_token, lease_expires_at, started_at,
+        (id, user_id, root_run_id, status, lease_token, lease_expires_at, started_at,
          absolute_deadline_at, attempt)
-       VALUES ($1, $3, 'running', gen_random_uuid(), NOW() + interval '1 minute',
+       VALUES ($1, $3, $1, 'running', gen_random_uuid(), NOW() + interval '1 minute',
                NOW(), NOW() + interval '10 minutes', 1),
-              ($2, $3, 'queued', NULL, NULL, NULL,
+              ($2, $3, $2, 'queued', NULL, NULL, NULL,
                NOW() + interval '10 minutes', 0)`,
       [parentId, childId, userId],
     );
@@ -171,8 +171,8 @@ describe("IRIS V2 PostgreSQL migrations", () => {
       [userId, `artifact-${userId}@example.test`],
     );
     await client.query(
-      `INSERT INTO agent_run (id, user_id, status)
-       VALUES ($1, $2, 'succeeded')`,
+      `INSERT INTO agent_run (id, user_id, root_run_id, status)
+       VALUES ($1, $2, $1, 'succeeded')`,
       [runId, userId],
     );
     await client.query(

@@ -43,7 +43,10 @@ import {
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
 import { contextEngine } from "lib/ai/context-compaction";
+import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import { RunPreparer } from "lib/ai/runtime/run-preparer";
+import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
+import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-resolver";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import type { HarnessStreamResult } from "lib/ai/runtime";
@@ -95,8 +98,6 @@ import {
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Chat API: `),
 });
-
-const runPreparer = new RunPreparer(contextEngine);
 
 export async function POST(request: Request) {
   try {
@@ -341,6 +342,8 @@ export async function POST(request: Request) {
 
     let harnessStream: HarnessStreamResult<any> | undefined;
     let checkpointModelMessages: unknown[] = [];
+    let checkpointPreparationSnapshot: RunPreparationSnapshot = {};
+    let checkpointGoalRequirement: NormalizedGoalRequirement | undefined;
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
         const userText = message.parts
@@ -531,10 +534,75 @@ export async function POST(request: Request) {
         }
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
-        const preparedRun = await runPreparer.prepare({
+        const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
+        const preparedRun = await new RunPreparer(contextEngine, {
+          resolveCapabilities: async () => ({
+            value: capabilities,
+            snapshot: {
+              descriptorIds: capabilities.ordered.map(({ id }) => id),
+              eligibleDelegationTargets:
+                capabilities.eligibleDelegationTargets,
+              diagnostics: capabilities.routing,
+            },
+          }),
+          resolvePolicy: async () =>
+            policyEngine.resolveSnapshot(
+              Object.keys(vercelAITooles),
+              approvalPolicy,
+              capabilities.ordered.map(({ id, key, kind, risks }) => ({
+                id,
+                key,
+                kind,
+                risks,
+              })),
+            ),
+          resolveRuntimeContext: async ({ policy }) => {
+            const resolvedApproval = policy?.approvalPolicy ?? approvalPolicy;
+            return agent
+              ? createAgentRuntimeContext({
+                  requestId,
+                  runId,
+                  userId: session.user.id,
+                  workspaceId: workspace?.id,
+                  taskId: task?.id,
+                  threadId: thread!.id,
+                  agent,
+                  userRole: (session.user as any).role,
+                  toolMode: toolChoice,
+                  approvalPolicy: resolvedApproval,
+                  skills: capabilities.skillManifest,
+                })
+              : createBaseAgentRuntimeContext({
+                  requestId,
+                  runId,
+                  userId: session.user.id,
+                  workspaceId: workspace?.id,
+                  taskId: task?.id,
+                  threadId: thread!.id,
+                  userRole: (session.user as any).role,
+                  toolMode: toolChoice,
+                  approvalPolicy: resolvedApproval,
+                });
+          },
+          resolveModel: async () => ({
+            value: model,
+            descriptor: {
+              provider: modelConfig.provider,
+              model: modelConfig.model,
+              contextWindow: modelConfig.contextWindow,
+            },
+          }),
+          resolveDriver: async () => ({ descriptor: { id: "ai-sdk" } }),
+        }).prepare({
+          surface: "chat",
+          userId: session.user.id,
+          workspaceId: workspace?.id,
+          agentId: agent?.id,
           threadId: thread!.id,
           instructions: assembledInstructions,
           request: userText,
+          goal: userText,
+          selectedCapabilities: capabilities.ordered,
           sources: [
             {
               id: "agent-and-skills",
@@ -587,43 +655,11 @@ export async function POST(request: Request) {
         const preparedContext = preparedRun.context;
         const modelMessages = await convertToModelMessages(preparedRun.messages);
         checkpointModelMessages = modelMessages;
-        const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
-        const resolvedPolicy = policyEngine.resolveSnapshot(
-          Object.keys(vercelAITooles),
-          approvalPolicy,
-          capabilities.ordered.map(({ id, key, kind, risks }) => ({
-            id,
-            key,
-            kind,
-            risks,
-          })),
-        );
+        checkpointPreparationSnapshot = preparedRun.snapshot;
+        checkpointGoalRequirement = preparedRun.goalRequirement;
+        const resolvedPolicy = preparedRun.policy!;
         checkpointResolvedPolicy = resolvedPolicy;
-        const runtimeContext = agent
-          ? createAgentRuntimeContext({
-              requestId,
-              runId,
-              userId: session.user.id,
-              workspaceId: workspace?.id,
-              taskId: task?.id,
-              threadId: thread!.id,
-              agent,
-              userRole: (session.user as any).role,
-              toolMode: toolChoice,
-              approvalPolicy,
-              skills: capabilities.skillManifest,
-            })
-          : createBaseAgentRuntimeContext({
-              requestId,
-              runId,
-              userId: session.user.id,
-              workspaceId: workspace?.id,
-              taskId: task?.id,
-              threadId: thread!.id,
-              userRole: (session.user as any).role,
-              toolMode: toolChoice,
-              approvalPolicy,
-            });
+        const runtimeContext = preparedRun.runtimeContext!;
         harnessStream = await irisHarness.stream({
           agent: {
             profile: agent ? { type: "custom", agent } : { type: "base" },
@@ -667,12 +703,21 @@ export async function POST(request: Request) {
                   policyAuthority: resolvedPolicy.authority,
                   approvalPolicy,
                   systemPrompt: preparedContext.instructions,
+                  goalRequirement: preparedRun.goalRequirement,
                 },
                 allowedTools: Object.keys(vercelAITooles),
               },
             },
             context: preparedContext,
             policy: resolvedPolicy,
+            budget: preparedRun.budget,
+            completionRequirement:
+              preparedRun.completionRequirement ??
+              (preparedRun.goalRequirement.level === "execution"
+                ? undefined
+                : createGoalVerificationRequirement(
+                    preparedRun.goalRequirement,
+                  )),
           },
         });
         const result = harnessStream.native;
@@ -802,6 +847,7 @@ export async function POST(request: Request) {
             session.user.id,
           );
           await harnessStream?.waitForExternal({
+            goalRequirement: checkpointGoalRequirement,
             delegationToolCallIds,
             responseMessages,
             modelMessages: [...checkpointModelMessages, ...responseMessages],
@@ -825,6 +871,12 @@ export async function POST(request: Request) {
               descriptorIds: run?.context.capabilityDescriptorIds ?? [],
               eligibleDelegationTargets:
                 run?.context.eligibleDelegationTargets ?? [],
+              routingSnapshot: checkpointPreparationSnapshot.routing,
+              budgetSnapshot: checkpointPreparationSnapshot.budget,
+              completionSnapshot: checkpointPreparationSnapshot.completion,
+              contextSnapshot: checkpointPreparationSnapshot.context,
+              modelSnapshot: checkpointPreparationSnapshot.model,
+              driverSnapshot: checkpointPreparationSnapshot.driver,
             },
             assistantMessageId: responseMessage.id,
           });

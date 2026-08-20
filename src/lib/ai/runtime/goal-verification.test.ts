@@ -61,6 +61,26 @@ describe("goal-aware verification", () => {
     });
   });
 
+  test("blocks a requested goal when its output is missing", async () => {
+    const { requirement } = makeRequirement({
+      goal: "create Q2 revenue PDF report",
+      level: "artifact",
+      requiredArtifactKinds: ["report"],
+      requiredMediaTypes: ["application/pdf"],
+      requiredPeriod: "Q2",
+      requiredCapabilities: ["analysis", "generate_report"],
+    });
+    await expect(
+      requirement.verifyCompletion(
+        { text: "I analyzed the revenue and finished the report." },
+        { userId: "u", runId: "r" },
+      ),
+    ).resolves.toEqual({
+      verified: false,
+      reason: "REQUIRED_ARTIFACT_MISSING",
+    });
+  });
+
   test("checks report title, period, and sections without an LLM", async () => {
     const { requirement, verify } = makeRequirement({
       goal: "Produce Q1 report",

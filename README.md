@@ -31,9 +31,10 @@ future design.
 | **Execution driver** | AI SDK `ToolLoopAgent` generation and streaming; duplicate-safe extensible driver registry | AI SDK native default and only shipped driver |
 | **Chat** | Multi-model streaming, attachments, CSV ingestion previews, temporary chats, exports, voice, persisted incoming messages, and asynchronous memory review | Available |
 | **Smart capability routing** | Server-authoritative registry for built-in tools, MCP, workflows, skills, local peers, and remote peers; requested capabilities support `prefer` and `only` routing | Available; peer delegation depends on flags |
-| **Relevance routing** | Threshold-based deterministic lexical router prunes large eligible capability sets, pins explicit hints, and falls back safely | Configured with `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, and `CAPABILITY_ROUTER_TIMEOUT_MS` |
+| **Relevance routing** | Threshold-based deterministic lexical router prunes large eligible capability sets, pins explicit hints, and falls back safely | Configured with `CAPABILITY_ROUTER_THRESHOLD`, `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, `CAPABILITY_ROUTER_TIMEOUT_MS`, and `CAPABILITY_ROUTER_FALLBACK_HARD_CAP` |
 | **Agents** | Reusable primary agents with instructions, model selection, assigned skills, and scoped capabilities | Available |
 | **Local delegation** | Parent/child runs, permission intersection, depth/child/parallel limits, timeout, token budget, leases, heartbeat, cancellation propagation, and structured results | `IRIS_DELEGATION_V2` |
+| **Runtime budgets** | Step, token, duration, tool-call, delegation, depth, parallel, cost, and child aggregate guards with explicit `run.budget_exhausted` events | Available; bounded by deployment policy |
 | **Remote agents / A2A** | Agent Card discovery, authenticated JSON-RPC A2A task send/get/cancel, durable polling, input/auth waiting, resume, cancellation, and artifact ingestion | `IRIS_DELEGATION_V2` + `IRIS_REMOTE_AGENTS_A2A` |
 | **Run operations** | Queued/running/waiting/terminal states, run tree, timeline, retry-safe dispatch, stale-run sweep, and cancel tree | `IRIS_DELEGATION_V2`; requires `worker:iris` |
 | **Canonical artifacts** | Storage-backed artifact records bound to user and run, SHA-256 metadata, verification history, and Markdown report generation | Available where artifact-producing tools run |
@@ -304,9 +305,12 @@ Authenticated API routes:
 | `POST` | `/api/remote-agents/:id/discover` | Refresh the Agent Card |
 | `POST` | `/api/remote-agents/:id/tasks` | Send an A2A task |
 | `GET`, `DELETE` | `/api/remote-agents/:id/tasks/:taskId` | Read or cancel an A2A task |
-| `GET` | `/api/agent-runs/:id/timeline` | Read an owned run, events, and child delegations |
-| `POST` | `/api/agent-runs/:id/resume` | Resume an input/auth waiting run with a durable continuation |
-| `DELETE` | `/api/agent-runs/:id` | Request cancellation of the owned run tree |
+| `GET` | `/api/agent-runs` | List the authenticated user's AgentRuns and delegation metadata |
+| `GET` | `/api/agent-runs/:id` | Read one owned AgentRun, its children, and delegation metadata |
+| `GET` | `/api/agent-runs/:id/timeline` | Read one owned AgentRun, trajectory events, and delegation metadata |
+| `POST` | `/api/agent-runs/:id/resume` | Resume an owned input/auth waiting AgentRun with a durable continuation |
+| `DELETE` | `/api/agent-runs/:id` | Request cancellation of the owned AgentRun tree |
+| `POST` | `/api/agent-runs/:id/delegate` | Create a delegated child run; available only when delegation is enabled |
 
 The direct task endpoints are useful for connection testing. Normal agentic use
 goes through `delegate_agent`, durable child runs, the worker, and the operations
@@ -433,7 +437,7 @@ REMOTE_AGENT_ENCRYPTION_KEY=
 
 ## Migrations and Workers
 
-The latest checked-in migration is `0048_runtime_event_sequence.sql`. Application
+The latest checked-in migration is `0051_agent_run_root_trajectory.sql`. Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -445,8 +449,9 @@ pnpm db:migrate
 The current additive schema includes remote connections and A2A state, durable
 delegation and waiting/continuation state, canonical artifacts and verification,
 parent/child rejoin fencing, and the `iris_worker_heartbeat` table added by
-`0046`, the memory full-text search GIN indexes added by `0047`, and ordered
-runtime trajectory sequence allocation added by `0048`. Treat the
+`0046`, memory full-text search GIN indexes added by `0047`, ordered runtime
+trajectory sequence allocation added by `0048`, runtime budget states added by
+`0049`, and root trajectory identity added by `0051`. Treat the
 complete checked-in migration set, not an older numeric range, as the release
 unit.
 
@@ -597,7 +602,7 @@ for audit-only checks.
 - `pnpm benchmark:a2a` requires Docker, creates its own uniquely named pgvector
   17 container and database on a random loopback-only port, ignores inherited
   application database URLs and service credentials, applies migrations through
-`0048`, verifies a generated database guard, and removes the container. It
+   `0051`, verifies a generated database guard, and removes the container. It
   exercises pg-boss delivery, lease reclaim/fencing, and exactly-once parent
   rejoin for 10 iterations by default; set `A2A_BENCHMARK_ITERATIONS` from 1 to
   100. Each run writes local JSON evidence to
@@ -694,7 +699,7 @@ Do not describe a deployment as production-ready from repository tests alone.
 Before enabling production traffic or V2 flags, require deployment-specific
 evidence for all of the following:
 
-1. Run the explicit migration job through `0048`; rehearse the exact current
+1. Run the explicit migration job through `0051`; rehearse the exact current
    migration set against a representative staging snapshot, pass independent
    integrity and rollback drills, review migration hazards, and pass
    `MIGRATION_ROLLOUT_POLICY=staging pnpm migration:rollout-gate` with retained

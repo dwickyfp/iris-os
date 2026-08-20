@@ -1,6 +1,9 @@
 import type { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
 import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { RuntimeToolMode } from "../agent/runtime-context";
+import type { RunBudget } from "../runtime/budget";
+import type { NormalizedGoalRequirement } from "../runtime/goal-requirement-resolver";
+import type { RunPreparationSnapshot } from "../runtime/run-preparer";
 
 export type AgentRun = typeof AgentRunTable.$inferSelect;
 export type DelegationRun = typeof DelegationRunTable.$inferSelect;
@@ -17,7 +20,7 @@ export type TerminalAgentRunStatus = Exclude<
 export type RunOutcome =
   | { status: "succeeded"; result: Record<string, unknown> }
   | {
-      status: "failed" | "cancelled" | "timed_out";
+      status: "failed" | "cancelled" | "timed_out" | "budget_exhausted";
       error?: string;
       errorCode?: string;
     };
@@ -34,6 +37,7 @@ export type StartRunInput = {
   timeoutMs?: number;
   depth?: number;
   tokenBudget?: number;
+  budget?: RunBudget;
 };
 
 export type QueueDelegatedRunInput = {
@@ -53,11 +57,13 @@ export type QueueDelegatedRunInput = {
   timeoutMs: number;
   depth: number;
   tokenBudget: number;
+  budget?: RunBudget;
   idempotencyKey: string;
   toolCallId: string;
 };
 
 export type ParentRunCheckpoint = {
+  goalRequirement?: NormalizedGoalRequirement;
   delegationToolCallIds: string[];
   responseMessages: unknown[];
   modelMessages: unknown[];
@@ -66,6 +72,12 @@ export type ParentRunCheckpoint = {
     resolvedPolicy?: ResolvedPolicySnapshot;
     toolChoice?: RuntimeToolMode;
     autonomy?: "standard" | "ask" | "off";
+    routingSnapshot?: RunPreparationSnapshot["routing"];
+    budgetSnapshot?: RunPreparationSnapshot["budget"];
+    completionSnapshot?: RunPreparationSnapshot["completion"];
+    contextSnapshot?: RunPreparationSnapshot["context"];
+    modelSnapshot?: RunPreparationSnapshot["model"];
+    driverSnapshot?: RunPreparationSnapshot["driver"];
   };
   assistantMessageId: string;
 };

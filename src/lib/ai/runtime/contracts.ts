@@ -12,6 +12,7 @@ import type {
   PolicyDecision,
 } from "./policy-engine";
 import type { CompletionRequirement, VerificationResult } from "./verification";
+import type { RunBudget } from "./budget";
 
 export type HarnessIdentity = {
   userId: string;
@@ -53,12 +54,13 @@ export type HarnessOrchestration = {
   context?: ContextPreparation;
   policy?: ResolvedPolicySnapshot;
   completionRequirement?: CompletionRequirement;
+  budget?: RunBudget;
 };
 
 export type HarnessFailure = {
   error: unknown;
   errorCode?: string;
-  status?: "failed" | "cancelled" | "timed_out";
+  status?: "failed" | "cancelled" | "timed_out" | "budget_exhausted";
 };
 
 export type HarnessFinalization = {

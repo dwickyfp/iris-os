@@ -2,14 +2,11 @@ import { getSession } from "auth/server";
 import { desc, eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
-import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function GET() {
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isV2FeatureEnabled("delegation"))
-    return Response.json({ error: "Not found" }, { status: 404 });
   const runs = await pgDb
     .select()
     .from(AgentRunTable)
@@ -46,8 +43,7 @@ export async function GET() {
             "waiting_approval",
             "waiting_input",
             "waiting_external",
-          ].includes(run.status) &&
-          run.cancelRequestedAt === null,
+          ].includes(run.status) && run.cancelRequestedAt === null,
       ).length,
     },
   });

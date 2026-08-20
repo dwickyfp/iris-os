@@ -28,6 +28,9 @@ import { DefaultToolIcon } from "./default-tool-icon";
 import equal from "lib/equal";
 import { EMOJI_DATA } from "lib/const";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useRemoteAgents } from "@/hooks/queries/use-remote-agents";
+import type { PublicRemoteAgent } from "app-types/remote-agent";
+import { remoteAgentCapabilityRef } from "lib/remote-agent/capability";
 
 type MentionItemType = {
   id: string;
@@ -36,7 +39,57 @@ type MentionItemType = {
   onSelect: () => void;
   icon: React.ReactNode;
   suffix?: React.ReactNode;
+  disabled?: boolean;
 };
+
+function remoteAgentMention(
+  agent: PublicRemoteAgent,
+  requestError?: unknown,
+  onSelect?: (item: { label: string; id: string }) => void,
+): MentionItemType {
+  const card = agent.agentCard;
+  const capability = JSON.stringify(remoteAgentCapabilityRef(agent));
+  const skills = (card?.skills ?? [])
+    .map((skill) => String(skill.name ?? skill.id ?? ""))
+    .filter(Boolean)
+    .slice(0, 3);
+  const provider = card?.preferredTransport || new URL(agent.endpointUrl).host;
+  const authRequired =
+    card?.capabilities?.authRequired === true ||
+    card?.capabilities?.authentication === true;
+  const missingAuth = authRequired && !agent.hasCredential;
+  const unavailable =
+    Boolean(requestError) || agent.status !== "active" || !card || missingAuth;
+  const status = requestError
+    ? "Unavailable"
+    : agent.status !== "active"
+      ? "Disabled"
+      : !card
+        ? "Needs discovery"
+        : missingAuth
+          ? "Auth required"
+          : "Healthy";
+
+  return {
+    id: `remote-${agent.id}`,
+    type: "remoteAgent",
+    label: card?.name || agent.name,
+    disabled: unavailable,
+    onSelect: () =>
+      onSelect?.({ label: `remote agent("${agent.name}")`, id: capability }),
+    icon: <span className="size-3.5 rounded-full bg-sky-500/80" />,
+    suffix: (
+      <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+        <span>{status}</span>
+        <span>{provider}</span>
+        {authRequired && (
+          <span>{agent.hasCredential ? "Auth" : "Auth required"}</span>
+        )}
+        {skills.length > 0 && <span>Skills: {skills.join(", ")}</span>}
+      </span>
+    ),
+  };
+}
 
 interface ChatMentionInputProps {
   onChange: (text: string) => void;
@@ -153,7 +206,13 @@ export function ChatMentionInputSuggestion({
   onOpenChange?: (open: boolean) => void;
   children?: React.ReactNode;
   style?: React.CSSProperties;
-  disabledType?: ("mcp" | "workflow" | "defaultTool" | "agent")[];
+  disabledType?: (
+    | "mcp"
+    | "workflow"
+    | "defaultTool"
+    | "agent"
+    | "remoteAgent"
+  )[];
 }) {
   const t = useTranslations("Common");
   const [mcpList, workflowList, agentList] = appStore(
@@ -167,6 +226,35 @@ export function ChatMentionInputSuggestion({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const itemRefs = useRef<{ [key: string]: HTMLButtonElement | null }>({});
   const isMobile = useIsMobile();
+  const { data: remoteAgents = [], error: remoteAgentsError } =
+    useRemoteAgents();
+
+  const remoteAgentMentions = useMemo(() => {
+    if (disabledType?.includes("remoteAgent")) return [];
+    return remoteAgents
+      .filter((agent) => {
+        const search = searchValue.toLowerCase();
+        return (
+          !search ||
+          agent.name.toLowerCase().includes(search) ||
+          agent.agentCard?.name?.toLowerCase().includes(search) ||
+          agent.agentCard?.skills?.some((skill) =>
+            String(skill.name ?? skill.id ?? "")
+              .toLowerCase()
+              .includes(search),
+          )
+        );
+      })
+      .map((agent) =>
+        remoteAgentMention(agent, remoteAgentsError, onSelectMention),
+      );
+  }, [
+    remoteAgents,
+    remoteAgentsError,
+    disabledType,
+    searchValue,
+    onSelectMention,
+  ]);
 
   const mcpMentions = useMemo(() => {
     if (disabledType?.includes("mcp")) return [];
@@ -442,11 +530,18 @@ export function ChatMentionInputSuggestion({
   const allMentions = useMemo(() => {
     return [
       ...agentMentions,
+      ...remoteAgentMentions,
       ...workflowMentions,
       ...defaultToolMentions,
       ...mcpMentions,
     ];
-  }, [agentMentions, workflowMentions, defaultToolMentions, mcpMentions]);
+  }, [
+    agentMentions,
+    remoteAgentMentions,
+    workflowMentions,
+    defaultToolMentions,
+    mcpMentions,
+  ]);
 
   // Reset selected index when mentions change
   useEffect(() => {
@@ -468,6 +563,7 @@ export function ChatMentionInputSuggestion({
   const groupedMentions = useMemo(() => {
     const groups = {
       agent: { title: "Agents", items: [] as MentionItemType[] },
+      remoteAgent: { title: "Remote agents", items: [] as MentionItemType[] },
       workflow: { title: "Workflows", items: [] as MentionItemType[] },
       defaultTool: { title: "App Tools", items: [] as MentionItemType[] },
       mcp: { title: "MCP Tools", items: [] as MentionItemType[] },
@@ -620,6 +716,25 @@ export function ChatMentionInputSuggestion({
                     </div>
                   </div>
                 )}
+                {groupedMentions.remoteAgent.items.length > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">
+                      {groupedMentions.remoteAgent.title}
+                    </div>
+                    <div className="space-y-1">
+                      {groupedMentions.remoteAgent.items.map((item) => (
+                        <MentionItem
+                          key={item.id}
+                          item={item}
+                          isSelected={allMentions[selectedIndex]?.id === item.id}
+                          ref={(el) => {
+                            itemRefs.current[item.id] = el;
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {groupedMentions.workflow.items.length > 0 && (
                   <div className="p-2 border-t">
                     <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">
@@ -687,7 +802,7 @@ export function ChatMentionInputSuggestion({
             ) : (
               // Desktop horizontal layout
               <div className="flex flex-1 h-[300px]">
-                {/* Agents & Workflows Column */}
+                {/* Agents and remote agents column */}
                 <div className="flex-1 border-r overflow-y-auto">
                   <div className="p-2">
                     <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">
@@ -712,6 +827,23 @@ export function ChatMentionInputSuggestion({
                           No agents found
                         </div>
                       )}
+                    </div>
+                  </div>
+                  <div className="p-2 border-t">
+                    <div className="text-xs font-medium text-muted-foreground px-2 py-1.5">
+                      {groupedMentions.remoteAgent.title}
+                    </div>
+                    <div className="space-y-1">
+                      {groupedMentions.remoteAgent.items.map((item) => (
+                        <MentionItem
+                          key={item.id}
+                          item={item}
+                          isSelected={allMentions[selectedIndex]?.id === item.id}
+                          ref={(el) => {
+                            itemRefs.current[item.id] = el;
+                          }}
+                        />
+                      ))}
                     </div>
                   </div>
                   <div className="p-2 border-t">
@@ -818,7 +950,8 @@ const MentionItem = React.forwardRef<
         "flex items-center gap-2 w-full rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground cursor-pointer",
         isSelected && "bg-accent text-accent-foreground",
       )}
-      onClick={() => item.onSelect()}
+      disabled={item.disabled}
+      onClick={() => !item.disabled && item.onSelect()}
     >
       {item.icon}
       <span className="truncate min-w-0">{item.label}</span>

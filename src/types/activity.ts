@@ -57,6 +57,7 @@ export const ActivityEventPayloadRegistry = {
   "run.started": RunPayloadSchema,
   "run.completed": RunPayloadSchema,
   "run.failed": RunPayloadSchema,
+  "run.budget_exhausted": RunPayloadSchema,
   "run.cancelled": RunPayloadSchema,
   "routing.resolved": RoutingPayloadSchema,
   "model.requested": ModelPayloadSchema,

@@ -15,6 +15,7 @@
     "benchmark:skills": "tsx scripts/benchmark-skills.ts",
     "conformance:a2a": "node --conditions=react-server --import tsx scripts/a2a-conformance.ts",
     "benchmark:a2a": "tsx scripts/a2a-disposable-benchmark.ts",
+    "eval:capability-routing": "tsx scripts/eval-capability-routing.ts",
     "test": "vitest run",
     "test:integration:db": "tsx scripts/test-postgres.ts",
     "test:integration:db:run": "vitest run --config vitest.integration.config.ts",

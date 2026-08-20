@@ -194,13 +194,34 @@ export type DelegationWorkerExecutorDependencies = {
   ): Promise<ArtifactReference[]>;
   pollMs?: number;
   now?: () => number;
+  /** Test-only fault injection; omitted in production. */
+  crashAt?: H10CrashPoint;
 };
+
+export type H10CrashPoint =
+  | "after_claim"
+  | "after_remote_submission_before_task_id"
+  | "after_task_id"
+  | "during_polling"
+  | "after_waiting_persistence"
+  | "after_child_terminal_before_event"
+  | "after_artifact_persist_before_verification";
+
+export class DelegationWorkerCrash extends Error {
+  constructor(readonly point: H10CrashPoint) {
+    super(`H10_CRASH:${point}`);
+    this.name = "DelegationWorkerCrash";
+  }
+}
 
 export function createDelegationWorkerExecutor(
   dependencies: DelegationWorkerExecutorDependencies,
 ) {
   const now = dependencies.now ?? Date.now;
   const pollMs = dependencies.pollMs ?? 1_000;
+  const crashAt = (point: H10CrashPoint) => {
+    if (dependencies.crashAt === point) throw new DelegationWorkerCrash(point);
+  };
 
   async function cancelRemote(childRunId: string) {
     const intent =
@@ -242,8 +263,11 @@ export function createDelegationWorkerExecutor(
     if (
       child &&
       !["queued", "running", "waiting_external"].includes(child.status)
-    )
+    ) {
+      // The durable event sink deduplicates this reconciliation on sweeper retries.
+      await dependencies.recordEvent({ kind: "terminal", child });
       return;
+    }
     if (!child?.parentRunId) return;
     if (child.status === "waiting_external" && child.cancelRequestedAt) return;
     const delegation = await dependencies.selectDelegation(child.id);
@@ -278,6 +302,7 @@ export function createDelegationWorkerExecutor(
       return;
     }
     const { run, token } = claimed;
+    crashAt("after_claim");
     await dependencies.recordEvent({
       kind: "started",
       child,
@@ -382,6 +407,7 @@ export function createDelegationWorkerExecutor(
                 result.message,
                 result.errorCode,
               );
+    if (finished) crashAt("after_child_terminal_before_event");
     if (finished)
       await dependencies.recordEvent({ kind: "terminal", child: finished });
   };
@@ -458,6 +484,7 @@ export function createDelegationWorkerExecutor(
                 requestId: intent.submissionId,
               },
             );
+      crashAt("after_remote_submission_before_task_id");
       const task: A2ATask =
         "kind" in sendResult
           ? {
@@ -467,6 +494,7 @@ export function createDelegationWorkerExecutor(
               raw: sendResult.message,
             }
           : sendResult;
+      if (intent.remoteTaskId) crashAt("during_polling");
       remoteTaskId = task.id;
       if (continuation?.submissionId) {
         const consumed = await dependencies.runs.consumeContinuationMessage(
@@ -493,6 +521,7 @@ export function createDelegationWorkerExecutor(
           leaseLost();
           throw new Error("REMOTE_SUBMISSION_LEASE_LOST");
         }
+        crashAt("after_waiting_persistence");
         await dependencies.recordEvent({
           kind: "remote",
           child: waiting,
@@ -522,6 +551,7 @@ export function createDelegationWorkerExecutor(
         leaseLost();
         throw new Error("REMOTE_SUBMISSION_LEASE_LOST");
       }
+      crashAt("after_task_id");
       await dependencies.recordEvent({
         kind: "remote",
         child,
@@ -561,7 +591,9 @@ export function createDelegationWorkerExecutor(
                 runId: child.id,
               },
             );
+            crashAt("after_artifact_persist_before_verification");
           } catch (error) {
+            if (error instanceof DelegationWorkerCrash) throw error;
             return {
               status: "failed",
               errorCode: "VERIFICATION_FAILED",
@@ -603,6 +635,7 @@ export function createDelegationWorkerExecutor(
         retryable: task.state === "unknown",
       };
     } catch (error) {
+      if (error instanceof DelegationWorkerCrash) throw error;
       if (signal.aborted) {
         if (remoteTaskId && abortCause() === "cancelled") return null;
         if (remoteTaskId && abortCause() !== "lease_lost")

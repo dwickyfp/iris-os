@@ -10,6 +10,7 @@ import {
 } from "../runtime/policy-engine";
 import { isReadOnlyTool } from "./approval-policy";
 import type { AgentRuntimeContext } from "./runtime-context";
+import type { BudgetGuard } from "../runtime/budget";
 
 export const AGENT_TIMEOUTS = {
   totalMs: 90_000,
@@ -37,6 +38,7 @@ export type ToolLoopAgentConfig = {
       | "tool.completed",
     payload: Record<string, unknown>,
   ) => Promise<void> | void;
+  budget?: BudgetGuard;
 };
 
 export function getToolLoopAgentReasoningMode(profile: ToolLoopAgentProfile) {
@@ -103,14 +105,40 @@ export function createToolLoopAgent({
   runtimeContext,
   resolvedPolicy,
   onRuntimeEvent,
+  budget,
 }: ToolLoopAgentConfig) {
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
+  let accountedTokens = 0;
+  const guardedTools = Object.fromEntries(
+    Object.entries(tools).map(([name, candidate]) => {
+      if (!budget || typeof (candidate as any).execute !== "function")
+        return [name, candidate];
+      const original = candidate as any;
+      return [
+        name,
+        {
+          ...original,
+          execute: async (args: unknown, options: unknown) => {
+            budget.beforeTool();
+            try {
+              return await original.execute(args, options);
+            } finally {
+              budget.afterTool();
+            }
+          },
+        },
+      ];
+    }),
+  );
 
   return new ToolLoopAgent({
     model,
     instructions,
-    tools,
-    stopWhen: [isStepCount(10), hasToolCall("delegate_agent")],
+    tools: guardedTools,
+    stopWhen: [
+      isStepCount(Math.min(10, budget?.budget.maxSteps ?? 10)),
+      hasToolCall("delegate_agent"),
+    ],
     timeout: { ...AGENT_TIMEOUTS, tools: getAgentToolTimeouts(tools) },
     runtimeContext,
     telemetry: {
@@ -125,6 +153,7 @@ export function createToolLoopAgent({
     },
     reasoning: reasoningMode === "auto" ? undefined : { effort: reasoningMode },
     toolApproval: ({ toolCall }) => {
+      budget?.assertDuration();
       const decision = evaluateToolCallPolicy({
         toolName: toolCall.toolName,
         args: (toolCall as { input?: unknown }).input,
@@ -142,6 +171,9 @@ export function createToolLoopAgent({
       toolCalls,
       toolResults,
     }) => {
+      const totalTokens = usage.totalTokens ?? 0;
+      budget?.afterStep({ tokens: Math.max(0, totalTokens - accountedTokens) });
+      accountedTokens = Math.max(accountedTokens, totalTokens);
       await onRuntimeEvent?.("model.requested", { stepNumber });
       await onRuntimeEvent?.("model.completed", {
         stepNumber,
@@ -170,6 +202,10 @@ export function createToolLoopAgent({
         finishReason,
         totalTokens: usage.totalTokens,
       });
+    },
+    onStepStart: async () => {
+      budget?.beforeStep();
+      budget?.assertDuration();
     },
   } as any);
 }

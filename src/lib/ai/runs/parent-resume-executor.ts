@@ -1,6 +1,7 @@
 import type { ModelMessage, UIMessage } from "ai";
 import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { RuntimeToolMode } from "../agent/runtime-context";
+import type { RunPreparationSnapshot } from "../runtime/run-preparer";
 import type { ClaimedParentRun, ParentRunCheckpoint } from "./types";
 
 export type ParentResumeGeneration = {
@@ -19,7 +20,8 @@ export type ParentResumeGeneration = {
 
 export type ParentResumeExecutorDependencies = {
   claim(parentRunId: string): Promise<ClaimedParentRun | null>;
-  resolve(claimed: ClaimedParentRun): Promise<{
+  resolve(claimed: ClaimedParentRun, messages: ModelMessage[]): Promise<{
+    preparationSnapshot?: RunPreparationSnapshot;
     generate(messages: ModelMessage[]): Promise<ParentResumeGeneration>;
   }>;
   saveAssistant(input: {
@@ -161,11 +163,11 @@ export function createParentResumeExecutor(
     let terminalAttempted = false;
     let generated: ParentResumeGeneration | undefined;
     try {
-      const runtime = await dependencies.resolve(claimed);
       const messages = replaceJoinedToolResults(
         claimed.checkpoint.modelMessages,
         currentGenerationJoins(claimed),
       );
+      const runtime = await dependencies.resolve(claimed, messages);
       generated = await runtime.generate(messages);
       const responseMessages = [
         ...claimed.checkpoint.responseMessages,
@@ -188,11 +190,27 @@ export function createParentResumeExecutor(
       if (delegationToolCallIds.length) {
         terminalAttempted = true;
         await generated.checkpoint({
+          goalRequirement: claimed.checkpoint.goalRequirement,
           delegationToolCallIds,
           responseMessages,
           modelMessages: [...messages, ...generated.responseMessages],
           modelConfig: claimed.checkpoint.modelConfig,
-          authorizationRecipe: recipe,
+          authorizationRecipe: {
+            ...recipe,
+            routingSnapshot:
+              runtime.preparationSnapshot?.routing ?? recipe.routingSnapshot,
+            budgetSnapshot:
+              runtime.preparationSnapshot?.budget ?? recipe.budgetSnapshot,
+            completionSnapshot:
+              runtime.preparationSnapshot?.completion ??
+              recipe.completionSnapshot,
+            contextSnapshot:
+              runtime.preparationSnapshot?.context ?? recipe.contextSnapshot,
+            modelSnapshot:
+              runtime.preparationSnapshot?.model ?? recipe.modelSnapshot,
+            driverSnapshot:
+              runtime.preparationSnapshot?.driver ?? recipe.driverSnapshot,
+          },
           assistantMessageId: claimed.checkpoint.assistantMessageId,
         });
         return;

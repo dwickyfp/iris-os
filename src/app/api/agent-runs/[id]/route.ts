@@ -3,7 +3,6 @@ import { and, eq } from "drizzle-orm";
 import { runManager } from "lib/ai/runs/server";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
-import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function GET(
   _request: Request,
@@ -12,8 +11,6 @@ export async function GET(
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isV2FeatureEnabled("delegation"))
-    return Response.json({ error: "Not found" }, { status: 404 });
   const [run] = await pgDb
     .select()
     .from(AgentRunTable)
@@ -46,8 +43,6 @@ export async function DELETE(
   const session = await getSession();
   if (!session?.user.id)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (!isV2FeatureEnabled("delegation"))
-    return Response.json({ error: "Not found" }, { status: 404 });
   const runId = (await params).id;
   const run = await runManager.requestCancellation(runId, session.user.id);
   return run
