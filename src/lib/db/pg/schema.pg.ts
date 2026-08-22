@@ -1386,6 +1386,11 @@ export const AutomationRunTable = pgTable(
     errorCode: varchar("error_code", { length: 120 }),
     retryable: boolean("retryable").notNull().default(false),
     result: json("result").$type<Record<string, unknown>>(),
+    authorizationContext: json("authorization_context").$type<{
+      version: 1;
+      allowedTools: string[];
+      capabilityIds: string[];
+    }>(),
     error: text("error"),
     startedAt: timestamp("started_at"),
     completedAt: timestamp("completed_at"),

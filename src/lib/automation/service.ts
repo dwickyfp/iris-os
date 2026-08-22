@@ -6,6 +6,7 @@ import { AutomationRunTable, type AutomationTable } from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
 import { automationRunKey } from "./idempotency";
 import { enqueueAutomationRun } from "./queue";
+import { resolveAutomationAuthority } from "./authority";
 
 export async function createDurableAutomationRun(input: {
   automation: typeof AutomationTable.$inferSelect;
@@ -16,6 +17,14 @@ export async function createDurableAutomationRun(input: {
   // destructive_only remains fail-closed and requires a durable grant.
   const requiresApproval = input.automation.approvalPolicy !== "never";
   const approved = requiresApproval && Boolean(input.approvedBy);
+  const authorized = !requiresApproval || approved;
+  const authorizationContext = authorized
+    ? await resolveAutomationAuthority({
+        targetType: input.automation.targetType,
+        targetId: input.automation.targetId,
+        userId: input.automation.userId,
+      })
+    : null;
   const [created] = await pgDb
     .insert(AutomationRunTable)
     .values({
@@ -32,6 +41,7 @@ export async function createDurableAutomationRun(input: {
         : "not_required",
       approvedBy: approved ? input.approvedBy : null,
       approvedAt: approved ? new Date() : null,
+      authorizationContext,
     })
     .onConflictDoNothing()
     .returning();

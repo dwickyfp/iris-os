@@ -71,6 +71,10 @@ const schema = z.object({
     .min(1)
     .default(4),
   SANDBOX_RUNNER_CHILD_BROKER_NETWORK: z.string().trim().min(1).optional(),
+  SANDBOX_SECURITY_RUN_ID: z
+    .string()
+    .regex(/^iris-security-[A-Za-z0-9_.-]+$/)
+    .optional(),
 });
 
 export type SandboxRunnerConfig = z.infer<typeof schema>;

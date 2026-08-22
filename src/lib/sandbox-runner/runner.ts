@@ -18,6 +18,7 @@ const BOOT_LABEL = "com.iris-os.runner-boot";
 const PROFILE_LABEL = "com.iris-os.sandbox-profile";
 const NETWORK_LABEL = "com.iris-os.sandbox-network";
 const LIMIT_LABEL = "com.iris-os.sandbox-limits";
+const SECURITY_RUN_LABEL = "iris.security.run";
 
 type DockerContainer = {
   Id: string;
@@ -119,6 +120,9 @@ export class SandboxRunner {
         [PROFILE_LABEL]: profileId,
         [NETWORK_LABEL]: network,
         [LIMIT_LABEL]: JSON.stringify(limits),
+        ...(this.config.SANDBOX_SECURITY_RUN_ID
+          ? { [SECURITY_RUN_LABEL]: this.config.SANDBOX_SECURITY_RUN_ID }
+          : {}),
       },
       HostConfig: {
         Runtime: "runsc",

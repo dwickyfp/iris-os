@@ -2,10 +2,12 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import corpus from "../evals/capability-routing/corpus.json";
 import type { CapabilityDescriptor } from "../src/lib/ai/runtime/capabilities/registry";
+import { CapabilityRegistry } from "../src/lib/ai/runtime/capabilities/registry";
 import {
   capabilitySearchDocument,
   routeCapabilityDocuments,
 } from "../src/lib/ai/runtime/capabilities/semantic-router";
+import type { CapabilityHealthStatus } from "../src/types/capability-health";
 
 type EvaluationCase = {
   id: string;
@@ -20,6 +22,9 @@ type EvaluationCase = {
   catalogSize?: number;
   expectClarification?: boolean;
   expectPreserveAll?: boolean;
+  health?: Record<string, CapabilityHealthStatus>;
+  expectExcluded?: string[];
+  expectOrder?: string[];
 };
 
 const RELEASE_THRESHOLDS = {
@@ -29,6 +34,7 @@ const RELEASE_THRESHOLDS = {
   forbiddenRate: 0,
   policyDeniedRate: 0,
   medianReductionAt100: 0.7,
+  healthCorrectness: 1,
 };
 
 function capability(
@@ -119,6 +125,31 @@ const catalog = [
       `Archive transform utility item ${index}`,
     ),
   ),
+  capability(
+    "remote-peer:healthy-research",
+    "Remote market research",
+    "Research market data",
+  ),
+  capability(
+    "remote-peer:degraded-research",
+    "Remote market research",
+    "Research market data",
+  ),
+  capability(
+    "remote-peer:auth-research",
+    "Remote market research",
+    "Research market data",
+  ),
+  capability(
+    "remote-peer:unavailable-research",
+    "Remote market research",
+    "Research market data",
+  ),
+  capability(
+    "remote-peer:disabled-research",
+    "Remote market research",
+    "Research market data",
+  ),
 ];
 
 function percentile(values: number[], fraction: number) {
@@ -127,89 +158,132 @@ function percentile(values: number[], fraction: number) {
   return sorted[Math.floor((sorted.length - 1) * fraction)] ?? 0;
 }
 
-const cases = (corpus as EvaluationCase[]).map((evaluation) => {
-  const denied = new Set([
-    ...(evaluation.unauthorized ?? []),
-    ...(evaluation.policyDenied ?? []),
-  ]);
-  const source = catalog
-    .slice(0, evaluation.catalogSize ?? catalog.length)
-    .filter(({ id }) => !denied.has(id));
-  const startedAt = performance.now();
-  let selectedIds: string[];
-  let diagnostics;
+const cases = await Promise.all(
+  (corpus as EvaluationCase[]).map(async (evaluation) => {
+    const denied = new Set([
+      ...(evaluation.unauthorized ?? []),
+      ...(evaluation.policyDenied ?? []),
+    ]);
+    const source = catalog
+      .slice(0, evaluation.catalogSize ?? catalog.length)
+      .filter(
+        ({ id }) =>
+          !denied.has(id) &&
+          (evaluation.health || !id.startsWith("remote-peer:")),
+      )
+      .map((descriptor) => ({
+        ...descriptor,
+        health: evaluation.health?.[descriptor.id]
+          ? { status: evaluation.health[descriptor.id] }
+          : undefined,
+      }));
+    const startedAt = performance.now();
+    let selectedIds: string[];
+    let diagnostics;
 
-  if (evaluation.mode === "only") {
-    const eligible = new Set(source.map(({ id }) => id));
-    selectedIds = (evaluation.hinted ?? []).filter((id) => eligible.has(id));
-    diagnostics = {
-      strategy: "only" as const,
-      candidateCount: source.length,
-      selectedCount: selectedIds.length,
-      reductionRate:
-        source.length === 0 ? 0 : 1 - selectedIds.length / source.length,
-      fallbackReason: undefined,
-      clarificationRequired: false,
-    };
-  } else {
-    let tick = 0;
-    const routed = routeCapabilityDocuments(
-      source.map((item) => capabilitySearchDocument(item)),
-      evaluation.query,
-      new Set(evaluation.hinted ?? []),
-      evaluation.degraded
-        ? { config: { timeoutMs: 1 }, now: () => tick++ }
-        : undefined,
+    if (evaluation.health) {
+      const resolved = await new CapabilityRegistry([
+        { name: "eval", eligible: async () => source },
+      ]).resolve(
+        {},
+        {
+          mode: evaluation.mode ?? "prefer",
+          requested: (evaluation.hinted ?? []).map((id) => ({
+            type: "remoteAgent" as const,
+            agentId: id.replace(/^remote-peer:/, ""),
+            name: id,
+          })),
+        },
+        undefined,
+        { query: evaluation.query, config: { threshold: 1, topN: 12 } },
+      );
+      selectedIds = resolved.ordered.map(({ id }) => id);
+      diagnostics = resolved.routing;
+    } else if (evaluation.mode === "only") {
+      const eligible = new Set(source.map(({ id }) => id));
+      selectedIds = (evaluation.hinted ?? []).filter((id) => eligible.has(id));
+      diagnostics = {
+        strategy: "only" as const,
+        candidateCount: source.length,
+        selectedCount: selectedIds.length,
+        reductionRate:
+          source.length === 0 ? 0 : 1 - selectedIds.length / source.length,
+        fallbackReason: undefined,
+        clarificationRequired: false,
+      };
+    } else {
+      let tick = 0;
+      const routed = routeCapabilityDocuments(
+        source.map((item) => capabilitySearchDocument(item)),
+        evaluation.query,
+        new Set(evaluation.hinted ?? []),
+        evaluation.degraded
+          ? { config: { timeoutMs: 1 }, now: () => tick++ }
+          : undefined,
+      );
+      selectedIds = routed.selectedIds;
+      diagnostics = routed.diagnostics;
+    }
+
+    const selected = new Set(selectedIds);
+    const excluded = new Set(evaluation.expectExcluded ?? []);
+    const relevant = new Set([
+      ...evaluation.required,
+      ...(evaluation.hinted ?? []).filter(
+        (id) => !denied.has(id) && !excluded.has(id),
+      ),
+    ]);
+    const relevantSelected = selectedIds.filter((id) =>
+      relevant.has(id),
+    ).length;
+    const requiredSelected = evaluation.required.filter((id) =>
+      selected.has(id),
     );
-    selectedIds = routed.selectedIds;
-    diagnostics = routed.diagnostics;
-  }
+    const hintedSelected = (evaluation.hinted ?? []).filter(
+      (id) => !denied.has(id) && !excluded.has(id) && selected.has(id),
+    );
 
-  const selected = new Set(selectedIds);
-  const relevant = new Set([
-    ...evaluation.required,
-    ...(evaluation.hinted ?? []).filter((id) => !denied.has(id)),
-  ]);
-  const relevantSelected = selectedIds.filter((id) => relevant.has(id)).length;
-  const requiredSelected = evaluation.required.filter((id) => selected.has(id));
-  const hintedSelected = (evaluation.hinted ?? []).filter(
-    (id) => !denied.has(id) && selected.has(id),
-  );
-
-  return {
-    id: evaluation.id,
-    category: evaluation.category,
-    candidateCount: diagnostics.candidateCount,
-    selectedCount: selectedIds.length,
-    selectedIds,
-    required: evaluation.required,
-    recallAtK:
-      evaluation.required.length === 0
-        ? 1
-        : requiredSelected.length / evaluation.required.length,
-    precisionAtK:
-      selectedIds.length === 0 ? 1 : relevantSelected / selectedIds.length,
-    requiredSelected: requiredSelected.length,
-    requiredCount: evaluation.required.length,
-    hintsSelected: hintedSelected.length,
-    hintsCount: (evaluation.hinted ?? []).filter((id) => !denied.has(id))
-      .length,
-    unauthorizedSelected: (evaluation.unauthorized ?? []).filter((id) =>
-      selected.has(id),
-    ).length,
-    policyDeniedSelected: (evaluation.policyDenied ?? []).filter((id) =>
-      selected.has(id),
-    ).length,
-    fallback: diagnostics.strategy === "fallback",
-    clarificationRequired: diagnostics.clarificationRequired,
-    expectedClarification: evaluation.expectClarification ?? false,
-    preserveAllPassed:
-      !evaluation.expectPreserveAll || selectedIds.length === source.length,
-    latencyMs: Number((performance.now() - startedAt).toFixed(3)),
-    reductionRate: diagnostics.reductionRate,
-    diagnostics,
-  };
-});
+    return {
+      id: evaluation.id,
+      category: evaluation.category,
+      candidateCount: diagnostics.candidateCount,
+      selectedCount: selectedIds.length,
+      selectedIds,
+      required: evaluation.required,
+      recallAtK:
+        evaluation.required.length === 0
+          ? 1
+          : requiredSelected.length / evaluation.required.length,
+      precisionAtK:
+        selectedIds.length === 0 ? 1 : relevantSelected / selectedIds.length,
+      requiredSelected: requiredSelected.length,
+      requiredCount: evaluation.required.length,
+      hintsSelected: hintedSelected.length,
+      hintsCount: (evaluation.hinted ?? []).filter(
+        (id) => !denied.has(id) && !excluded.has(id),
+      ).length,
+      unauthorizedSelected: (evaluation.unauthorized ?? []).filter((id) =>
+        selected.has(id),
+      ).length,
+      policyDeniedSelected: (evaluation.policyDenied ?? []).filter((id) =>
+        selected.has(id),
+      ).length,
+      fallback: diagnostics.strategy === "fallback",
+      clarificationRequired: diagnostics.clarificationRequired,
+      expectedClarification: evaluation.expectClarification ?? false,
+      preserveAllPassed:
+        !evaluation.expectPreserveAll || selectedIds.length === source.length,
+      healthPassed:
+        (evaluation.expectExcluded ?? []).every((id) => !selected.has(id)) &&
+        (evaluation.expectOrder ?? []).every(
+          (id, index) => selectedIds[index] === id,
+        ),
+      latencyMs: Number((performance.now() - startedAt).toFixed(3)),
+      reductionRate: diagnostics.reductionRate,
+      diagnostics,
+    };
+  }),
+);
 
 const sum = (values: number[]) =>
   values.reduce((total, value) => total + value, 0);
@@ -258,6 +332,8 @@ const metrics = {
     largeRoutedCases.map((item) => item.reductionRate),
     0.5,
   ),
+  healthCorrectness:
+    cases.filter((item) => item.healthPassed).length / cases.length,
 };
 const gates = {
   requiredRecall: metrics.requiredRecall >= RELEASE_THRESHOLDS.requiredRecall,
@@ -271,6 +347,8 @@ const gates = {
     metrics.medianReductionAt100 >= RELEASE_THRESHOLDS.medianReductionAt100,
   clarification: metrics.clarificationAccuracy === 1,
   preserveAll: cases.every((item) => item.preserveAllPassed),
+  healthCorrectness:
+    metrics.healthCorrectness >= RELEASE_THRESHOLDS.healthCorrectness,
 };
 const report = {
   schemaVersion: 1,

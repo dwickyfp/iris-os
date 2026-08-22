@@ -113,5 +113,75 @@
     "required": ["finance:revenue"],
     "catalogSize": 20,
     "expectPreserveAll": true
+  },
+  {
+    "id": "health-automatic",
+    "category": "health",
+    "query": "Research market data",
+    "required": [
+      "remote-peer:healthy-research",
+      "remote-peer:degraded-research"
+    ],
+    "health": {
+      "remote-peer:healthy-research": "healthy",
+      "remote-peer:degraded-research": "degraded",
+      "remote-peer:auth-research": "auth_required",
+      "remote-peer:unavailable-research": "unavailable",
+      "remote-peer:disabled-research": "disabled"
+    },
+    "expectOrder": [
+      "remote-peer:healthy-research",
+      "remote-peer:degraded-research"
+    ],
+    "expectExcluded": [
+      "remote-peer:auth-research",
+      "remote-peer:unavailable-research",
+      "remote-peer:disabled-research"
+    ]
+  },
+  {
+    "id": "health-auth-explicit",
+    "category": "health",
+    "query": "Research market data",
+    "required": ["remote-peer:auth-research"],
+    "hinted": ["remote-peer:auth-research"],
+    "health": {
+      "remote-peer:healthy-research": "healthy",
+      "remote-peer:degraded-research": "degraded",
+      "remote-peer:auth-research": "auth_required",
+      "remote-peer:unavailable-research": "unavailable",
+      "remote-peer:disabled-research": "disabled"
+    },
+    "expectOrder": ["remote-peer:auth-research"],
+    "expectExcluded": [
+      "remote-peer:unavailable-research",
+      "remote-peer:disabled-research"
+    ]
+  },
+  {
+    "id": "health-disabled-explicit",
+    "category": "health",
+    "query": "Research market data",
+    "required": [],
+    "hinted": [
+      "remote-peer:unavailable-research",
+      "remote-peer:disabled-research"
+    ],
+    "health": {
+      "remote-peer:healthy-research": "healthy",
+      "remote-peer:degraded-research": "degraded",
+      "remote-peer:auth-research": "auth_required",
+      "remote-peer:unavailable-research": "unavailable",
+      "remote-peer:disabled-research": "disabled"
+    },
+    "expectOrder": [
+      "remote-peer:healthy-research",
+      "remote-peer:degraded-research"
+    ],
+    "expectExcluded": [
+      "remote-peer:auth-research",
+      "remote-peer:unavailable-research",
+      "remote-peer:disabled-research"
+    ]
   }
 ]

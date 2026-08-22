@@ -18,6 +18,11 @@ import {
   AutomationTable,
 } from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
+import { resolveAutomationAuthority } from "lib/automation/authority";
+import {
+  buildAutomationWorkerRequest,
+  resolveWorkerAutomationAuthority,
+} from "lib/automation/worker-context";
 
 const executeTarget = createAutomationExecutionAdapter();
 
@@ -46,6 +51,30 @@ async function execute(runId: string) {
     await pgDb
       .update(AutomationRunTable)
       .set({ status: "cancelled", completedAt: new Date() })
+      .where(eq(AutomationRunTable.id, run.id));
+    return;
+  }
+  let authority;
+  try {
+    authority = resolveWorkerAutomationAuthority({
+      persisted: run.authorizationContext,
+      current: await resolveAutomationAuthority({
+        targetType: automation.targetType,
+        targetId: automation.targetId,
+        userId: automation.userId,
+      }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await pgDb
+      .update(AutomationRunTable)
+      .set({
+        status: "failed",
+        errorCode: "AUTHORITY_SNAPSHOT_INVALID",
+        error: message.slice(0, 2_000),
+        retryable: false,
+        completedAt: new Date(),
+      })
       .where(eq(AutomationRunTable.id, run.id));
     return;
   }
@@ -95,28 +124,29 @@ async function execute(runId: string) {
   });
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), automation.timeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("Run timed out", "TimeoutError")),
+    automation.timeoutMs,
+  );
   const cancellationPoll = setInterval(() => {
     void pgDb
       .select({ cancelRequestedAt: AutomationRunTable.cancelRequestedAt })
       .from(AutomationRunTable)
       .where(eq(AutomationRunTable.id, run.id))
       .then(([current]) => {
-        if (current?.cancelRequestedAt) controller.abort();
+        if (current?.cancelRequestedAt)
+          controller.abort(new DOMException("Run was cancelled", "AbortError"));
       })
       .catch(() => undefined);
   }, 1_000);
-  const result = await executeTarget({
-    runId: run.id,
-    userId: automation.userId,
-    workspaceId: automation.workspaceId ?? undefined,
-    targetType: automation.targetType,
-    targetId: automation.targetId,
-    input: automation.input,
-    timeoutMs: automation.timeoutMs,
-    signal: controller.signal,
-    executionSource: "automation",
-  }).finally(() => {
+  const result = await executeTarget(
+    buildAutomationWorkerRequest({
+      run,
+      automation,
+      authority,
+      signal: controller.signal,
+    }),
+  ).finally(() => {
     clearTimeout(timeout);
     clearInterval(cancellationPoll);
   });

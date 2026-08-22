@@ -60,6 +60,7 @@ function capabilityExecutions(value: unknown) {
       executions.set(toolName, {
         capability: toolName,
         executed: true,
+        successful: record.isError !== true,
         result: output,
       });
     }
@@ -73,7 +74,21 @@ function capabilityExecutions(value: unknown) {
       executions.set(capability, {
         capability,
         executed: true,
+        successful: true,
         result: record.output,
+      });
+    }
+    if (
+      typeof record.type === "string" &&
+      record.type.startsWith("tool-") &&
+      toolCallId &&
+      record.state === "output-error"
+    ) {
+      executions.set(record.type.slice("tool-".length), {
+        capability: record.type.slice("tool-".length),
+        executed: true,
+        successful: false,
+        result: record.errorText,
       });
     }
     for (const nested of Array.isArray(candidate)
@@ -106,6 +121,7 @@ export class CapabilityRequirement implements CompletionRequirement {
         kind: "capability_result",
         capability,
         executed: execution.executed,
+        successful: execution.successful,
         value: execution.result,
       });
       if (!result.verified) return result;

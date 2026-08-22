@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, RootRunBudgetTable } from "lib/db/pg/schema.pg";
 import type { RunBudget } from "./budget";
@@ -69,7 +69,17 @@ export async function serverBudgetResolver(
 ): Promise<RunBudget> {
   if (input.runId) {
     const [persisted] = await pgDb
-      .select({ budget: RootRunBudgetTable, userId: AgentRunTable.userId })
+      .select({
+        budget: RootRunBudgetTable,
+        userId: AgentRunTable.userId,
+        parentRunId: AgentRunTable.parentRunId,
+        tokenBudget: AgentRunTable.tokenBudget,
+        absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+        remainingDurationMs:
+          sql<number>`GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (${AgentRunTable.absoluteDeadlineAt} - CURRENT_TIMESTAMP)) * 1000))`.mapWith(
+            Number,
+          ),
+      })
       .from(AgentRunTable)
       .innerJoin(
         RootRunBudgetTable,
@@ -82,8 +92,21 @@ export async function serverBudgetResolver(
         ),
       );
     if (!persisted) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
+    const childBudget: RunBudget | undefined = persisted.parentRunId
+      ? {
+          maxTokens: persisted.tokenBudget,
+          ...(persisted.absoluteDeadlineAt
+            ? {
+                 maxDurationMs: persisted.remainingDurationMs,
+              }
+            : {}),
+        }
+      : undefined;
     return narrowServerBudget(
-      narrowServerBudget(snapshot(persisted.budget), input.requestedBudget),
+      narrowServerBudget(
+        narrowServerBudget(snapshot(persisted.budget), childBudget),
+        input.requestedBudget,
+      ),
       input.restore?.budget,
     );
   }

@@ -6,12 +6,18 @@ export type VerificationTarget =
       expectedUserId: string;
       expectedRunId: string;
     }
-  | { kind: "tool_result"; value: unknown; mediaType?: string }
+  | {
+      kind: "tool_result";
+      value: unknown;
+      successful?: boolean;
+      mediaType?: string;
+    }
   | {
       kind: "capability_result";
       capability: string;
       value: unknown;
       executed?: boolean;
+      successful?: boolean;
     };
 
 export type VerificationLevel = "artifact" | "outcome";
@@ -63,11 +69,30 @@ export const capabilityResultVerifier: Verifier = {
         verificationKind: "capability",
         reason: "CAPABILITY_NOT_EXECUTED",
       };
+    if (!target.successful)
+      return {
+        verified: false,
+        verificationKind: "capability",
+        reason: "CAPABILITY_EXECUTION_FAILED",
+      };
     return {
       verified: true,
       verificationKind: "capability",
       details: { capability: target.capability },
     };
+  },
+};
+
+export const toolResultVerifier: Verifier = {
+  supports: (target) => target.kind === "tool_result",
+  async verify(target) {
+    if (target.kind !== "tool_result" || !target.successful)
+      return {
+        verified: false,
+        verificationKind: "capability",
+        reason: "TOOL_RESULT_NOT_SUCCESSFUL",
+      };
+    return { verified: true, verificationKind: "capability" };
   },
 };
 
@@ -82,6 +107,7 @@ export interface CompletionRequirement {
 export type CapabilityVerification = {
   capability: string;
   executed: boolean;
+  successful: boolean;
   result?: unknown;
 };
 

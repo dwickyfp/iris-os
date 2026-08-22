@@ -27,6 +27,7 @@ function repository() {
     isCancellationRequested: vi.fn(),
     countRunningChildren: vi.fn(),
     listStaleDelegatedRunIds: vi.fn(),
+    reconcileTerminalDelegatedRuns: vi.fn(),
     listPendingDispatchRunIds: vi.fn(),
     markDispatched: vi.fn(),
     listPendingRemoteCancellationRunIds: vi.fn(),
@@ -146,5 +147,26 @@ describe("RunManager", () => {
       "root-1",
       "user-1",
     );
+  });
+
+  test("retains a foreground lease when terminal persistence throws", async () => {
+    const runs = repository();
+    runs.createRunning.mockResolvedValue({
+      id: "run-1",
+      leaseToken: "lease-1",
+    } as never);
+    runs.finishRunning
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValueOnce({ id: "run-1", status: "failed" } as never);
+    const manager = new RunManager(runs);
+    await manager.start({ id: "run-1", userId: "user-1" });
+
+    await expect(manager.succeed("run-1", {})).rejects.toThrow(
+      "database unavailable",
+    );
+    await expect(
+      manager.fail("run-1", "terminalization failed"),
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(runs.finishRunning).toHaveBeenCalledTimes(2);
   });
 });

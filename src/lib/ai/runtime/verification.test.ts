@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   capabilityResultVerifier,
   nonEmptyStructuredOutput,
+  toolResultVerifier,
   VerificationEngine,
 } from "./verification";
 
@@ -36,6 +37,7 @@ describe("VerificationEngine", () => {
         kind: "capability_result",
         capability: "generate_report",
         executed: false,
+        successful: false,
         value: { artifact: "ignored" },
       }),
     ).resolves.toEqual({
@@ -48,11 +50,33 @@ describe("VerificationEngine", () => {
         kind: "capability_result",
         capability: "generate_report",
         executed: true,
+        successful: true,
         value: { artifactId: "artifact-1" },
       }),
     ).resolves.toMatchObject({
       verified: true,
       verificationKind: "capability",
+    });
+  });
+
+  test("represents terminal tool success independently from output content", async () => {
+    await expect(
+      toolResultVerifier.verify({
+        kind: "tool_result",
+        successful: true,
+        value: undefined,
+      }),
+    ).resolves.toMatchObject({ verified: true });
+    await expect(
+      toolResultVerifier.verify({
+        kind: "tool_result",
+        successful: false,
+        value: "provider failed",
+      }),
+    ).resolves.toEqual({
+      verified: false,
+      verificationKind: "capability",
+      reason: "TOOL_RESULT_NOT_SUCCESSFUL",
     });
   });
 

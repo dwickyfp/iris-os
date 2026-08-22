@@ -4,6 +4,8 @@ import { enqueueAutomationRun } from "lib/automation/queue";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import { resolveAutomationAuthority } from "lib/automation/authority";
+import { AutomationTable } from "lib/db/pg/schema.pg";
 
 export async function POST(
   _request: Request,
@@ -15,6 +17,31 @@ export async function POST(
   if (!isV2FeatureEnabled("automation"))
     return Response.json({ error: "Not found" }, { status: 404 });
   const { id, runId } = await params;
+  const [pending] = await pgDb
+    .select({ run: AutomationRunTable, automation: AutomationTable })
+    .from(AutomationRunTable)
+    .innerJoin(
+      AutomationTable,
+      eq(AutomationRunTable.automationId, AutomationTable.id),
+    )
+    .where(
+      and(
+        eq(AutomationRunTable.id, runId),
+        eq(AutomationRunTable.automationId, id),
+        eq(AutomationRunTable.userId, session.user.id),
+        eq(AutomationRunTable.status, "awaiting_approval"),
+      ),
+    );
+  if (!pending)
+    return Response.json(
+      { error: "Run is not awaiting approval" },
+      { status: 409 },
+    );
+  const authorizationContext = await resolveAutomationAuthority({
+    targetType: pending.automation.targetType,
+    targetId: pending.automation.targetId,
+    userId: session.user.id,
+  });
   const [run] = await pgDb
     .update(AutomationRunTable)
     .set({
@@ -22,6 +49,7 @@ export async function POST(
       approvalStatus: "approved",
       approvedBy: session.user.id,
       approvedAt: new Date(),
+      authorizationContext,
     })
     .where(
       and(

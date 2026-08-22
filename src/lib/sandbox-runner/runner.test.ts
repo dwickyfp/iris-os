@@ -198,6 +198,30 @@ describe("SandboxRunner", () => {
     await runner.stop();
   });
 
+  it("labels security-run sessions for exact workflow cleanup", async () => {
+    const docker = new FakeDocker();
+    const runner = new SandboxRunner(
+      config({ SANDBOX_SECURITY_RUN_ID: "iris-security-123-1" }),
+      docker as unknown as DockerClient,
+    );
+    await runner.start();
+    const session = await runner.createSession(sessionRequest());
+    const create = docker.calls.find(
+      (call) =>
+        call.path.startsWith("/containers/create") &&
+        (call.body as { Labels?: Record<string, string> }).Labels?.[
+          "com.iris-os.sandbox-session"
+        ] === session.id,
+    );
+
+    expect(
+      (create?.body as { Labels: Record<string, string> }).Labels[
+        "iris.security.run"
+      ],
+    ).toBe("iris-security-123-1");
+    await runner.stop();
+  });
+
   it("fails closed with RUNSC_UNAVAILABLE and never creates a container", async () => {
     const docker = new FakeDocker();
     docker.hasRunsc = false;

@@ -5,6 +5,10 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: sandbox-gvisor-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   sandbox-gvisor:
     runs-on: [self-hosted, Linux, gvisor]
@@ -12,6 +16,12 @@ jobs:
     env:
       SANDBOX_RUNNER_TOKEN: sandbox-ci-${{ github.run_id }}-${{ github.run_attempt }}-dedicated-runner
     steps:
+      - name: Generate security run ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'SANDBOX_SECURITY_RUN_ID=iris-security-%s-%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
@@ -33,8 +43,24 @@ jobs:
         run: pnpm sandbox:build
       - name: Run gVisor smoke test
         run: pnpm sandbox:smoke
+      - name: Run archive and artifact attack tests
+        run: pnpm sandbox:security:attacks
       - name: Run sandbox security assertions
         run: pnpm sandbox:security
+      - name: Clean adversarial security resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SANDBOX_SECURITY_RUN_ID:-}"
+          containers="$(docker ps --all --quiet --filter "label=iris.security.run=${SANDBOX_SECURITY_RUN_ID}")"
+          if [ -n "$containers" ]; then
+            docker rm --force $containers
+          fi
+          networks="$(docker network ls --quiet --filter "label=iris.security.run=${SANDBOX_SECURITY_RUN_ID}")"
+          if [ -n "$networks" ]; then
+            docker network rm $networks
+          fi
       - name: Generate runtime SBOM
         uses: anchore/sbom-action@v0
         with:
@@ -46,4 +72,11 @@ jobs:
         with:
           name: iris-sandbox-runtime-sbom
           path: iris-sandbox-runtime.cdx.json
+          if-no-files-found: error
+      - name: Upload real-runsc security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-runsc-security-evidence
+          path: sandbox-security-evidence.json
           if-no-files-found: error

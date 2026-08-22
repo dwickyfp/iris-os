@@ -10,6 +10,10 @@ import type {
   RunContinuation,
   RunLeaseState,
 } from "lib/ai/runs/types";
+import {
+  isActiveAgentRunStatus,
+  isTerminalAgentRunStatus,
+} from "lib/ai/runs/status";
 import type { AutomationExecutionResult } from "lib/automation/execution-adapter";
 import {
   type AbortCause,
@@ -267,14 +271,12 @@ export function createDelegationWorkerExecutor(
 
   const execute = async function execute(childRunId: string) {
     const child = await dependencies.selectRun(childRunId);
-    if (
-      child &&
-      !["queued", "running", "waiting_external"].includes(child.status)
-    ) {
+    if (child && isTerminalAgentRunStatus(child.status)) {
       // The durable event sink deduplicates this reconciliation on sweeper retries.
       await dependencies.recordEvent({ kind: "terminal", child });
       return;
     }
+    if (child && !isActiveAgentRunStatus(child.status)) return;
     if (!child?.parentRunId) return;
     if (child.status === "waiting_external" && child.cancelRequestedAt) return;
     const delegation = await dependencies.selectDelegation(child.id);
@@ -294,7 +296,11 @@ export function createDelegationWorkerExecutor(
       return;
     }
     const parent = await dependencies.selectRun(child.parentRunId);
-    if (!parent || parent.cancelRequestedAt || parent.status === "cancelled") {
+    if (
+      !parent ||
+      parent.cancelRequestedAt ||
+      isTerminalAgentRunStatus(parent.status)
+    ) {
       const cancelled = await dependencies.runs.cancelQueued(child.id, {
         errorCode: "PARENT_CANCELLED",
         error: "Parent cancelled",
@@ -338,7 +344,16 @@ export function createDelegationWorkerExecutor(
           if (leaseState !== "active")
             abort(leaseState === "timed_out" ? "timeout" : leaseState);
           if (leaseState === "lease_lost") return false;
-          return dependencies.runs.isCancellationRequested([run.id, parent.id]);
+          return Promise.all([
+            dependencies.runs.isCancellationRequested([run.id, parent.id]),
+            dependencies.selectRun(parent.id),
+          ]).then(
+            ([cancelled, currentParent]) =>
+              cancelled ||
+              !currentParent ||
+              Boolean(currentParent.cancelRequestedAt) ||
+              isTerminalAgentRunStatus(currentParent.status),
+          );
         })
         .then((cancelled) => {
           if (cancelled) {
@@ -348,6 +363,8 @@ export function createDelegationWorkerExecutor(
         .catch(() => undefined);
     }, pollMs);
 
+    // Remote peers do not report trustworthy token usage. tokenBudget remains
+    // orchestration metadata while root delegation/child accounting applies.
     const rawResult = await (delegation.targetKind === "remote_agent"
       ? executeRemote(
           run,

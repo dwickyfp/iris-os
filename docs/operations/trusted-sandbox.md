@@ -176,11 +176,40 @@ pnpm sandbox:security
 ```
 
 `sandbox:security` fails unless it is running on Linux against a Linux Docker
-Engine with a registered `runsc` runtime. It statically checks the CI/runtime
-contract, creates a real `runsc` container, inspects its runtime, network,
-read-only filesystem, capabilities, privilege, and PID settings, and verifies
-the effective UID, capability set, `no-new-privileges`, and root filesystem at
-runtime. It never installs gVisor and has no fallback runtime.
+Engine with a registered `runsc` runtime and the required images and controlled
+test topology are available. It creates real `runsc` containers and checks
+effective UID/GID, read-only root, bounded writable workspace/tmp filesystems,
+runtime, capabilities, privilege, mounts, devices, host namespaces, PID, memory,
+and CPU limits. An internal canary network verifies that children cannot reach
+controlled stand-ins for the internet, runner, IRIS, Postgres, Redis, metadata,
+or a sibling sandbox. Real runner sessions verify archive upload, execution, and
+captured download; traversal, symlink, and oversized archive rejection; bounded
+tmpfs exhaustion; concurrent-session rejection; idle and absolute TTL reaping;
+output-overflow quarantine; timeout; and cancellation removal. All HTTP calls,
+polling, and pressure probes are time-bounded. Resources are uniquely labeled,
+cleanup is bounded and recorded, and partial JSON evidence is rewritten after
+each passed or failed assertion and again after cleanup. Missing topology is a
+failure. It never installs gVisor and has no fallback runtime.
+
+`pnpm sandbox:security:attacks` invokes the adversarial tar archive and artifact
+bridge tests for traversal, links, special files, malformed input, and size/count
+limits. `pnpm sandbox:check:security` is definition-only static validation. Its
+success message explicitly states that `runsc` was not executed and must never be
+used as runtime evidence. Unit archive/artifact attacks remain separate source
+coverage; the runtime evidence identifies the subset exercised through the real
+runner archive API.
+
+The operations snapshot reports released reservations whose settlement occurred
+at or after expiry as `expiredReservationsReleased`; this is not proof that a
+specific reaper released them. Prometheus exports
+`iris_budget_expired_reservations_released` as a gauge because it is a current
+snapshot row count, not a monotonic counter. Ordinary TTL cleanup is
+`iris_sandbox_sessions_reaped`; `iris_sandbox_sessions_forced_destroy` is
+limited to sessions carrying the specific `SANDBOX_TIMED_OUT` or
+`SANDBOX_SESSION_LOST` terminal codes and does not rename every reap as forced.
+Delegation, exhaustion, release, reap, and forced-destroy snapshot values are all
+gauges. `iris_workers_oldest_heartbeat_age_seconds` reports the oldest durable
+worker heartbeat age and is omitted when no worker heartbeat exists.
 
 Start the application plus sandbox control plane after the Linux/runsc checks and
 operator configuration pass:
@@ -218,13 +247,18 @@ networks.
 The `Sandbox gVisor Security` GitHub Actions workflow runs only on a self-hosted
 runner carrying the `Linux` and `gvisor` labels. It is manually triggerable and
 also triggered by a published release. The workflow runs `sandbox:build`,
-`sandbox:smoke`, and `sandbox:security`; it remains queued or fails when the
-dedicated runner or required runtime is unavailable. This is a real Linux/gVisor
-workflow definition, but the repository contains no retained successful run
-evidence. Its checked-in existence, static checks, and local non-Linux checks do
-not establish that it has run or externally validate a deployment. After build
-and runtime checks, the workflow generates a CycloneDX JSON SBOM and uploads it
-as the `iris-sandbox-runtime-sbom` artifact.
+`sandbox:smoke`, archive/artifact attack tests, and `sandbox:security`; it remains
+queued or fails when the dedicated runner, images, runtime, or controlled test
+topology is unavailable. The full adversarial suite is defined in source, but
+the repository contains no retained successful external run evidence. Its
+checked-in existence, static checks, and local non-Linux checks do not establish
+that it has run or externally validate a deployment. A successful external run
+must retain both the generated `sandbox-runsc-security-evidence` artifact and
+the CycloneDX `iris-sandbox-runtime-sbom` artifact.
+The workflow serializes runs per Git ref without cancelling an in-progress run.
+It assigns one stable run-attempt ID to every adversarial container and network;
+fallback cleanup selects only the exact `iris.security.run=<run-id>` value and
+never deletes by label key or sandbox profile.
 
 Sandbox completion can be subject to durable compute settlement and canonical
 artifact verification. Those checks establish the configured accounting,

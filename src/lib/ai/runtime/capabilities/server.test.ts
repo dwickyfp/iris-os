@@ -240,4 +240,45 @@ describe("production server capability parity", () => {
       "workflow:workflow-1",
     );
   });
+
+  test("a configured healthy remote peer enters a custom agent universe while a stale binding is omitted", async () => {
+    const resolved = await resolveServerCapabilities(
+      await buildServerCapabilityResolutionInput({
+        userId: "user-1",
+        runId: "run-1",
+        goal: "research with the configured peer",
+        agent: {
+          id: "agent-1",
+          userId: "user-1",
+          name: "Remote research agent",
+          instructions: {
+            capabilities: [
+              {
+                type: "remoteAgent",
+                agentId: "remote-1",
+                name: "Remote analyst",
+              },
+              {
+                type: "remoteAgent",
+                agentId: "deleted-remote",
+                name: "Deleted remote",
+              },
+            ],
+          },
+        } as any,
+        featureState: {
+          tools: true,
+          workflows: true,
+          delegation: true,
+          remoteAgents: true,
+          learning: true,
+        },
+      }),
+    );
+
+    expect(resolved.ordered.map(({ id }) => id)).toEqual([
+      "remote-peer:remote-1",
+    ]);
+    expect(resolved.eligibleDelegationTargets).toEqual(["remote:remote-1"]);
+  });
 });

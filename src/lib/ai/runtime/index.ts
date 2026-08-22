@@ -34,6 +34,7 @@ export {
   VerificationEngine,
   AllRequirements,
   capabilityResultVerifier,
+  toolResultVerifier,
   nonEmptyStructuredOutput,
 } from "./verification";
 export {

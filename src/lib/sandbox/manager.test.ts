@@ -828,6 +828,28 @@ describe("SandboxManager", () => {
     expect(repository.settleExecution).toHaveBeenCalledOnce();
   });
 
+  it("persists bounded artifact rejection codes for operations accounting", async () => {
+    const { manager, repository, artifacts } = setup();
+    artifacts.capture.mockRejectedValueOnce(
+      new Error("SANDBOX_ARTIFACT_OUTPUT_FILE_SIZE_EXCEEDED"),
+    );
+
+    await expect(
+      manager.executePython({
+        scope: { runId: "run-artifact-rejected", userId: "user-1" },
+        profile,
+        request: { code: "print('large')" },
+      }),
+    ).rejects.toThrow("SANDBOX_ARTIFACT_OUTPUT_FILE_SIZE_EXCEEDED");
+    expect(repository.finishExecution).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "SANDBOX_ARTIFACT_OUTPUT_FILE_SIZE_EXCEEDED",
+      }),
+    );
+  });
+
   it("caps chargeable duration by reservation and preserves observed wall time", async () => {
     const { manager, instance, repository } = setup();
     vi.mocked(instance.executePython).mockResolvedValueOnce({

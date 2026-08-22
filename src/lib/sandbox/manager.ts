@@ -367,13 +367,18 @@ export class SandboxManager {
         : [];
     } catch (error) {
       const completedAt = this.now();
+      const artifactErrorCode =
+        error instanceof Error &&
+        /^SANDBOX_ARTIFACT_[A-Z_]+$/.test(error.message)
+          ? error.message
+          : "SANDBOX_ARTIFACT_CAPTURE_FAILED";
       const finalized = await this.dependencies.repository
         .finishExecution(executionId, {
           status: "failed",
           durationMs,
           observedWallDurationMs,
           exitCode: result.exitCode,
-          errorCode: "SANDBOX_ARTIFACT_CAPTURE_FAILED",
+          errorCode: artifactErrorCode,
           completedAt,
         })
         .catch(() => true);

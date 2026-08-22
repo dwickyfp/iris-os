@@ -59,16 +59,20 @@ function remoteAgentMention(
     card?.capabilities?.authentication === true;
   const missingAuth = authRequired && !agent.hasCredential;
   const unavailable =
-    Boolean(requestError) || agent.status !== "active" || !card || missingAuth;
+    Boolean(requestError) ||
+    agent.health.status === "unavailable" ||
+    agent.health.status === "disabled";
   const status = requestError
     ? "Unavailable"
-    : agent.status !== "active"
+    : agent.health.status === "disabled"
       ? "Disabled"
-      : !card
+      : agent.health.status === "unavailable"
         ? "Needs discovery"
-        : missingAuth
+        : agent.health.status === "auth_required" || missingAuth
           ? "Auth required"
-          : "Healthy";
+          : agent.health.status === "degraded"
+            ? "Degraded"
+            : "Healthy";
 
   return {
     id: `remote-${agent.id}`,
@@ -709,9 +713,7 @@ export function ChatMentionInputSuggestion({
                         <MentionItem
                           key={item.id}
                           item={item}
-                          isSelected={
-                            allMentions[selectedIndex]?.id === item.id
-                          }
+                          isSelected={allMentions[selectedIndex]?.id === item.id}
                           ref={(el) => {
                             itemRefs.current[item.id] = el;
                           }}
@@ -842,7 +844,9 @@ export function ChatMentionInputSuggestion({
                         <MentionItem
                           key={item.id}
                           item={item}
-                          isSelected={allMentions[selectedIndex]?.id === item.id}
+                          isSelected={
+                            allMentions[selectedIndex]?.id === item.id
+                          }
                           ref={(el) => {
                             itemRefs.current[item.id] = el;
                           }}

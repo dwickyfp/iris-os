@@ -67,6 +67,7 @@
     "sandbox:check:security": "node docker/sandbox/security.mjs --static",
     "sandbox:check": "pnpm sandbox:check:packages && pnpm sandbox:check:compose && pnpm sandbox:check:security",
     "sandbox:smoke": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml --profile smoke run --rm sandbox-smoke",
+    "sandbox:security:attacks": "vitest run src/lib/sandbox-runner/archive.test.ts src/lib/sandbox/artifact-bridge.test.ts",
     "sandbox:security": "node docker/sandbox/security.mjs",
     "sandbox:up": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml up -d --build",
     "sandbox:down": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml down",

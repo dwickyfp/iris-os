@@ -14,9 +14,10 @@ import {
   sql,
 } from "drizzle-orm";
 import type { AgentRunRepository } from "lib/ai/runs/agent-run-repository";
-import type { RunOutcome } from "lib/ai/runs/types";
+import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
+import type { AgentRun, RunOutcome } from "lib/ai/runs/types";
 import { rootBudgetValues } from "lib/ai/runtime/server-budget-resolver";
-import { pgDb as db } from "../db.pg";
+import { pgDb } from "../db.pg";
 import {
   AgentRunCheckpointTable,
   AgentRunContinuationTable,
@@ -26,9 +27,16 @@ import {
   AgentRunResumeDispatchTable,
   AgentRunTable,
   DelegationRunTable,
+  IrisActivityEventTable,
   RootRunBudgetReservationTable,
   RootRunBudgetTable,
 } from "../schema.pg";
+import {
+  lockAgentRuns,
+  lockRootBudget,
+  lockRootBudgetForRun,
+  resolveRootRunId,
+} from "./lock-order.pg";
 
 function terminalValues(outcome: RunOutcome) {
   return {
@@ -46,9 +54,7 @@ async function observeTerminalChild(
   run: typeof AgentRunTable.$inferSelect,
 ) {
   if (!run.parentRunId) return;
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${run.rootRunId}`}, 0))`,
-  );
+  await lockRootBudget(tx, run.rootRunId);
   const settled = await tx
     .update(RootRunBudgetReservationTable)
     .set({
@@ -75,7 +81,7 @@ async function observeTerminalChild(
         updatedAt: new Date(),
       })
       .where(eq(RootRunBudgetTable.rootRunId, run.rootRunId));
-  await tx
+  const completedJoins = await tx
     .update(AgentRunJoinTable)
     .set({
       observation: {
@@ -92,7 +98,9 @@ async function observeTerminalChild(
         eq(AgentRunJoinTable.childRunId, run.id),
         isNull(AgentRunJoinTable.completedAt),
       ),
-    );
+    )
+    .returning({ parentRunId: AgentRunJoinTable.parentRunId });
+  if (!completedJoins[0]) return;
   await tx.execute(sql`
     INSERT INTO agent_run_resume_dispatch
       (parent_run_id, generation, available_at, dispatched_at)
@@ -109,257 +117,490 @@ async function observeTerminalChild(
         WHERE pending.parent_run_id = checkpoint.parent_run_id
           AND pending.completed_at IS NULL
       )
-    ON CONFLICT (parent_run_id) DO UPDATE SET
-      generation = EXCLUDED.generation,
-      available_at = EXCLUDED.available_at,
-      dispatched_at = NULL
+    ON CONFLICT (parent_run_id) DO NOTHING
   `);
 }
 
-export const pgAgentRunRepository: AgentRunRepository = {
-  async createRunning(input) {
-    const now = new Date();
-    const leaseToken = randomUUID();
-    let parent: { rootRunId: string } | undefined;
-    if (input.parentRunId) {
-      const parents = await db
-        .select({ rootRunId: AgentRunTable.rootRunId })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, input.parentRunId));
-      parent = parents[0];
-    }
-    const inserted = await db.transaction(async (tx) => {
-      const rows = await tx
-        .insert(AgentRunTable)
-        .values({
-          ...input,
-          agentId: input.agentId ?? null,
-          parentRunId: input.parentRunId ?? null,
-          rootRunId: parent?.rootRunId ?? input.id,
-          workspaceId: input.workspaceId ?? null,
-          taskId: input.taskId ?? null,
-          status: "running",
-          context: input.context ?? {},
-          allowedTools: input.allowedTools ?? [],
-          startedAt: now,
-          lastHeartbeatAt: now,
-          leaseToken,
-          leaseExpiresAt: new Date(now.getTime() + 30_000),
-          absoluteDeadlineAt: new Date(
-            now.getTime() + (input.timeoutMs ?? 300_000),
-          ),
-          attempt: 1,
-        })
-        .onConflictDoNothing()
-        .returning();
-      if (rows[0] && !input.parentRunId) {
-        await tx.insert(RootRunBudgetTable).values({
-          rootRunId: input.id,
-          ...rootBudgetValues(input.budget ?? {}),
-        });
-      }
-      return rows;
-    });
-    const created = Array.isArray(inserted) ? inserted[0] : undefined;
-    if (created) return created;
-    const existing = await this.selectById(input.id, input.userId);
-    if (!existing) throw new Error("RUN_CREATE_CONFLICT");
-    return existing;
-  },
-
-  async createDelegated(input) {
-    return db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${input.parentRunId}))`,
-      );
-      const [existing] = await tx
-        .select({ run: AgentRunTable })
-        .from(DelegationRunTable)
-        .innerJoin(
-          AgentRunTable,
-          eq(AgentRunTable.id, DelegationRunTable.childRunId),
-        )
-        .where(
-          and(
-            eq(DelegationRunTable.parentRunId, input.parentRunId),
-            eq(DelegationRunTable.idempotencyKey, input.idempotencyKey),
-          ),
-        );
-      if (existing) return existing.run;
-      const [{ total, active }] = await tx
-        .select({
-          total: count(),
-          active: sql<number>`count(*) FILTER (WHERE ${AgentRunTable.status} IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_external'))::int`,
-        })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.parentRunId, input.parentRunId));
-      if (total >= 8) throw new Error("DELEGATION_CHILD_LIMIT_EXCEEDED");
-      if (active >= 8)
-        throw new Error("DELEGATION_ACTIVE_CHILD_LIMIT_EXCEEDED");
+export function createPgAgentRunRepository(
+  db: typeof pgDb,
+): AgentRunRepository {
+  return {
+    async createRunning(input) {
       const now = new Date();
-      const parentRows = await tx
-        .select({ absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, input.parentRunId));
-      const parent = Array.isArray(parentRows) ? parentRows[0] : undefined;
-      const requestedDeadline = new Date(now.getTime() + input.timeoutMs);
-      const absoluteDeadlineAt =
-        parent?.absoluteDeadlineAt &&
-        parent.absoluteDeadlineAt < requestedDeadline
-          ? parent.absoluteDeadlineAt
-          : requestedDeadline;
-      const [parentRoot] = await tx
-        .select({ rootRunId: AgentRunTable.rootRunId })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, input.parentRunId));
-      if (!parentRoot) throw new Error("ROOT_RUN_BUDGET_RUN_NOT_FOUND");
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${parentRoot.rootRunId}`}, 0))`,
-      );
-      const [rootBudget] = await tx
-        .select()
-        .from(RootRunBudgetTable)
-        .where(eq(RootRunBudgetTable.rootRunId, parentRoot.rootRunId))
-        .for("update");
-      if (!rootBudget) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
-      if (input.depth > rootBudget.maxDelegationDepth)
-        throw new Error("BUDGET_EXHAUSTED");
-      if (
-        rootBudget.committedDelegations + rootBudget.reservedDelegations + 1 >
-          rootBudget.maxDelegations ||
-        rootBudget.reservedChildren + 1 > rootBudget.maxParallelChildren
-      )
-        throw new Error("BUDGET_EXHAUSTED");
-      await tx
-        .update(RootRunBudgetTable)
-        .set({
-          committedDelegations: sql`${RootRunBudgetTable.committedDelegations} + 1`,
-          reservedChildren: sql`${RootRunBudgetTable.reservedChildren} + 1`,
-          updatedAt: now,
-        })
-        .where(eq(RootRunBudgetTable.rootRunId, parentRoot.rootRunId));
-      await tx.insert(RootRunBudgetReservationTable).values([
-        {
-          token: `delegation:${input.id}`,
-          rootRunId: parentRoot.rootRunId,
-          runId: input.parentRunId,
-          kind: "delegations",
-          amount: 1,
-          state: "committed",
-          committedAmount: 1,
-          expiresAt: absoluteDeadlineAt,
-          settledAt: now,
-        },
-        {
-          token: `child:${input.id}`,
-          rootRunId: parentRoot.rootRunId,
-          runId: input.parentRunId,
-          kind: "children",
-          amount: 1,
-          expiresAt: absoluteDeadlineAt,
-        },
-      ]);
-      const inserted = await tx
-        .insert(AgentRunTable)
-        .values({
-          id: input.id,
-          userId: input.userId,
-          agentId: input.agentId ?? null,
-          parentRunId: input.parentRunId,
-          workspaceId: input.workspaceId ?? null,
-          taskId: input.taskId ?? null,
-          status: "queued",
-          context: input.context,
-          allowedTools: input.allowedTools,
-          timeoutMs: input.timeoutMs,
-          depth: input.depth,
-          tokenBudget: input.tokenBudget,
-          absoluteDeadlineAt,
-          rootRunId: parentRoot.rootRunId,
-        })
-        .returning();
-      const run = Array.isArray(inserted) ? inserted[0] : undefined;
-      if (!run) throw new Error("DELEGATED_RUN_CREATE_FAILED");
-      await tx.insert(DelegationRunTable).values({
-        id: input.delegationId,
-        parentRunId: input.parentRunId,
-        childRunId: input.id,
-        userId: input.userId,
-        objective: input.objective,
-        idempotencyKey: input.idempotencyKey,
-        targetKind:
-          input.target.kind === "remote" ? "remote_agent" : "local_agent",
-        remoteAgentId:
-          input.target.kind === "remote" ? input.target.connectionId : null,
-        remoteProtocol: input.target.kind === "remote" ? "a2a" : null,
+      const leaseToken = randomUUID();
+      let parent: { rootRunId: string } | undefined;
+      if (input.parentRunId) {
+        const parents = await db
+          .select({ rootRunId: AgentRunTable.rootRunId })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, input.parentRunId));
+        parent = parents[0];
+      }
+      const inserted = await db.transaction(async (tx) => {
+        const rows = await tx
+          .insert(AgentRunTable)
+          .values({
+            ...input,
+            agentId: input.agentId ?? null,
+            parentRunId: input.parentRunId ?? null,
+            rootRunId: parent?.rootRunId ?? input.id,
+            workspaceId: input.workspaceId ?? null,
+            taskId: input.taskId ?? null,
+            status: "running",
+            context: input.context ?? {},
+            allowedTools: input.allowedTools ?? [],
+            startedAt: now,
+            lastHeartbeatAt: now,
+            leaseToken,
+            leaseExpiresAt: new Date(now.getTime() + 30_000),
+            absoluteDeadlineAt: new Date(
+              now.getTime() + (input.timeoutMs ?? 300_000),
+            ),
+            attempt: 1,
+          })
+          .onConflictDoNothing()
+          .returning();
+        if (rows[0] && !input.parentRunId) {
+          await tx.insert(RootRunBudgetTable).values({
+            rootRunId: input.id,
+            ...rootBudgetValues(input.budget ?? {}),
+          });
+        }
+        return rows;
       });
-      await tx.insert(AgentRunJoinTable).values({
-        parentRunId: input.parentRunId,
-        checkpointGeneration: sql`COALESCE((
+      const created = Array.isArray(inserted) ? inserted[0] : undefined;
+      if (created) return created;
+      const existing = await this.selectById(input.id, input.userId);
+      if (!existing) throw new Error("RUN_CREATE_CONFLICT");
+      return existing;
+    },
+
+    async createDelegated(input) {
+      return db.transaction(async (tx) => {
+        const rootRunId = await resolveRootRunId(tx, input.parentRunId);
+        await lockRootBudget(tx, rootRunId);
+        await lockAgentRuns(tx, [input.parentRunId]);
+        const [existing] = await tx
+          .select({ run: AgentRunTable })
+          .from(DelegationRunTable)
+          .innerJoin(
+            AgentRunTable,
+            eq(AgentRunTable.id, DelegationRunTable.childRunId),
+          )
+          .where(
+            and(
+              eq(DelegationRunTable.parentRunId, input.parentRunId),
+              eq(DelegationRunTable.idempotencyKey, input.idempotencyKey),
+            ),
+          );
+        if (existing) return existing.run;
+        const now = new Date();
+        const [parent] = await tx
+          .select({
+            rootRunId: AgentRunTable.rootRunId,
+            status: AgentRunTable.status,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, input.parentRunId))
+          .for("update");
+        if (!parent) throw new Error("ROOT_RUN_BUDGET_RUN_NOT_FOUND");
+        if (isTerminalAgentRunStatus(parent.status))
+          throw new Error("DELEGATION_PARENT_TERMINAL");
+        if (parent.cancelRequestedAt)
+          throw new Error("DELEGATION_PARENT_CANCELLING");
+        if (
+          parent.absoluteDeadlineAt &&
+          parent.absoluteDeadlineAt.getTime() <= now.getTime()
+        )
+          throw new Error("DELEGATION_PARENT_DEADLINE_EXPIRED");
+        const [{ total, active }] = await tx
+          .select({
+            total: count(),
+            active: sql<number>`count(*) FILTER (WHERE ${AgentRunTable.status} IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_external'))::int`,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.parentRunId, input.parentRunId));
+        if (total >= 8) throw new Error("DELEGATION_CHILD_LIMIT_EXCEEDED");
+        if (active >= 8)
+          throw new Error("DELEGATION_ACTIVE_CHILD_LIMIT_EXCEEDED");
+        const requestedDeadline = new Date(now.getTime() + input.timeoutMs);
+        const absoluteDeadlineAt =
+          parent?.absoluteDeadlineAt &&
+          parent.absoluteDeadlineAt < requestedDeadline
+            ? parent.absoluteDeadlineAt
+            : requestedDeadline;
+        const [rootBudget] = await tx
+          .select()
+          .from(RootRunBudgetTable)
+          .where(eq(RootRunBudgetTable.rootRunId, parent.rootRunId))
+          .for("update");
+        if (!rootBudget) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
+        if (input.depth > rootBudget.maxDelegationDepth)
+          throw new Error("BUDGET_EXHAUSTED");
+        if (
+          rootBudget.committedDelegations + rootBudget.reservedDelegations + 1 >
+            rootBudget.maxDelegations ||
+          rootBudget.reservedChildren + 1 > rootBudget.maxParallelChildren
+        )
+          throw new Error("BUDGET_EXHAUSTED");
+        await tx
+          .update(RootRunBudgetTable)
+          .set({
+            committedDelegations: sql`${RootRunBudgetTable.committedDelegations} + 1`,
+            reservedChildren: sql`${RootRunBudgetTable.reservedChildren} + 1`,
+            updatedAt: now,
+          })
+          .where(eq(RootRunBudgetTable.rootRunId, parent.rootRunId));
+        await tx.insert(RootRunBudgetReservationTable).values([
+          {
+            token: `delegation:${input.id}`,
+            rootRunId: parent.rootRunId,
+            runId: input.parentRunId,
+            kind: "delegations",
+            amount: 1,
+            state: "committed",
+            committedAmount: 1,
+            expiresAt: absoluteDeadlineAt,
+            settledAt: now,
+          },
+          {
+            token: `child:${input.id}`,
+            rootRunId: parent.rootRunId,
+            runId: input.parentRunId,
+            kind: "children",
+            amount: 1,
+            expiresAt: absoluteDeadlineAt,
+          },
+        ]);
+        const inserted = await tx
+          .insert(AgentRunTable)
+          .values({
+            id: input.id,
+            userId: input.userId,
+            agentId: input.agentId ?? null,
+            parentRunId: input.parentRunId,
+            workspaceId: input.workspaceId ?? null,
+            taskId: input.taskId ?? null,
+            status: "queued",
+            context: input.context,
+            allowedTools: input.allowedTools,
+            timeoutMs: input.timeoutMs,
+            depth: input.depth,
+            tokenBudget: input.tokenBudget,
+            absoluteDeadlineAt,
+            rootRunId: parent.rootRunId,
+          })
+          .returning();
+        const run = Array.isArray(inserted) ? inserted[0] : undefined;
+        if (!run) throw new Error("DELEGATED_RUN_CREATE_FAILED");
+        await tx.insert(DelegationRunTable).values({
+          id: input.delegationId,
+          parentRunId: input.parentRunId,
+          childRunId: input.id,
+          userId: input.userId,
+          objective: input.objective,
+          idempotencyKey: input.idempotencyKey,
+          targetKind:
+            input.target.kind === "remote" ? "remote_agent" : "local_agent",
+          remoteAgentId:
+            input.target.kind === "remote" ? input.target.connectionId : null,
+          remoteProtocol: input.target.kind === "remote" ? "a2a" : null,
+        });
+        await tx.insert(AgentRunJoinTable).values({
+          parentRunId: input.parentRunId,
+          checkpointGeneration: sql`COALESCE((
           SELECT ${AgentRunCheckpointTable.generation} + 1
           FROM ${AgentRunCheckpointTable}
           WHERE ${AgentRunCheckpointTable.parentRunId} = ${input.parentRunId}
         ), 1)`,
-        toolCallId: input.toolCallId,
-        childRunId: input.id,
+          toolCallId: input.toolCallId,
+          childRunId: input.id,
+        });
+        await tx.insert(AgentRunDispatchTable).values({ runId: input.id });
+        return run;
       });
-      await tx.insert(AgentRunDispatchTable).values({ runId: input.id });
-      return run;
-    });
-  },
+    },
 
-  async selectById(id, userId) {
-    const [run] = await db
-      .select()
-      .from(AgentRunTable)
-      .where(
-        userId
-          ? and(eq(AgentRunTable.id, id), eq(AgentRunTable.userId, userId))
-          : eq(AgentRunTable.id, id),
-      );
-    return run ?? null;
-  },
-
-  async claimQueued(id, leaseMs) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const leaseToken = randomUUID();
-      const [candidate] = await tx
-        .select({
-          parentRunId: AgentRunTable.parentRunId,
-          status: AgentRunTable.status,
-          leaseToken: AgentRunTable.leaseToken,
-          leaseExpiresAt: AgentRunTable.leaseExpiresAt,
-          cancelRequestedAt: AgentRunTable.cancelRequestedAt,
-          absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
-        })
+    async selectById(id, userId) {
+      const [run] = await db
+        .select()
         .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id));
-      if (
-        ["queued", "waiting_external"].includes(candidate?.status ?? "") &&
-        candidate.absoluteDeadlineAt &&
-        candidate.absoluteDeadlineAt <= now
-      ) {
-        const values = {
-          status: "timed_out" as const,
-          completedAt: now,
-          errorCode: "TIMED_OUT",
-          error: "Run deadline exceeded before execution",
-        };
-        const [timedOut] = await tx
+        .where(
+          userId
+            ? and(eq(AgentRunTable.id, id), eq(AgentRunTable.userId, userId))
+            : eq(AgentRunTable.id, id),
+        );
+      return run ?? null;
+    },
+
+    async claimQueued(id, leaseMs) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const leaseToken = randomUUID();
+        const [candidate] = await tx
+          .select({
+            parentRunId: AgentRunTable.parentRunId,
+            status: AgentRunTable.status,
+            leaseToken: AgentRunTable.leaseToken,
+            leaseExpiresAt: AgentRunTable.leaseExpiresAt,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id));
+        if (candidate) {
+          await lockRootBudgetForRun(tx, id);
+          if (candidate.parentRunId)
+            await lockAgentRuns(tx, [candidate.parentRunId]);
+        }
+        if (
+          ["queued", "waiting_external"].includes(candidate?.status ?? "") &&
+          candidate.absoluteDeadlineAt &&
+          candidate.absoluteDeadlineAt <= now
+        ) {
+          const values = {
+            status: "timed_out" as const,
+            completedAt: now,
+            errorCode: "TIMED_OUT",
+            error: "Run deadline exceeded before execution",
+          };
+          const [timedOut] = await tx
+            .update(AgentRunTable)
+            .set(values)
+            .where(
+              and(
+                eq(AgentRunTable.id, id),
+                inArray(AgentRunTable.status, ["queued", "waiting_external"]),
+              ),
+            )
+            .returning();
+          await tx
+            .update(DelegationRunTable)
+            .set(values)
+            .where(eq(DelegationRunTable.childRunId, id));
+          await tx
+            .delete(AgentRunContinuationTable)
+            .where(
+              and(
+                eq(AgentRunContinuationTable.runId, id),
+                eq(AgentRunContinuationTable.kind, "credential"),
+              ),
+            );
+          if (timedOut) await observeTerminalChild(tx, timedOut);
+          return null;
+        }
+        if (candidate?.parentRunId) {
+          const [{ active }] = await tx
+            .select({ active: count() })
+            .from(AgentRunTable)
+            .where(
+              and(
+                eq(AgentRunTable.parentRunId, candidate.parentRunId),
+                eq(AgentRunTable.status, "running"),
+              ),
+            );
+          if (active >= 3) return null;
+        }
+        if (
+          !candidate ||
+          candidate.cancelRequestedAt ||
+          (candidate.absoluteDeadlineAt &&
+            candidate.absoluteDeadlineAt <= now) ||
+          !(
+            candidate.status === "queued" ||
+            candidate.status === "waiting_external" ||
+            (candidate.status === "running" &&
+              candidate.leaseExpiresAt &&
+              candidate.leaseExpiresAt <= now)
+          )
+        )
+          return null;
+        const [run] = await tx
           .update(AgentRunTable)
-          .set(values)
+          .set({
+            status: "running",
+            startedAt: sql`COALESCE(${AgentRunTable.startedAt}, ${now})`,
+            lastHeartbeatAt: now,
+            leaseToken,
+            leaseExpiresAt: new Date(now.getTime() + leaseMs),
+            attempt: sql`${AgentRunTable.attempt} + 1`,
+          })
           .where(
             and(
               eq(AgentRunTable.id, id),
-              inArray(AgentRunTable.status, ["queued", "waiting_external"]),
+              eq(AgentRunTable.status, candidate.status),
+              candidate.status === "running"
+                ? eq(AgentRunTable.leaseToken, candidate.leaseToken!)
+                : isNull(AgentRunTable.leaseToken),
             ),
           )
           .returning();
+        if (!run) return null;
         await tx
           .update(DelegationRunTable)
-          .set(values)
-          .where(eq(DelegationRunTable.childRunId, id));
+          .set({ status: "running", startedAt: run.startedAt ?? now })
+          .where(
+            and(
+              eq(DelegationRunTable.childRunId, id),
+              inArray(DelegationRunTable.status, [
+                "queued",
+                "waiting_external",
+              ]),
+            ),
+          );
+        return { run, token: leaseToken };
+      });
+    },
+
+    async heartbeat(id, leaseToken, leaseMs) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [current] = await tx
+          .select({
+            status: AgentRunTable.status,
+            leaseToken: AgentRunTable.leaseToken,
+            leaseExpiresAt: AgentRunTable.leaseExpiresAt,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id))
+          .for("update");
+        if (
+          !current ||
+          current.status !== "running" ||
+          current.leaseToken !== leaseToken ||
+          !current.leaseExpiresAt ||
+          current.leaseExpiresAt <= now
+        )
+          return "lease_lost";
+        if (current.cancelRequestedAt) return "cancelled";
+        if (current.absoluteDeadlineAt && current.absoluteDeadlineAt <= now)
+          return "timed_out";
+        const [checkpointClaim] = await tx
+          .select({
+            claimToken: AgentRunCheckpointTable.claimToken,
+            claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
+            completedAt: AgentRunCheckpointTable.completedAt,
+          })
+          .from(AgentRunCheckpointTable)
+          .where(eq(AgentRunCheckpointTable.parentRunId, id))
+          .for("update");
+        if (
+          checkpointClaim?.claimToken !== null &&
+          checkpointClaim?.claimToken !== undefined &&
+          (checkpointClaim.claimToken !== leaseToken ||
+            !checkpointClaim.claimExpiresAt ||
+            checkpointClaim.claimExpiresAt <= now ||
+            checkpointClaim.completedAt)
+        )
+          return "lease_lost";
+        const expiresAt = new Date(now.getTime() + leaseMs);
+        if (checkpointClaim?.claimToken === leaseToken) {
+          const [checkpoint] = await tx
+            .update(AgentRunCheckpointTable)
+            .set({ claimExpiresAt: expiresAt, updatedAt: now })
+            .where(
+              and(
+                eq(AgentRunCheckpointTable.parentRunId, id),
+                eq(AgentRunCheckpointTable.claimToken, leaseToken),
+                isNull(AgentRunCheckpointTable.completedAt),
+              ),
+            )
+            .returning({ parentRunId: AgentRunCheckpointTable.parentRunId });
+          if (!checkpoint) return "lease_lost";
+        }
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            lastHeartbeatAt: now,
+            leaseExpiresAt: expiresAt,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              isNull(AgentRunTable.cancelRequestedAt),
+            ),
+          )
+          .returning({ id: AgentRunTable.id });
+        if (!run) throw new Error("HEARTBEAT_RUN_RENEWAL_FAILED");
+        return "active";
+      });
+    },
+
+    async finishRunning(id, leaseToken, outcome) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        await lockRootBudgetForRun(tx, id);
+        const [leased] = await tx
+          .select({
+            status: AgentRunTable.status,
+            leaseToken: AgentRunTable.leaseToken,
+            leaseExpiresAt: AgentRunTable.leaseExpiresAt,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id))
+          .for("update");
+        if (
+          leased?.status !== "running" ||
+          leased.leaseToken !== leaseToken ||
+          !leased.leaseExpiresAt ||
+          leased.leaseExpiresAt <= now
+        )
+          return null;
+        const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
+          ? {
+              status: "cancelled",
+              error: "Run was cancelled",
+              errorCode: "CANCELLED",
+            }
+          : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+            ? {
+                status: "timed_out",
+                error: "Run deadline exceeded",
+                errorCode: "TIMED_OUT",
+              }
+            : outcome;
+        const values = terminalValues(classifiedOutcome);
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            ...values,
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+            ),
+          )
+          .returning();
+        if (!run) return null;
+        const classifiedValues = {
+          status: run.status,
+          result: run.result,
+          error: run.error,
+          errorCode: run.errorCode,
+          completedAt: run.completedAt,
+        };
+        await tx
+          .update(DelegationRunTable)
+          .set(classifiedValues)
+          .where(
+            and(
+              eq(DelegationRunTable.childRunId, id),
+              eq(DelegationRunTable.status, "running"),
+            ),
+          );
         await tx
           .delete(AgentRunContinuationTable)
           .where(
@@ -368,310 +609,74 @@ export const pgAgentRunRepository: AgentRunRepository = {
               eq(AgentRunContinuationTable.kind, "credential"),
             ),
           );
-        if (timedOut) await observeTerminalChild(tx, timedOut);
-        return null;
-      }
-      if (candidate?.parentRunId) {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtext(${candidate.parentRunId}))`,
-        );
-        const [{ active }] = await tx
-          .select({ active: count() })
+        await observeTerminalChild(tx, run);
+        return run;
+      });
+    },
+
+    async wait(id, status, reason, leaseToken) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            status,
+            waitingReason: reason,
+            lastHeartbeatAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
+            ),
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(DelegationRunTable)
+          .set({ status })
+          .where(eq(DelegationRunTable.childRunId, id));
+        return run;
+      });
+    },
+
+    async resume(input) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const expectedStatus =
+          input.continuation.kind === "input"
+            ? "waiting_input"
+            : "waiting_approval";
+        const [owned] = await tx
+          .select({ id: AgentRunTable.id })
           .from(AgentRunTable)
           .where(
             and(
-              eq(AgentRunTable.parentRunId, candidate.parentRunId),
-              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.id, input.runId),
+              eq(AgentRunTable.userId, input.userId),
+              eq(AgentRunTable.status, expectedStatus),
+              sql`${AgentRunTable.cancelRequestedAt} IS NULL`,
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
             ),
           );
-        if (active >= 3) return null;
-      }
-      if (
-        !candidate ||
-        candidate.cancelRequestedAt ||
-        (candidate.absoluteDeadlineAt && candidate.absoluteDeadlineAt <= now) ||
-        !(
-          candidate.status === "queued" ||
-          candidate.status === "waiting_external" ||
-          (candidate.status === "running" &&
-            candidate.leaseExpiresAt &&
-            candidate.leaseExpiresAt <= now)
-        )
-      )
-        return null;
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "running",
-          startedAt: sql`COALESCE(${AgentRunTable.startedAt}, ${now})`,
-          lastHeartbeatAt: now,
-          leaseToken,
-          leaseExpiresAt: new Date(now.getTime() + leaseMs),
-          attempt: sql`${AgentRunTable.attempt} + 1`,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, candidate.status),
-            candidate.status === "running"
-              ? eq(AgentRunTable.leaseToken, candidate.leaseToken!)
-              : isNull(AgentRunTable.leaseToken),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set({ status: "running", startedAt: run.startedAt ?? now })
-        .where(
-          and(
-            eq(DelegationRunTable.childRunId, id),
-            inArray(DelegationRunTable.status, ["queued", "waiting_external"]),
-          ),
-        );
-      return { run, token: leaseToken };
-    });
-  },
-
-  async heartbeat(id, leaseToken, leaseMs) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [current] = await tx
-        .select({
-          status: AgentRunTable.status,
-          leaseToken: AgentRunTable.leaseToken,
-          leaseExpiresAt: AgentRunTable.leaseExpiresAt,
-          cancelRequestedAt: AgentRunTable.cancelRequestedAt,
-          absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
-        })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id))
-        .for("update");
-      if (
-        !current ||
-        current.status !== "running" ||
-        current.leaseToken !== leaseToken ||
-        !current.leaseExpiresAt ||
-        current.leaseExpiresAt <= now
-      )
-        return "lease_lost";
-      if (current.cancelRequestedAt) return "cancelled";
-      if (current.absoluteDeadlineAt && current.absoluteDeadlineAt <= now)
-        return "timed_out";
-      const [checkpointClaim] = await tx
-        .select({
-          claimToken: AgentRunCheckpointTable.claimToken,
-          claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
-          completedAt: AgentRunCheckpointTable.completedAt,
-        })
-        .from(AgentRunCheckpointTable)
-        .where(eq(AgentRunCheckpointTable.parentRunId, id))
-        .for("update");
-      if (
-        checkpointClaim?.claimToken !== null &&
-        checkpointClaim?.claimToken !== undefined &&
-        (checkpointClaim.claimToken !== leaseToken ||
-          !checkpointClaim.claimExpiresAt ||
-          checkpointClaim.claimExpiresAt <= now ||
-          checkpointClaim.completedAt)
-      )
-        return "lease_lost";
-      const expiresAt = new Date(now.getTime() + leaseMs);
-      if (checkpointClaim?.claimToken === leaseToken) {
-        const [checkpoint] = await tx
-          .update(AgentRunCheckpointTable)
-          .set({ claimExpiresAt: expiresAt, updatedAt: now })
-          .where(
-            and(
-              eq(AgentRunCheckpointTable.parentRunId, id),
-              eq(AgentRunCheckpointTable.claimToken, leaseToken),
-              isNull(AgentRunCheckpointTable.completedAt),
-            ),
-          )
-          .returning({ parentRunId: AgentRunCheckpointTable.parentRunId });
-        if (!checkpoint) return "lease_lost";
-      }
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          lastHeartbeatAt: now,
-          leaseExpiresAt: expiresAt,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            isNull(AgentRunTable.cancelRequestedAt),
-          ),
-        )
-        .returning({ id: AgentRunTable.id });
-      if (!run) throw new Error("HEARTBEAT_RUN_RENEWAL_FAILED");
-      return "active";
-    });
-  },
-
-  async finishRunning(id, leaseToken, outcome) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [leased] = await tx
-        .select({
-          status: AgentRunTable.status,
-          leaseToken: AgentRunTable.leaseToken,
-          leaseExpiresAt: AgentRunTable.leaseExpiresAt,
-          cancelRequestedAt: AgentRunTable.cancelRequestedAt,
-          absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
-        })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id))
-        .for("update");
-      if (
-        leased?.status !== "running" ||
-        leased.leaseToken !== leaseToken ||
-        !leased.leaseExpiresAt ||
-        leased.leaseExpiresAt <= now
-      )
-        return null;
-      const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
-        ? {
-            status: "cancelled",
-            error: "Run was cancelled",
-            errorCode: "CANCELLED",
-          }
-        : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
-          ? {
-              status: "timed_out",
-              error: "Run deadline exceeded",
-              errorCode: "TIMED_OUT",
-            }
-          : outcome;
-      const values = terminalValues(classifiedOutcome);
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          ...values,
-          completedAt: now,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      const classifiedValues = {
-        status: run.status,
-        result: run.result,
-        error: run.error,
-        errorCode: run.errorCode,
-        completedAt: run.completedAt,
-      };
-      await tx
-        .update(DelegationRunTable)
-        .set(classifiedValues)
-        .where(
-          and(
-            eq(DelegationRunTable.childRunId, id),
-            eq(DelegationRunTable.status, "running"),
-          ),
-        );
-      await tx
-        .delete(AgentRunContinuationTable)
-        .where(
-          and(
-            eq(AgentRunContinuationTable.runId, id),
-            eq(AgentRunContinuationTable.kind, "credential"),
-          ),
-        );
-      await observeTerminalChild(tx, run);
-      return run;
-    });
-  },
-
-  async wait(id, status, reason, leaseToken) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status,
-          waitingReason: reason,
-          lastHeartbeatAt: now,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
-            ),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set({ status })
-        .where(eq(DelegationRunTable.childRunId, id));
-      return run;
-    });
-  },
-
-  async resume(input) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const expectedStatus =
-        input.continuation.kind === "input"
-          ? "waiting_input"
-          : "waiting_approval";
-      const [owned] = await tx
-        .select({ id: AgentRunTable.id })
-        .from(AgentRunTable)
-        .where(
-          and(
-            eq(AgentRunTable.id, input.runId),
-            eq(AgentRunTable.userId, input.userId),
-            eq(AgentRunTable.status, expectedStatus),
-            sql`${AgentRunTable.cancelRequestedAt} IS NULL`,
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
-            ),
-          ),
-        );
-      if (!owned) return null;
-      await tx
-        .insert(AgentRunContinuationTable)
-        .values({
-          runId: input.runId,
-          kind: input.continuation.kind,
-          submissionId: randomUUID(),
-          messageId: randomUUID(),
-          payload:
-            input.continuation.kind === "input"
-              ? input.continuation.payload
-              : null,
-          encryptedCredential:
-            input.continuation.kind === "credential"
-              ? input.continuation.encryptedCredential
-              : null,
-        })
-        .onConflictDoUpdate({
-          target: [
-            AgentRunContinuationTable.runId,
-            AgentRunContinuationTable.kind,
-          ],
-          set: {
+        if (!owned) return null;
+        await tx
+          .insert(AgentRunContinuationTable)
+          .values({
+            runId: input.runId,
+            kind: input.continuation.kind,
             submissionId: randomUUID(),
             messageId: randomUUID(),
             payload:
@@ -682,42 +687,124 @@ export const pgAgentRunRepository: AgentRunRepository = {
               input.continuation.kind === "credential"
                 ? input.continuation.encryptedCredential
                 : null,
-            createdAt: now,
-            consumedAt: null,
-          },
-        });
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({ status: "queued", waitingReason: null })
+          })
+          .onConflictDoUpdate({
+            target: [
+              AgentRunContinuationTable.runId,
+              AgentRunContinuationTable.kind,
+            ],
+            set: {
+              submissionId: randomUUID(),
+              messageId: randomUUID(),
+              payload:
+                input.continuation.kind === "input"
+                  ? input.continuation.payload
+                  : null,
+              encryptedCredential:
+                input.continuation.kind === "credential"
+                  ? input.continuation.encryptedCredential
+                  : null,
+              createdAt: now,
+              consumedAt: null,
+            },
+          });
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({ status: "queued", waitingReason: null })
+          .where(
+            and(
+              eq(AgentRunTable.id, input.runId),
+              eq(AgentRunTable.userId, input.userId),
+              eq(AgentRunTable.status, expectedStatus),
+            ),
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(DelegationRunTable)
+          .set({ status: "queued" })
+          .where(eq(DelegationRunTable.childRunId, input.runId));
+        await tx
+          .insert(AgentRunDispatchTable)
+          .values({ runId: input.runId })
+          .onConflictDoUpdate({
+            target: AgentRunDispatchTable.runId,
+            set: { availableAt: now, dispatchedAt: null },
+          });
+        return run;
+      });
+    },
+
+    async consumeContinuation(id, leaseToken) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [row] = await tx
+          .select({ continuation: AgentRunContinuationTable })
+          .from(AgentRunContinuationTable)
+          .innerJoin(
+            AgentRunTable,
+            eq(AgentRunTable.id, AgentRunContinuationTable.runId),
+          )
+          .where(
+            and(
+              eq(AgentRunContinuationTable.runId, id),
+              isNull(AgentRunContinuationTable.consumedAt),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
+            ),
+          );
+        if (!row) return null;
+        return row.continuation.kind === "input"
+          ? {
+              kind: "input" as const,
+              submissionId: row.continuation.submissionId,
+              messageId: row.continuation.messageId,
+              payload: row.continuation.payload ?? {},
+            }
+          : {
+              kind: "credential" as const,
+              submissionId: row.continuation.submissionId,
+              messageId: row.continuation.messageId,
+              encryptedCredential: row.continuation.encryptedCredential!,
+            };
+      });
+    },
+
+    async consumeContinuationMessage(id, leaseToken, submissionId) {
+      const now = new Date();
+      const [consumed] = await db
+        .update(AgentRunContinuationTable)
+        .set({ consumedAt: now })
         .where(
           and(
-            eq(AgentRunTable.id, input.runId),
-            eq(AgentRunTable.userId, input.userId),
-            eq(AgentRunTable.status, expectedStatus),
+            eq(AgentRunContinuationTable.runId, id),
+            eq(AgentRunContinuationTable.submissionId, submissionId),
+            isNull(AgentRunContinuationTable.consumedAt),
+            sql`EXISTS (
+            SELECT 1 FROM ${AgentRunTable}
+            WHERE ${AgentRunTable.id} = ${id}
+              AND ${AgentRunTable.status} = 'running'
+              AND ${AgentRunTable.leaseToken} = ${leaseToken}
+              AND ${AgentRunTable.leaseExpiresAt} > ${now}
+          )`,
           ),
         )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set({ status: "queued" })
-        .where(eq(DelegationRunTable.childRunId, input.runId));
-      await tx
-        .insert(AgentRunDispatchTable)
-        .values({ runId: input.runId })
-        .onConflictDoUpdate({
-          target: AgentRunDispatchTable.runId,
-          set: { availableAt: now, dispatchedAt: null },
-        });
-      return run;
-    });
-  },
+        .returning({ runId: AgentRunContinuationTable.runId });
+      return Boolean(consumed);
+    },
 
-  async consumeContinuation(id, leaseToken) {
-    return db.transaction(async (tx) => {
+    async selectTransientCredential(id, leaseToken) {
       const now = new Date();
-      const [row] = await tx
-        .select({ continuation: AgentRunContinuationTable })
+      const [row] = await db
+        .select({
+          encryptedCredential: AgentRunContinuationTable.encryptedCredential,
+        })
         .from(AgentRunContinuationTable)
         .innerJoin(
           AgentRunTable,
@@ -726,318 +813,260 @@ export const pgAgentRunRepository: AgentRunRepository = {
         .where(
           and(
             eq(AgentRunContinuationTable.runId, id),
-            isNull(AgentRunContinuationTable.consumedAt),
+            eq(AgentRunContinuationTable.kind, "credential"),
             eq(AgentRunTable.status, "running"),
             eq(AgentRunTable.leaseToken, leaseToken),
             sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
-            ),
           ),
         );
-      if (!row) return null;
-      return row.continuation.kind === "input"
-        ? {
-            kind: "input" as const,
-            submissionId: row.continuation.submissionId,
-            messageId: row.continuation.messageId,
-            payload: row.continuation.payload ?? {},
-          }
-        : {
-            kind: "credential" as const,
-            submissionId: row.continuation.submissionId,
-            messageId: row.continuation.messageId,
-            encryptedCredential: row.continuation.encryptedCredential!,
+      return row?.encryptedCredential ?? null;
+    },
+
+    async prepareRemoteSubmission(id, leaseToken) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [leased] = await tx
+          .select({ id: AgentRunTable.id })
+          .from(AgentRunTable)
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
+            ),
+          )
+          .for("update");
+        if (!leased) return null;
+        const [row] = await tx
+          .select({ run: AgentRunTable, delegation: DelegationRunTable })
+          .from(AgentRunTable)
+          .innerJoin(
+            DelegationRunTable,
+            eq(DelegationRunTable.childRunId, AgentRunTable.id),
+          )
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
+              eq(DelegationRunTable.targetKind, "remote_agent"),
+            ),
+          );
+        if (!row) return null;
+        let submissionId = row.delegation.submissionId;
+        let messageId = row.delegation.messageId;
+        let payload = row.delegation.submissionPayload;
+        if (!submissionId || !messageId || !payload) {
+          submissionId = randomUUID();
+          messageId = randomUUID();
+          payload = {
+            message: {
+              role: "user",
+              messageId,
+              parts: [
+                {
+                  kind: "text",
+                  text: String(
+                    row.run.context.objective ?? "Complete the delegated work",
+                  ),
+                },
+              ],
+            },
+            metadata: {
+              runId: row.run.id,
+              parentRunId: row.run.parentRunId,
+              submissionId,
+            },
           };
-    });
-  },
-
-  async consumeContinuationMessage(id, leaseToken, submissionId) {
-    const now = new Date();
-    const [consumed] = await db
-      .update(AgentRunContinuationTable)
-      .set({ consumedAt: now })
-      .where(
-        and(
-          eq(AgentRunContinuationTable.runId, id),
-          eq(AgentRunContinuationTable.submissionId, submissionId),
-          isNull(AgentRunContinuationTable.consumedAt),
-          sql`EXISTS (
-            SELECT 1 FROM ${AgentRunTable}
-            WHERE ${AgentRunTable.id} = ${id}
-              AND ${AgentRunTable.status} = 'running'
-              AND ${AgentRunTable.leaseToken} = ${leaseToken}
-              AND ${AgentRunTable.leaseExpiresAt} > ${now}
-          )`,
-        ),
-      )
-      .returning({ runId: AgentRunContinuationTable.runId });
-    return Boolean(consumed);
-  },
-
-  async selectTransientCredential(id, leaseToken) {
-    const now = new Date();
-    const [row] = await db
-      .select({
-        encryptedCredential: AgentRunContinuationTable.encryptedCredential,
-      })
-      .from(AgentRunContinuationTable)
-      .innerJoin(
-        AgentRunTable,
-        eq(AgentRunTable.id, AgentRunContinuationTable.runId),
-      )
-      .where(
-        and(
-          eq(AgentRunContinuationTable.runId, id),
-          eq(AgentRunContinuationTable.kind, "credential"),
-          eq(AgentRunTable.status, "running"),
-          eq(AgentRunTable.leaseToken, leaseToken),
-          sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-        ),
-      );
-    return row?.encryptedCredential ?? null;
-  },
-
-  async prepareRemoteSubmission(id, leaseToken) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [leased] = await tx
-        .select({ id: AgentRunTable.id })
-        .from(AgentRunTable)
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
-            ),
-          ),
-        )
-        .for("update");
-      if (!leased) return null;
-      const [row] = await tx
-        .select({ run: AgentRunTable, delegation: DelegationRunTable })
-        .from(AgentRunTable)
-        .innerJoin(
-          DelegationRunTable,
-          eq(DelegationRunTable.childRunId, AgentRunTable.id),
-        )
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
-            ),
-            eq(DelegationRunTable.targetKind, "remote_agent"),
-          ),
-        );
-      if (!row) return null;
-      let submissionId = row.delegation.submissionId;
-      let messageId = row.delegation.messageId;
-      let payload = row.delegation.submissionPayload;
-      if (!submissionId || !messageId || !payload) {
-        submissionId = randomUUID();
-        messageId = randomUUID();
-        payload = {
-          message: {
-            role: "user",
-            messageId,
-            parts: [
-              {
-                kind: "text",
-                text: String(
-                  row.run.context.objective ?? "Complete the delegated work",
-                ),
-              },
-            ],
-          },
-          metadata: {
-            runId: row.run.id,
-            parentRunId: row.run.parentRunId,
-            submissionId,
-          },
+          const [stored] = await tx
+            .update(DelegationRunTable)
+            .set({
+              submissionId,
+              messageId,
+              submissionPayload: payload,
+              submissionStartedAt: now,
+            })
+            .where(eq(DelegationRunTable.childRunId, id))
+            .returning({ id: DelegationRunTable.id });
+          if (!stored) return null;
+        }
+        return {
+          submissionId,
+          messageId,
+          payload,
+          remoteTaskId: row.delegation.remoteTaskId,
+          remoteContextId: row.delegation.remoteContextId,
         };
-        const [stored] = await tx
+      });
+    },
+
+    async recordRemoteTask(id, leaseToken, task) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [leased] = await tx
+          .select({ id: AgentRunTable.id })
+          .from(AgentRunTable)
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
+            ),
+          )
+          .for("update");
+        if (!leased) return false;
+        const [updated] = await tx
           .update(DelegationRunTable)
           .set({
-            submissionId,
-            messageId,
-            submissionPayload: payload,
-            submissionStartedAt: now,
+            remoteTaskId: task.id,
+            remoteContextId: task.contextId ?? null,
+            remoteStatus: task.state,
+            remoteMetadata: task.metadata ?? null,
           })
           .where(eq(DelegationRunTable.childRunId, id))
           .returning({ id: DelegationRunTable.id });
-        if (!stored) return null;
-      }
-      return {
-        submissionId,
-        messageId,
-        payload,
-        remoteTaskId: row.delegation.remoteTaskId,
-        remoteContextId: row.delegation.remoteContextId,
-      };
-    });
-  },
+        if (!updated) return false;
+        return true;
+      });
+    },
 
-  async recordRemoteTask(id, leaseToken, task) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [leased] = await tx
-        .select({ id: AgentRunTable.id })
-        .from(AgentRunTable)
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+    async deferRemoteTask(id, leaseToken, reason, task, availableAt) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            status: "waiting_external",
+            waitingReason: reason,
+            lastHeartbeatAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, leaseToken),
+              sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
+              isNull(AgentRunTable.cancelRequestedAt),
+              or(
+                isNull(AgentRunTable.absoluteDeadlineAt),
+                sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+              ),
             ),
-          ),
-        )
-        .for("update");
-      if (!leased) return false;
-      const [updated] = await tx
-        .update(DelegationRunTable)
-        .set({
-          remoteTaskId: task.id,
-          remoteContextId: task.contextId ?? null,
-          remoteStatus: task.state,
-          remoteMetadata: task.metadata ?? null,
-        })
-        .where(eq(DelegationRunTable.childRunId, id))
-        .returning({ id: DelegationRunTable.id });
-      if (!updated) return false;
-      return true;
-    });
-  },
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(DelegationRunTable)
+          .set({
+            status: "waiting_external",
+            remoteTaskId: task.id,
+            remoteContextId: task.contextId ?? null,
+            remoteStatus: task.state,
+            remoteMetadata: task.metadata ?? null,
+          })
+          .where(eq(DelegationRunTable.childRunId, id));
+        await tx
+          .insert(AgentRunDispatchTable)
+          .values({ runId: id, availableAt })
+          .onConflictDoUpdate({
+            target: AgentRunDispatchTable.runId,
+            set: { availableAt, dispatchedAt: null },
+          });
+        return run;
+      });
+    },
 
-  async deferRemoteTask(id, leaseToken, reason, task, availableAt) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "waiting_external",
-          waitingReason: reason,
-          lastHeartbeatAt: now,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-            sql`${AgentRunTable.leaseExpiresAt} > ${now}`,
-            isNull(AgentRunTable.cancelRequestedAt),
-            or(
-              isNull(AgentRunTable.absoluteDeadlineAt),
-              sql`${AgentRunTable.absoluteDeadlineAt} > ${now}`,
+    async cancelQueued(id, details) {
+      return db.transaction(async (tx) => {
+        const completedAt = new Date();
+        await lockRootBudgetForRun(tx, id);
+        const values = {
+          status: "cancelled" as const,
+          cancelRequestedAt: completedAt,
+          completedAt,
+          error: details?.error ?? null,
+          errorCode: details?.errorCode ?? null,
+        };
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set(values)
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              inArray(AgentRunTable.status, ["queued", "waiting_external"]),
             ),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set({
-          status: "waiting_external",
-          remoteTaskId: task.id,
-          remoteContextId: task.contextId ?? null,
-          remoteStatus: task.state,
-          remoteMetadata: task.metadata ?? null,
-        })
-        .where(eq(DelegationRunTable.childRunId, id));
-      await tx
-        .insert(AgentRunDispatchTable)
-        .values({ runId: id, availableAt })
-        .onConflictDoUpdate({
-          target: AgentRunDispatchTable.runId,
-          set: { availableAt, dispatchedAt: null },
-        });
-      return run;
-    });
-  },
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(DelegationRunTable)
+          .set(values)
+          .where(
+            and(
+              eq(DelegationRunTable.childRunId, id),
+              inArray(DelegationRunTable.status, [
+                "queued",
+                "waiting_external",
+              ]),
+            ),
+          );
+        await tx
+          .delete(AgentRunContinuationTable)
+          .where(
+            and(
+              eq(AgentRunContinuationTable.runId, id),
+              eq(AgentRunContinuationTable.kind, "credential"),
+            ),
+          );
+        await observeTerminalChild(tx, run);
+        return run;
+      });
+    },
 
-  async cancelQueued(id, details) {
-    return db.transaction(async (tx) => {
-      const completedAt = new Date();
-      const values = {
-        status: "cancelled" as const,
-        cancelRequestedAt: completedAt,
-        completedAt,
-        error: details?.error ?? null,
-        errorCode: details?.errorCode ?? null,
-      };
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set(values)
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            inArray(AgentRunTable.status, ["queued", "waiting_external"]),
-          ),
+    async requestCancellationTree(id, userId) {
+      return db.transaction(async (tx) => {
+        const rootRunId = await resolveRootRunId(tx, id);
+        await lockRootBudget(tx, rootRunId);
+        await lockAgentRuns(tx, [id]);
+        const [owned] = await tx
+          .select()
+          .from(AgentRunTable)
+          .where(
+            and(eq(AgentRunTable.id, id), eq(AgentRunTable.userId, userId)),
+          )
+          .for("update");
+        if (
+          !owned ||
+          ![
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_input",
+            "waiting_external",
+          ].includes(owned.status)
         )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set(values)
-        .where(
-          and(
-            eq(DelegationRunTable.childRunId, id),
-            inArray(DelegationRunTable.status, ["queued", "waiting_external"]),
-          ),
-        );
-      await tx
-        .delete(AgentRunContinuationTable)
-        .where(
-          and(
-            eq(AgentRunContinuationTable.runId, id),
-            eq(AgentRunContinuationTable.kind, "credential"),
-          ),
-        );
-      await observeTerminalChild(tx, run);
-      return run;
-    });
-  },
-
-  async requestCancellationTree(id, userId) {
-    return db.transaction(async (tx) => {
-      const [owned] = await tx
-        .select()
-        .from(AgentRunTable)
-        .where(and(eq(AgentRunTable.id, id), eq(AgentRunTable.userId, userId)));
-      if (
-        !owned ||
-        ![
-          "queued",
-          "running",
-          "waiting_approval",
-          "waiting_input",
-          "waiting_external",
-        ].includes(owned.status)
-      )
-        return null;
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${owned.rootRunId}`}, 0))`,
-      );
-      await tx.execute(sql`
+          return null;
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1060,7 +1089,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
           remote_outcome = NULL,
           completed_at = NULL
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1085,7 +1114,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
         WHERE id IN (SELECT id FROM run_tree)
           AND status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_external')
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1112,7 +1141,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
         WHERE root_run_id = ${owned.rootRunId}
           AND EXISTS (SELECT 1 FROM settled)
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1129,7 +1158,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
           AND user_id = ${userId}
           AND status IN ('queued', 'waiting_approval', 'waiting_input', 'waiting_external')
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1149,10 +1178,10 @@ export const pgAgentRunRepository: AgentRunRepository = {
         FROM agent_run child
         WHERE join_row.child_run_id = child.id
           AND child.id IN (SELECT id FROM run_tree)
-          AND child.status IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+          AND child.status IN ('succeeded', 'failed', 'cancelled', 'timed_out', 'budget_exhausted')
           AND join_row.completed_at IS NULL
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         INSERT INTO agent_run_resume_dispatch
           (parent_run_id, generation, available_at, dispatched_at)
         SELECT checkpoint.parent_run_id, checkpoint.generation,
@@ -1184,7 +1213,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
           available_at = EXCLUDED.available_at,
           dispatched_at = NULL
       `);
-      await tx.execute(sql`
+        await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
           UNION ALL
@@ -1196,286 +1225,565 @@ export const pgAgentRunRepository: AgentRunRepository = {
         USING agent_run run
         WHERE continuation.run_id = run.id
           AND continuation.kind = 'credential'
-          AND run.status IN ('succeeded', 'failed', 'cancelled', 'timed_out')
+          AND run.status IN ('succeeded', 'failed', 'cancelled', 'timed_out', 'budget_exhausted')
           AND run.id IN (SELECT id FROM run_tree)
       `);
-      const [updated] = await tx
-        .select()
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id));
-      return updated ?? null;
-    });
-  },
+        const [updated] = await tx
+          .select()
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id));
+        return updated ?? null;
+      });
+    },
 
-  async prepareRemoteCancellation(id) {
-    const [row] = await db
-      .select({
-        userId: AgentRunTable.userId,
-        remoteAgentId: DelegationRunTable.remoteAgentId,
-        remoteTaskId: DelegationRunTable.remoteTaskId,
-        encryptedCredential: AgentRunContinuationTable.encryptedCredential,
-      })
-      .from(AgentRunRemoteCancelTable)
-      .innerJoin(
-        AgentRunTable,
-        eq(AgentRunTable.id, AgentRunRemoteCancelTable.runId),
-      )
-      .innerJoin(
-        DelegationRunTable,
-        eq(DelegationRunTable.childRunId, AgentRunRemoteCancelTable.runId),
-      )
-      .leftJoin(
-        AgentRunContinuationTable,
-        and(
-          eq(AgentRunContinuationTable.runId, AgentRunRemoteCancelTable.runId),
-          eq(AgentRunContinuationTable.kind, "credential"),
-        ),
-      )
-      .where(
-        and(
-          eq(AgentRunRemoteCancelTable.runId, id),
-          isNull(AgentRunRemoteCancelTable.completedAt),
-          isNotNull(AgentRunTable.cancelRequestedAt),
-        ),
-      );
-    if (!row?.remoteAgentId || !row.remoteTaskId) return null;
-    return {
-      userId: row.userId,
-      remoteAgentId: row.remoteAgentId,
-      remoteTaskId: row.remoteTaskId,
-      encryptedCredential: row.encryptedCredential,
-    };
-  },
-
-  async recordRemoteCancellation(id, outcome) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const terminal =
-        outcome.ok &&
-        ["cancelled", "completed", "failed", "rejected"].includes(
-          outcome.task.state,
-        );
-      await tx
-        .update(AgentRunRemoteCancelTable)
-        .set({
-          dispatchedAt: null,
-          availableAt: terminal ? now : outcome.retryAt,
-          lastError: outcome.ok ? null : outcome.error,
-          remoteOutcome: outcome.ok ? outcome.task : null,
-          completedAt: terminal ? now : null,
+    async prepareRemoteCancellation(id) {
+      const [row] = await db
+        .select({
+          userId: AgentRunTable.userId,
+          remoteAgentId: DelegationRunTable.remoteAgentId,
+          remoteTaskId: DelegationRunTable.remoteTaskId,
+          encryptedCredential: AgentRunContinuationTable.encryptedCredential,
         })
-        .where(eq(AgentRunRemoteCancelTable.runId, id));
-      if (!terminal) return null;
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "cancelled",
-          completedAt: now,
-          errorCode: "CANCELLED",
-          error: "Run was cancelled after remote cancellation reconciliation",
-          leaseToken: null,
-          leaseExpiresAt: null,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            isNotNull(AgentRunTable.cancelRequestedAt),
-            inArray(AgentRunTable.status, ["waiting_external", "running"]),
-          ),
+        .from(AgentRunRemoteCancelTable)
+        .innerJoin(
+          AgentRunTable,
+          eq(AgentRunTable.id, AgentRunRemoteCancelTable.runId),
         )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(DelegationRunTable)
-        .set({
-          status: "cancelled",
-          remoteStatus: outcome.task.state,
-          completedAt: now,
-          errorCode: "CANCELLED",
-          error: "Run was cancelled after remote cancellation reconciliation",
-        })
-        .where(eq(DelegationRunTable.childRunId, id));
-      await tx
-        .delete(AgentRunContinuationTable)
-        .where(
+        .innerJoin(
+          DelegationRunTable,
+          eq(DelegationRunTable.childRunId, AgentRunRemoteCancelTable.runId),
+        )
+        .leftJoin(
+          AgentRunContinuationTable,
           and(
-            eq(AgentRunContinuationTable.runId, id),
+            eq(
+              AgentRunContinuationTable.runId,
+              AgentRunRemoteCancelTable.runId,
+            ),
             eq(AgentRunContinuationTable.kind, "credential"),
           ),
+        )
+        .where(
+          and(
+            eq(AgentRunRemoteCancelTable.runId, id),
+            isNull(AgentRunRemoteCancelTable.completedAt),
+            isNotNull(AgentRunTable.cancelRequestedAt),
+          ),
         );
-      await observeTerminalChild(tx, run);
-      return run;
-    });
-  },
+      if (!row?.remoteAgentId || !row.remoteTaskId) return null;
+      return {
+        userId: row.userId,
+        remoteAgentId: row.remoteAgentId,
+        remoteTaskId: row.remoteTaskId,
+        encryptedCredential: row.encryptedCredential,
+      };
+    },
 
-  async isCancellationRequested(ids) {
-    if (!ids.length) return false;
-    const [run] = await db
-      .select({ id: AgentRunTable.id })
-      .from(AgentRunTable)
-      .where(
-        and(
-          inArray(AgentRunTable.id, [...ids]),
-          isNotNull(AgentRunTable.cancelRequestedAt),
-        ),
-      )
-      .limit(1);
-    return Boolean(run);
-  },
-
-  async countRunningChildren(parentRunId) {
-    const [{ total }] = await db
-      .select({ total: count() })
-      .from(AgentRunTable)
-      .where(
-        and(
-          eq(AgentRunTable.parentRunId, parentRunId),
-          eq(AgentRunTable.status, "running"),
-        ),
-      );
-    return total;
-  },
-
-  async listStaleDelegatedRunIds(before, limit) {
-    const rows = await db
-      .select({ id: AgentRunTable.id })
-      .from(AgentRunTable)
-      .innerJoin(
-        DelegationRunTable,
-        eq(DelegationRunTable.childRunId, AgentRunTable.id),
-      )
-      .where(
-        and(
-          or(
-            and(
-              eq(AgentRunTable.status, "queued"),
-              lt(AgentRunTable.createdAt, before),
-            ),
-            and(
-              eq(AgentRunTable.status, "running"),
-              lte(AgentRunTable.leaseExpiresAt, new Date()),
-            ),
-          ),
-        ),
-      )
-      .limit(limit);
-    return rows.map((row) => row.id);
-  },
-
-  async listPendingDispatchRunIds(limit) {
-    const rows = await db
-      .select({ runId: AgentRunDispatchTable.runId })
-      .from(AgentRunDispatchTable)
-      .where(
-        and(
-          isNull(AgentRunDispatchTable.dispatchedAt),
-          lte(AgentRunDispatchTable.availableAt, new Date()),
-        ),
-      )
-      .limit(limit);
-    return rows.map((row) => row.runId);
-  },
-
-  async markDispatched(id) {
-    await db
-      .update(AgentRunDispatchTable)
-      .set({
-        dispatchedAt: new Date(),
-        attempts: sql`${AgentRunDispatchTable.attempts} + 1`,
-      })
-      .where(eq(AgentRunDispatchTable.runId, id));
-  },
-
-  async listPendingRemoteCancellationRunIds(limit) {
-    const rows = await db
-      .select({ runId: AgentRunRemoteCancelTable.runId })
-      .from(AgentRunRemoteCancelTable)
-      .where(
-        and(
-          isNull(AgentRunRemoteCancelTable.completedAt),
-          or(
-            isNull(AgentRunRemoteCancelTable.dispatchedAt),
-            lte(
-              AgentRunRemoteCancelTable.dispatchedAt,
-              new Date(Date.now() - 60_000),
-            ),
-          ),
-          lte(AgentRunRemoteCancelTable.availableAt, new Date()),
-        ),
-      )
-      .limit(limit);
-    return rows.map((row) => row.runId);
-  },
-
-  async markRemoteCancellationDispatched(id) {
-    await db
-      .update(AgentRunRemoteCancelTable)
-      .set({
-        dispatchedAt: new Date(),
-        attempts: sql`${AgentRunRemoteCancelTable.attempts} + 1`,
-      })
-      .where(eq(AgentRunRemoteCancelTable.runId, id));
-  },
-
-  async suspendParent(id, leaseToken, checkpoint) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${id}))`);
-      const [leased] = await tx
-        .select({
-          status: AgentRunTable.status,
-          leaseToken: AgentRunTable.leaseToken,
-          leaseExpiresAt: AgentRunTable.leaseExpiresAt,
-          cancelRequestedAt: AgentRunTable.cancelRequestedAt,
-          absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
-        })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id))
-        .for("update");
-      if (
-        leased?.status !== "running" ||
-        leased.leaseToken !== leaseToken ||
-        !leased.leaseExpiresAt ||
-        leased.leaseExpiresAt <= now
-      )
-        return null;
-      const [currentCheckpoint] = await tx
-        .select({
-          generation: AgentRunCheckpointTable.generation,
-          claimToken: AgentRunCheckpointTable.claimToken,
-          claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
-          completedAt: AgentRunCheckpointTable.completedAt,
-        })
-        .from(AgentRunCheckpointTable)
-        .where(eq(AgentRunCheckpointTable.parentRunId, id))
-        .for("update");
-      if (
-        currentCheckpoint?.claimToken &&
-        (currentCheckpoint.claimToken !== leaseToken ||
-          !currentCheckpoint.claimExpiresAt ||
-          currentCheckpoint.claimExpiresAt <= now ||
-          currentCheckpoint.completedAt)
-      )
-        return null;
-      const classifiedOutcome: RunOutcome | undefined = leased.cancelRequestedAt
-        ? {
-            status: "cancelled",
-            error: "Run was cancelled",
-            errorCode: "CANCELLED",
-          }
-        : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
-          ? {
-              status: "timed_out",
-              error: "Run deadline exceeded",
-              errorCode: "TIMED_OUT",
-            }
-          : undefined;
-      if (classifiedOutcome) {
+    async recordRemoteCancellation(id, outcome) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const terminal =
+          outcome.ok &&
+          ["cancelled", "completed", "failed", "rejected"].includes(
+            outcome.task.state,
+          );
+        if (terminal) await lockRootBudgetForRun(tx, id);
+        await tx
+          .update(AgentRunRemoteCancelTable)
+          .set({
+            dispatchedAt: null,
+            availableAt: terminal ? now : outcome.retryAt,
+            lastError: outcome.ok ? null : outcome.error,
+            remoteOutcome: outcome.ok ? outcome.task : null,
+            completedAt: terminal ? now : null,
+          })
+          .where(eq(AgentRunRemoteCancelTable.runId, id));
+        if (!terminal) return null;
         const [run] = await tx
           .update(AgentRunTable)
           .set({
-            ...terminalValues(classifiedOutcome),
+            status: "cancelled",
             completedAt: now,
+            errorCode: "CANCELLED",
+            error: "Run was cancelled after remote cancellation reconciliation",
+            leaseToken: null,
+            leaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              isNotNull(AgentRunTable.cancelRequestedAt),
+              inArray(AgentRunTable.status, ["waiting_external", "running"]),
+            ),
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(DelegationRunTable)
+          .set({
+            status: "cancelled",
+            remoteStatus: outcome.task.state,
+            completedAt: now,
+            errorCode: "CANCELLED",
+            error: "Run was cancelled after remote cancellation reconciliation",
+          })
+          .where(eq(DelegationRunTable.childRunId, id));
+        await tx
+          .delete(AgentRunContinuationTable)
+          .where(
+            and(
+              eq(AgentRunContinuationTable.runId, id),
+              eq(AgentRunContinuationTable.kind, "credential"),
+            ),
+          );
+        await observeTerminalChild(tx, run);
+        return run;
+      });
+    },
+
+    async isCancellationRequested(ids) {
+      if (!ids.length) return false;
+      const [run] = await db
+        .select({ id: AgentRunTable.id })
+        .from(AgentRunTable)
+        .where(
+          and(
+            inArray(AgentRunTable.id, [...ids]),
+            isNotNull(AgentRunTable.cancelRequestedAt),
+          ),
+        )
+        .limit(1);
+      return Boolean(run);
+    },
+
+    async countRunningChildren(parentRunId) {
+      const [{ total }] = await db
+        .select({ total: count() })
+        .from(AgentRunTable)
+        .where(
+          and(
+            eq(AgentRunTable.parentRunId, parentRunId),
+            eq(AgentRunTable.status, "running"),
+          ),
+        );
+      return total;
+    },
+
+    async listStaleDelegatedRunIds(before, limit) {
+      const rows = await db
+        .select({ id: AgentRunTable.id })
+        .from(AgentRunTable)
+        .innerJoin(
+          DelegationRunTable,
+          eq(DelegationRunTable.childRunId, AgentRunTable.id),
+        )
+        .where(
+          and(
+            or(
+              and(
+                eq(AgentRunTable.status, "queued"),
+                lt(AgentRunTable.createdAt, before),
+              ),
+              and(
+                eq(AgentRunTable.status, "running"),
+                lte(AgentRunTable.leaseExpiresAt, new Date()),
+              ),
+            ),
+          ),
+        )
+        .limit(limit);
+      return rows.map((row) => row.id);
+    },
+
+    async reconcileTerminalDelegatedRuns(limit) {
+      const now = new Date();
+      const candidates = await db
+        .select({ run: AgentRunTable })
+        .from(AgentRunTable)
+        .innerJoin(
+          DelegationRunTable,
+          eq(DelegationRunTable.childRunId, AgentRunTable.id),
+        )
+        .where(
+          and(
+            or(
+              and(
+                inArray(AgentRunTable.status, [
+                  "waiting_approval",
+                  "waiting_input",
+                  "waiting_external",
+                ]),
+                lte(AgentRunTable.absoluteDeadlineAt, now),
+              ),
+              and(
+                inArray(AgentRunTable.status, [
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "timed_out",
+                  "budget_exhausted",
+                ]),
+                or(
+                  sql`EXISTS (
+                  SELECT 1 FROM agent_run_join join_row
+                  WHERE join_row.child_run_id = ${AgentRunTable.id}
+                    AND join_row.completed_at IS NULL
+                )`,
+                  sql`EXISTS (
+                  SELECT 1 FROM agent_run_continuation continuation
+                  WHERE continuation.run_id = ${AgentRunTable.id}
+                    AND continuation.kind = 'credential'
+                )`,
+                  sql`EXISTS (
+                  SELECT 1 FROM root_run_budget_reservation reservation
+                  WHERE reservation.token = 'child:' || ${AgentRunTable.id}::text
+                    AND reservation.state = 'reserved'
+                )`,
+                  sql`NOT EXISTS (
+                  SELECT 1 FROM ${IrisActivityEventTable} event
+                  WHERE event.user_id = ${AgentRunTable.userId}
+                    AND event.idempotency_key = 'delegation-terminal:' || ${AgentRunTable.id}::text
+                )`,
+                ),
+              ),
+            ),
+          ),
+        )
+        .limit(limit);
+      const missingEvents: AgentRun[] = [];
+      for (const candidate of candidates) {
+        const missingEvent = await db.transaction(async (tx) => {
+          await lockRootBudget(tx, candidate.run.rootRunId);
+          await lockAgentRuns(tx, [candidate.run.id]);
+          const [run] = await tx
+            .select()
+            .from(AgentRunTable)
+            .where(eq(AgentRunTable.id, candidate.run.id))
+            .for("update");
+          if (!run) return null;
+          let terminalRun = run;
+          if (
+            ["waiting_approval", "waiting_input", "waiting_external"].includes(
+              run.status,
+            ) &&
+            run.absoluteDeadlineAt &&
+            run.absoluteDeadlineAt <= now
+          ) {
+            const [timedOut] = await tx
+              .update(AgentRunTable)
+              .set({
+                status: "timed_out",
+                completedAt: now,
+                errorCode: "TIMED_OUT",
+                error: "Run deadline exceeded while waiting for delegated work",
+                waitingReason: null,
+                leaseToken: null,
+                leaseExpiresAt: null,
+              })
+              .where(
+                and(
+                  eq(AgentRunTable.id, run.id),
+                  eq(AgentRunTable.status, run.status),
+                  lte(AgentRunTable.absoluteDeadlineAt, now),
+                ),
+              )
+              .returning();
+            if (!timedOut) return null;
+            terminalRun = timedOut;
+            await tx
+              .update(DelegationRunTable)
+              .set({
+                status: "timed_out",
+                completedAt: now,
+                errorCode: "TIMED_OUT",
+                error: "Run deadline exceeded while waiting for delegated work",
+              })
+              .where(eq(DelegationRunTable.childRunId, run.id));
+            await tx
+              .delete(AgentRunDispatchTable)
+              .where(eq(AgentRunDispatchTable.runId, run.id));
+            await tx
+              .update(AgentRunCheckpointTable)
+              .set({
+                completedAt: now,
+                claimToken: null,
+                claimExpiresAt: null,
+                updatedAt: now,
+              })
+              .where(eq(AgentRunCheckpointTable.parentRunId, run.id));
+            await tx
+              .delete(AgentRunResumeDispatchTable)
+              .where(eq(AgentRunResumeDispatchTable.parentRunId, run.id));
+          } else if (
+            ![
+              "succeeded",
+              "failed",
+              "cancelled",
+              "timed_out",
+              "budget_exhausted",
+            ].includes(run.status)
+          )
+            return null;
+          await tx
+            .delete(AgentRunContinuationTable)
+            .where(
+              and(
+                eq(AgentRunContinuationTable.runId, terminalRun.id),
+                eq(AgentRunContinuationTable.kind, "credential"),
+              ),
+            );
+          await observeTerminalChild(tx, terminalRun);
+          const [event] = await tx
+            .select({ id: IrisActivityEventTable.id })
+            .from(IrisActivityEventTable)
+            .where(
+              and(
+                eq(IrisActivityEventTable.userId, terminalRun.userId),
+                eq(
+                  IrisActivityEventTable.idempotencyKey,
+                  `delegation-terminal:${terminalRun.id}`,
+                ),
+              ),
+            );
+          return event ? null : terminalRun;
+        });
+        if (missingEvent) missingEvents.push(missingEvent);
+      }
+      const expiredParents = await db
+        .select({ id: AgentRunTable.id, rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .innerJoin(
+          AgentRunCheckpointTable,
+          eq(AgentRunCheckpointTable.parentRunId, AgentRunTable.id),
+        )
+        .where(
+          and(
+            eq(AgentRunTable.status, "waiting_external"),
+            lte(AgentRunTable.absoluteDeadlineAt, now),
+            isNull(AgentRunCheckpointTable.completedAt),
+          ),
+        )
+        .limit(limit);
+      for (const parent of expiredParents) {
+        await db.transaction(async (tx) => {
+          await lockRootBudget(tx, parent.rootRunId);
+          await lockAgentRuns(tx, [parent.id]);
+          const [timedOut] = await tx
+            .update(AgentRunTable)
+            .set({
+              status: "timed_out",
+              completedAt: now,
+              errorCode: "TIMED_OUT",
+              error:
+                "Parent deadline exceeded while waiting for delegated work",
+              waitingReason: null,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, parent.id),
+                eq(AgentRunTable.status, "waiting_external"),
+                lte(AgentRunTable.absoluteDeadlineAt, now),
+              ),
+            )
+            .returning({ id: AgentRunTable.id });
+          if (!timedOut) return;
+          await tx
+            .update(AgentRunCheckpointTable)
+            .set({
+              completedAt: now,
+              claimToken: null,
+              claimExpiresAt: null,
+              updatedAt: now,
+            })
+            .where(eq(AgentRunCheckpointTable.parentRunId, parent.id));
+          await tx
+            .delete(AgentRunResumeDispatchTable)
+            .where(eq(AgentRunResumeDispatchTable.parentRunId, parent.id));
+          await tx
+            .delete(AgentRunContinuationTable)
+            .where(
+              and(
+                eq(AgentRunContinuationTable.runId, parent.id),
+                eq(AgentRunContinuationTable.kind, "credential"),
+              ),
+            );
+        });
+      }
+      return missingEvents;
+    },
+
+    async listPendingDispatchRunIds(limit) {
+      const rows = await db
+        .select({ runId: AgentRunDispatchTable.runId })
+        .from(AgentRunDispatchTable)
+        .where(
+          and(
+            isNull(AgentRunDispatchTable.dispatchedAt),
+            lte(AgentRunDispatchTable.availableAt, new Date()),
+          ),
+        )
+        .limit(limit);
+      return rows.map((row) => row.runId);
+    },
+
+    async markDispatched(id) {
+      await db
+        .update(AgentRunDispatchTable)
+        .set({
+          dispatchedAt: new Date(),
+          attempts: sql`${AgentRunDispatchTable.attempts} + 1`,
+        })
+        .where(eq(AgentRunDispatchTable.runId, id));
+    },
+
+    async listPendingRemoteCancellationRunIds(limit) {
+      const rows = await db
+        .select({ runId: AgentRunRemoteCancelTable.runId })
+        .from(AgentRunRemoteCancelTable)
+        .where(
+          and(
+            isNull(AgentRunRemoteCancelTable.completedAt),
+            or(
+              isNull(AgentRunRemoteCancelTable.dispatchedAt),
+              lte(
+                AgentRunRemoteCancelTable.dispatchedAt,
+                new Date(Date.now() - 60_000),
+              ),
+            ),
+            lte(AgentRunRemoteCancelTable.availableAt, new Date()),
+          ),
+        )
+        .limit(limit);
+      return rows.map((row) => row.runId);
+    },
+
+    async markRemoteCancellationDispatched(id) {
+      await db
+        .update(AgentRunRemoteCancelTable)
+        .set({
+          dispatchedAt: new Date(),
+          attempts: sql`${AgentRunRemoteCancelTable.attempts} + 1`,
+        })
+        .where(eq(AgentRunRemoteCancelTable.runId, id));
+    },
+
+    async suspendParent(id, leaseToken, checkpoint) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        await lockRootBudgetForRun(tx, id);
+        await lockAgentRuns(tx, [id]);
+        const [leased] = await tx
+          .select({
+            status: AgentRunTable.status,
+            leaseToken: AgentRunTable.leaseToken,
+            leaseExpiresAt: AgentRunTable.leaseExpiresAt,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id))
+          .for("update");
+        if (
+          leased?.status !== "running" ||
+          leased.leaseToken !== leaseToken ||
+          !leased.leaseExpiresAt ||
+          leased.leaseExpiresAt <= now
+        )
+          return null;
+        const [currentCheckpoint] = await tx
+          .select({
+            generation: AgentRunCheckpointTable.generation,
+            claimToken: AgentRunCheckpointTable.claimToken,
+            claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
+            completedAt: AgentRunCheckpointTable.completedAt,
+          })
+          .from(AgentRunCheckpointTable)
+          .where(eq(AgentRunCheckpointTable.parentRunId, id))
+          .for("update");
+        if (
+          currentCheckpoint?.claimToken &&
+          (currentCheckpoint.claimToken !== leaseToken ||
+            !currentCheckpoint.claimExpiresAt ||
+            currentCheckpoint.claimExpiresAt <= now ||
+            currentCheckpoint.completedAt)
+        )
+          return null;
+        const classifiedOutcome: RunOutcome | undefined =
+          leased.cancelRequestedAt
+            ? {
+                status: "cancelled",
+                error: "Run was cancelled",
+                errorCode: "CANCELLED",
+              }
+            : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+              ? {
+                  status: "timed_out",
+                  error: "Run deadline exceeded",
+                  errorCode: "TIMED_OUT",
+                }
+              : undefined;
+        if (classifiedOutcome) {
+          const [run] = await tx
+            .update(AgentRunTable)
+            .set({
+              ...terminalValues(classifiedOutcome),
+              completedAt: now,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, id),
+                eq(AgentRunTable.status, "running"),
+                eq(AgentRunTable.leaseToken, leaseToken),
+              ),
+            )
+            .returning();
+          if (!run) return null;
+          if (currentCheckpoint) {
+            await tx
+              .update(AgentRunCheckpointTable)
+              .set({
+                completedAt: now,
+                claimToken: null,
+                claimExpiresAt: null,
+                updatedAt: now,
+              })
+              .where(eq(AgentRunCheckpointTable.parentRunId, id));
+          }
+          await tx
+            .delete(AgentRunResumeDispatchTable)
+            .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
+          return run;
+        }
+        const generation = (currentCheckpoint?.generation ?? 0) + 1;
+        const requestedToolCallIds = [
+          ...new Set(checkpoint.delegationToolCallIds),
+        ];
+        if (!requestedToolCallIds.length) return null;
+        const joins = await tx
+          .select({ toolCallId: AgentRunJoinTable.toolCallId })
+          .from(AgentRunJoinTable)
+          .where(
+            and(
+              eq(AgentRunJoinTable.parentRunId, id),
+              eq(AgentRunJoinTable.checkpointGeneration, generation),
+              inArray(AgentRunJoinTable.toolCallId, requestedToolCallIds),
+            ),
+          );
+        if (
+          joins.length !== requestedToolCallIds.length ||
+          joins.some((join) => !requestedToolCallIds.includes(join.toolCallId))
+        )
+          return null;
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            status: "waiting_external",
+            waitingReason: "DELEGATED_CHILDREN",
+            lastHeartbeatAt: now,
             leaseToken: null,
             leaseExpiresAt: null,
           })
@@ -1488,79 +1796,25 @@ export const pgAgentRunRepository: AgentRunRepository = {
           )
           .returning();
         if (!run) return null;
-        if (currentCheckpoint) {
-          await tx
-            .update(AgentRunCheckpointTable)
-            .set({
-              completedAt: now,
+        await tx
+          .insert(AgentRunCheckpointTable)
+          .values({ parentRunId: id, ...checkpoint })
+          .onConflictDoUpdate({
+            target: AgentRunCheckpointTable.parentRunId,
+            set: {
+              generation,
+              responseMessages: checkpoint.responseMessages,
+              modelMessages: checkpoint.modelMessages,
+              modelConfig: checkpoint.modelConfig,
+              authorizationRecipe: checkpoint.authorizationRecipe,
+              assistantMessageId: checkpoint.assistantMessageId,
               claimToken: null,
               claimExpiresAt: null,
+              completedAt: null,
               updatedAt: now,
-            })
-            .where(eq(AgentRunCheckpointTable.parentRunId, id));
-        }
-        await tx
-          .delete(AgentRunResumeDispatchTable)
-          .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
-        return run;
-      }
-      const generation = (currentCheckpoint?.generation ?? 0) + 1;
-      const requestedToolCallIds = [
-        ...new Set(checkpoint.delegationToolCallIds),
-      ];
-      if (!requestedToolCallIds.length) return null;
-      const joins = await tx
-        .select({ toolCallId: AgentRunJoinTable.toolCallId })
-        .from(AgentRunJoinTable)
-        .where(
-          and(
-            eq(AgentRunJoinTable.parentRunId, id),
-            eq(AgentRunJoinTable.checkpointGeneration, generation),
-            inArray(AgentRunJoinTable.toolCallId, requestedToolCallIds),
-          ),
-        );
-      if (
-        joins.length !== requestedToolCallIds.length ||
-        joins.some((join) => !requestedToolCallIds.includes(join.toolCallId))
-      )
-        return null;
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "waiting_external",
-          waitingReason: "DELEGATED_CHILDREN",
-          lastHeartbeatAt: now,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, leaseToken),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      await tx
-        .insert(AgentRunCheckpointTable)
-        .values({ parentRunId: id, ...checkpoint })
-        .onConflictDoUpdate({
-          target: AgentRunCheckpointTable.parentRunId,
-          set: {
-            generation,
-            responseMessages: checkpoint.responseMessages,
-            modelMessages: checkpoint.modelMessages,
-            modelConfig: checkpoint.modelConfig,
-            authorizationRecipe: checkpoint.authorizationRecipe,
-            assistantMessageId: checkpoint.assistantMessageId,
-            claimToken: null,
-            claimExpiresAt: null,
-            completedAt: null,
-            updatedAt: now,
-          },
-        });
-      await tx.execute(sql`
+            },
+          });
+        await tx.execute(sql`
         INSERT INTO agent_run_resume_dispatch
           (parent_run_id, generation, available_at, dispatched_at)
         SELECT checkpoint.parent_run_id, checkpoint.generation,
@@ -1577,239 +1831,250 @@ export const pgAgentRunRepository: AgentRunRepository = {
           available_at = EXCLUDED.available_at,
           dispatched_at = NULL
       `);
-      return run;
-    });
-  },
+        return run;
+      });
+    },
 
-  async claimParentResume(id, leaseMs) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const token = randomUUID();
-      const [expired] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "timed_out",
-          completedAt: now,
-          errorCode: "TIMED_OUT",
-          error: "Parent deadline exceeded while waiting for delegated work",
-        })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "waiting_external"),
-            lte(AgentRunTable.absoluteDeadlineAt, now),
-          ),
+    async claimParentResume(id, leaseMs) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const token = randomUUID();
+        const [expired] = await tx
+          .update(AgentRunTable)
+          .set({
+            status: "timed_out",
+            completedAt: now,
+            errorCode: "TIMED_OUT",
+            error: "Parent deadline exceeded while waiting for delegated work",
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "waiting_external"),
+              lte(AgentRunTable.absoluteDeadlineAt, now),
+            ),
+          )
+          .returning({ id: AgentRunTable.id });
+        if (expired) {
+          await tx
+            .update(AgentRunCheckpointTable)
+            .set({ completedAt: now, updatedAt: now })
+            .where(eq(AgentRunCheckpointTable.parentRunId, id));
+          await tx
+            .delete(AgentRunResumeDispatchTable)
+            .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
+          return null;
+        }
+        const [row] = await tx
+          .select({ run: AgentRunTable, checkpoint: AgentRunCheckpointTable })
+          .from(AgentRunTable)
+          .innerJoin(
+            AgentRunCheckpointTable,
+            eq(AgentRunCheckpointTable.parentRunId, AgentRunTable.id),
+          )
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "waiting_external"),
+              isNull(AgentRunTable.cancelRequestedAt),
+              isNull(AgentRunCheckpointTable.completedAt),
+            ),
+          )
+          .for("update");
+        if (
+          !row ||
+          (row.run.absoluteDeadlineAt && row.run.absoluteDeadlineAt <= now) ||
+          (row.checkpoint.claimExpiresAt && row.checkpoint.claimExpiresAt > now)
         )
-        .returning({ id: AgentRunTable.id });
-      if (expired) {
+          return null;
+        const [pending] = await tx
+          .select({ childRunId: AgentRunJoinTable.childRunId })
+          .from(AgentRunJoinTable)
+          .where(
+            and(
+              eq(AgentRunJoinTable.parentRunId, id),
+              isNull(AgentRunJoinTable.completedAt),
+            ),
+          )
+          .limit(1);
+        if (pending) return null;
+        const expiresAt = new Date(now.getTime() + leaseMs);
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            status: "running",
+            waitingReason: null,
+            leaseToken: token,
+            leaseExpiresAt: expiresAt,
+            lastHeartbeatAt: now,
+            attempt: sql`${AgentRunTable.attempt} + 1`,
+          })
+          .where(eq(AgentRunTable.id, id))
+          .returning();
         await tx
           .update(AgentRunCheckpointTable)
-          .set({ completedAt: now, updatedAt: now })
+          .set({ claimToken: token, claimExpiresAt: expiresAt, updatedAt: now })
           .where(eq(AgentRunCheckpointTable.parentRunId, id));
+        const joins = await tx
+          .select()
+          .from(AgentRunJoinTable)
+          .where(
+            and(
+              eq(AgentRunJoinTable.parentRunId, id),
+              eq(
+                AgentRunJoinTable.checkpointGeneration,
+                row.checkpoint.generation,
+              ),
+              isNotNull(AgentRunJoinTable.completedAt),
+            ),
+          );
+        return {
+          run,
+          checkpoint: {
+            generation: row.checkpoint.generation,
+            delegationToolCallIds: [],
+            responseMessages: row.checkpoint.responseMessages,
+            modelMessages: row.checkpoint.modelMessages,
+            modelConfig: row.checkpoint.modelConfig,
+            authorizationRecipe: row.checkpoint.authorizationRecipe,
+            assistantMessageId: row.checkpoint.assistantMessageId,
+          },
+          joins: joins.map((join) => ({
+            checkpointGeneration: join.checkpointGeneration,
+            toolCallId: join.toolCallId,
+            childRunId: join.childRunId,
+            observation: join.observation!,
+          })),
+          token,
+        };
+      });
+    },
+
+    async checkpointParentAgain(id, claimToken, checkpoint) {
+      return this.suspendParent(id, claimToken, checkpoint);
+    },
+
+    async finishParentResume(id, claimToken, outcome) {
+      return db.transaction(async (tx) => {
+        const now = new Date();
+        const [leased] = await tx
+          .select({
+            status: AgentRunTable.status,
+            leaseToken: AgentRunTable.leaseToken,
+            leaseExpiresAt: AgentRunTable.leaseExpiresAt,
+            cancelRequestedAt: AgentRunTable.cancelRequestedAt,
+            absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+          })
+          .from(AgentRunTable)
+          .where(eq(AgentRunTable.id, id))
+          .for("update");
+        if (
+          leased?.status !== "running" ||
+          leased.leaseToken !== claimToken ||
+          !leased.leaseExpiresAt ||
+          leased.leaseExpiresAt <= now
+        )
+          return null;
+        const [checkpoint] = await tx
+          .select({
+            parentRunId: AgentRunCheckpointTable.parentRunId,
+            generation: AgentRunCheckpointTable.generation,
+            claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
+          })
+          .from(AgentRunCheckpointTable)
+          .where(
+            and(
+              eq(AgentRunCheckpointTable.parentRunId, id),
+              eq(AgentRunCheckpointTable.claimToken, claimToken),
+              isNull(AgentRunCheckpointTable.completedAt),
+            ),
+          )
+          .for("update");
+        if (!checkpoint?.claimExpiresAt || checkpoint.claimExpiresAt <= now)
+          return null;
+        const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
+          ? {
+              status: "cancelled",
+              error: "Run was cancelled",
+              errorCode: "CANCELLED",
+            }
+          : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+            ? {
+                status: "timed_out",
+                error: "Run deadline exceeded",
+                errorCode: "TIMED_OUT",
+              }
+            : outcome;
+        const [run] = await tx
+          .update(AgentRunTable)
+          .set({
+            ...terminalValues(classifiedOutcome),
+            completedAt: now,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(AgentRunTable.id, id),
+              eq(AgentRunTable.status, "running"),
+              eq(AgentRunTable.leaseToken, claimToken),
+            ),
+          )
+          .returning();
+        if (!run) return null;
+        await tx
+          .update(AgentRunCheckpointTable)
+          .set({
+            completedAt: now,
+            claimToken: null,
+            claimExpiresAt: null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(AgentRunCheckpointTable.parentRunId, id),
+              eq(AgentRunCheckpointTable.generation, checkpoint.generation),
+              eq(AgentRunCheckpointTable.claimToken, claimToken),
+              isNull(AgentRunCheckpointTable.completedAt),
+            ),
+          );
         await tx
           .delete(AgentRunResumeDispatchTable)
           .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
-        return null;
-      }
-      const [row] = await tx
-        .select({ run: AgentRunTable, checkpoint: AgentRunCheckpointTable })
-        .from(AgentRunTable)
-        .innerJoin(
-          AgentRunCheckpointTable,
-          eq(AgentRunCheckpointTable.parentRunId, AgentRunTable.id),
-        )
+        return run;
+      });
+    },
+
+    async listPendingParentResumeIds(limit) {
+      const rows = await db
+        .select({ parentRunId: AgentRunResumeDispatchTable.parentRunId })
+        .from(AgentRunResumeDispatchTable)
         .where(
           and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "waiting_external"),
-            isNull(AgentRunTable.cancelRequestedAt),
-            isNull(AgentRunCheckpointTable.completedAt),
-          ),
-        )
-        .for("update");
-      if (
-        !row ||
-        (row.run.absoluteDeadlineAt && row.run.absoluteDeadlineAt <= now) ||
-        (row.checkpoint.claimExpiresAt && row.checkpoint.claimExpiresAt > now)
-      )
-        return null;
-      const [pending] = await tx
-        .select({ childRunId: AgentRunJoinTable.childRunId })
-        .from(AgentRunJoinTable)
-        .where(
-          and(
-            eq(AgentRunJoinTable.parentRunId, id),
-            isNull(AgentRunJoinTable.completedAt),
-          ),
-        )
-        .limit(1);
-      if (pending) return null;
-      const expiresAt = new Date(now.getTime() + leaseMs);
-      const [run] = await tx
-        .update(AgentRunTable)
-        .set({
-          status: "running",
-          waitingReason: null,
-          leaseToken: token,
-          leaseExpiresAt: expiresAt,
-          lastHeartbeatAt: now,
-          attempt: sql`${AgentRunTable.attempt} + 1`,
-        })
-        .where(eq(AgentRunTable.id, id))
-        .returning();
-      await tx
-        .update(AgentRunCheckpointTable)
-        .set({ claimToken: token, claimExpiresAt: expiresAt, updatedAt: now })
-        .where(eq(AgentRunCheckpointTable.parentRunId, id));
-      const joins = await tx
-        .select()
-        .from(AgentRunJoinTable)
-        .where(
-          and(
-            eq(AgentRunJoinTable.parentRunId, id),
-            eq(
-              AgentRunJoinTable.checkpointGeneration,
-              row.checkpoint.generation,
+            lte(AgentRunResumeDispatchTable.availableAt, new Date()),
+            or(
+              isNull(AgentRunResumeDispatchTable.dispatchedAt),
+              lte(
+                AgentRunResumeDispatchTable.dispatchedAt,
+                new Date(Date.now() - 60_000),
+              ),
             ),
-            isNotNull(AgentRunJoinTable.completedAt),
-          ),
-        );
-      return {
-        run,
-        checkpoint: {
-          generation: row.checkpoint.generation,
-          delegationToolCallIds: [],
-          responseMessages: row.checkpoint.responseMessages,
-          modelMessages: row.checkpoint.modelMessages,
-          modelConfig: row.checkpoint.modelConfig,
-          authorizationRecipe: row.checkpoint.authorizationRecipe,
-          assistantMessageId: row.checkpoint.assistantMessageId,
-        },
-        joins: joins.map((join) => ({
-          checkpointGeneration: join.checkpointGeneration,
-          toolCallId: join.toolCallId,
-          childRunId: join.childRunId,
-          observation: join.observation!,
-        })),
-        token,
-      };
-    });
-  },
-
-  async checkpointParentAgain(id, claimToken, checkpoint) {
-    return this.suspendParent(id, claimToken, checkpoint);
-  },
-
-  async finishParentResume(id, claimToken, outcome) {
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const [checkpoint] = await tx
-        .select({
-          parentRunId: AgentRunCheckpointTable.parentRunId,
-          claimExpiresAt: AgentRunCheckpointTable.claimExpiresAt,
-        })
-        .from(AgentRunCheckpointTable)
-        .where(
-          and(
-            eq(AgentRunCheckpointTable.parentRunId, id),
-            eq(AgentRunCheckpointTable.claimToken, claimToken),
-            isNull(AgentRunCheckpointTable.completedAt),
           ),
         )
-        .for("update");
-      if (!checkpoint?.claimExpiresAt || checkpoint.claimExpiresAt <= now)
-        return null;
-      const [leased] = await tx
-        .select({
-          status: AgentRunTable.status,
-          leaseToken: AgentRunTable.leaseToken,
-          leaseExpiresAt: AgentRunTable.leaseExpiresAt,
-          cancelRequestedAt: AgentRunTable.cancelRequestedAt,
-          absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
-        })
-        .from(AgentRunTable)
-        .where(eq(AgentRunTable.id, id))
-        .for("update");
-      if (
-        leased?.status !== "running" ||
-        leased.leaseToken !== claimToken ||
-        !leased.leaseExpiresAt ||
-        leased.leaseExpiresAt <= now
-      )
-        return null;
-      const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
-        ? {
-            status: "cancelled",
-            error: "Run was cancelled",
-            errorCode: "CANCELLED",
-          }
-        : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
-          ? {
-              status: "timed_out",
-              error: "Run deadline exceeded",
-              errorCode: "TIMED_OUT",
-            }
-          : outcome;
-      const [run] = await tx
-        .update(AgentRunTable)
+        .limit(limit);
+      return rows.map((row) => row.parentRunId);
+    },
+
+    async markParentResumeDispatched(id) {
+      await db
+        .update(AgentRunResumeDispatchTable)
         .set({
-          ...terminalValues(classifiedOutcome),
-          completedAt: now,
-          leaseToken: null,
-          leaseExpiresAt: null,
+          dispatchedAt: new Date(),
+          attempts: sql`${AgentRunResumeDispatchTable.attempts} + 1`,
         })
-        .where(
-          and(
-            eq(AgentRunTable.id, id),
-            eq(AgentRunTable.status, "running"),
-            eq(AgentRunTable.leaseToken, claimToken),
-          ),
-        )
-        .returning();
-      if (!run) return null;
-      await tx
-        .update(AgentRunCheckpointTable)
-        .set({
-          completedAt: now,
-          claimToken: null,
-          claimExpiresAt: null,
-          updatedAt: now,
-        })
-        .where(eq(AgentRunCheckpointTable.parentRunId, id));
-      await tx
-        .delete(AgentRunResumeDispatchTable)
         .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
-      return run;
-    });
-  },
+    },
+  };
+}
 
-  async listPendingParentResumeIds(limit) {
-    const rows = await db
-      .select({ parentRunId: AgentRunResumeDispatchTable.parentRunId })
-      .from(AgentRunResumeDispatchTable)
-      .where(
-        and(
-          lte(AgentRunResumeDispatchTable.availableAt, new Date()),
-          or(
-            isNull(AgentRunResumeDispatchTable.dispatchedAt),
-            lte(
-              AgentRunResumeDispatchTable.dispatchedAt,
-              new Date(Date.now() - 60_000),
-            ),
-          ),
-        ),
-      )
-      .limit(limit);
-    return rows.map((row) => row.parentRunId);
-  },
-
-  async markParentResumeDispatched(id) {
-    await db
-      .update(AgentRunResumeDispatchTable)
-      .set({
-        dispatchedAt: new Date(),
-        attempts: sql`${AgentRunResumeDispatchTable.attempts} + 1`,
-      })
-      .where(eq(AgentRunResumeDispatchTable.parentRunId, id));
-  },
-};
+export const pgAgentRunRepository = createPgAgentRunRepository(pgDb);

@@ -93,6 +93,7 @@ export interface AgentRunRepository {
   isCancellationRequested(ids: readonly string[]): Promise<boolean>;
   countRunningChildren(parentRunId: string): Promise<number>;
   listStaleDelegatedRunIds(before: Date, limit: number): Promise<string[]>;
+  reconcileTerminalDelegatedRuns(limit: number): Promise<AgentRun[]>;
   listPendingDispatchRunIds(limit: number): Promise<string[]>;
   markDispatched(id: string): Promise<void>;
   listPendingRemoteCancellationRunIds(limit: number): Promise<string[]>;

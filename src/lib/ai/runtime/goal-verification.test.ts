@@ -47,7 +47,7 @@ describe("completion requirements", () => {
     });
   });
 
-  test("accepts an actual runtime capability result even with an empty result", async () => {
+  test("accepts a successful runtime capability result even with an empty result", async () => {
     const verifier = {
       supports: (target: { kind: string }) =>
         target.kind === "capability_result",
@@ -74,6 +74,39 @@ describe("completion requirements", () => {
     ).resolves.toMatchObject({
       verified: true,
       verificationKind: "capability",
+    });
+  });
+
+  test("rejects a terminal runtime capability failure", async () => {
+    const requirement = new CapabilityRequirement(
+      new VerificationEngine([
+        {
+          supports: (target) => target.kind === "capability_result",
+          verify: async (target) =>
+            target.kind === "capability_result" && target.successful
+              ? { verified: true as const }
+              : {
+                  verified: false as const,
+                  reason: "CAPABILITY_EXECUTION_FAILED",
+                },
+        },
+      ]),
+      ["generate_report"],
+    );
+
+    await expect(
+      requirement.verifyCompletion(
+        {
+          type: "tool-generate_report",
+          toolCallId: "call-1",
+          state: "output-error",
+          errorText: "provider failed",
+        },
+        expected,
+      ),
+    ).resolves.toEqual({
+      verified: false,
+      reason: "CAPABILITY_EXECUTION_FAILED",
     });
   });
 

@@ -1,11 +1,14 @@
 import { customModelProvider } from "lib/ai/models";
 import { BudgetExhaustedError } from "lib/ai/runtime/budget";
+import type { AgentRun } from "lib/ai/runs/types";
+import { createDelegationWorkerExecutor } from "lib/delegation/worker-executor";
 import { describe, expect, test, vi } from "vitest";
 import {
   type AutomationExecutionDependencies,
   type AutomationExecutionRequest,
   classifyWorkflowFailure,
   createAutomationExecutionAdapter,
+  executeWorkflowAutomation,
   finishWorkflowAgentRun,
   mapWorkflowOutput,
   projectAutomationExecutionResult,
@@ -163,6 +166,110 @@ describe("automation execution adapter", () => {
     );
   });
 
+  test("worker passes the persisted exact tool set into the production headless adapter", async () => {
+    const parent = {
+      id: "parent-1",
+      status: "running",
+      cancelRequestedAt: null,
+    } as unknown as AgentRun;
+    const child = {
+      id: "child-1",
+      userId: crypto.randomUUID(),
+      agentId: crypto.randomUUID(),
+      parentRunId: parent.id,
+      rootRunId: parent.id,
+      workspaceId: null,
+      taskId: null,
+      status: "queued",
+      context: {
+        objective: "Use only the persisted capability",
+        policyAuthority: {
+          capabilityIds: ["tool:allowed", "tool:forbidden"],
+        },
+      },
+      allowedTools: ["allowed"],
+      timeoutMs: 1_000,
+      depth: 1,
+      tokenBudget: 1_000,
+      absoluteDeadlineAt: new Date(Date.now() + 60_000),
+      cancelRequestedAt: null,
+    } as unknown as AgentRun;
+    const claimed = { ...child, status: "running" as const };
+    const generate = vi.fn(async () => ({
+      text: "complete",
+      usage: { totalTokens: 1 },
+    }));
+    const tools = {
+      allowed: { execute: vi.fn() },
+      forbidden: { execute: vi.fn() },
+    };
+    const capabilitiesModule = await import(
+      "lib/ai/runtime/capabilities/server"
+    );
+    vi.spyOn(
+      capabilitiesModule,
+      "buildServerCapabilityResolutionInput",
+    ).mockResolvedValue({} as never);
+    vi.spyOn(capabilitiesModule, "resolveServerCapabilities").mockResolvedValue({
+      ordered: [
+        { id: "tool:allowed", key: "allowed", kind: "tool" },
+        { id: "tool:forbidden", key: "forbidden", kind: "tool" },
+      ],
+      model: tools,
+      eligibleDelegationTargets: [],
+      routing: {},
+    } as never);
+    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue({} as never);
+    const executeLocal = (workerRequest: any) =>
+      runHeadlessAgent({
+        request: workerRequest,
+        profile: { type: "base" },
+        instructions: "Execute delegated work",
+        allowedTools: workerRequest.allowedTools,
+        harness: { generate },
+        resolveBudget: async () => ({ maxTokens: 1_000 }),
+      });
+    const finish = vi.fn(async () => ({
+      ...claimed,
+      status: "succeeded" as const,
+    }));
+    const runs = {
+      claim: vi.fn(async () => ({ run: claimed, token: "lease-1" })),
+      heartbeat: vi.fn(async () => "active" as const),
+      isCancellationRequested: vi.fn(async () => false),
+      succeedWithLease: finish,
+      failWithLease: vi.fn(),
+      exhaustBudgetWithLease: vi.fn(),
+      cancelWithLease: vi.fn(),
+      timeOutWithLease: vi.fn(),
+      cancelQueued: vi.fn(),
+    };
+    await createDelegationWorkerExecutor({
+      runs: runs as any,
+      selectRun: async (id) => (id === child.id ? child : parent),
+      selectDelegation: async () => ({
+        targetKind: "local_agent",
+        remoteAgentId: null,
+      }),
+      remote: {} as any,
+      executeLocal,
+      enqueue: vi.fn(async () => true),
+      markDispatched: vi.fn(),
+      decryptCredential: String,
+      recordEvent: vi.fn(),
+      ingestRemoteArtifacts: vi.fn(),
+      pollMs: 60_000,
+    })(child.id);
+
+    const execution = (generate.mock.calls as any[][])[0][0];
+    expect(Object.keys(execution.agent.tools)).toEqual(["allowed"]);
+    expect(execution.agent.tools).not.toHaveProperty("forbidden");
+    expect(execution.orchestration.policy.authority.capabilityIds).toEqual([
+      "tool:allowed",
+    ]);
+    expect(finish).toHaveBeenCalledOnce();
+  });
+
   test("persists and enforces the normalized automation goal requirement", async () => {
     const input = request("agent");
     input.input = { objective: "create Q2 revenue PDF report" };
@@ -228,6 +335,22 @@ describe("automation execution adapter", () => {
     expect(executor).not.toHaveBeenCalled();
   });
 
+  test("does not misclassify an explicit worker timeout as cancellation", async () => {
+    const executor = vi.fn();
+    const controller = new AbortController();
+    controller.abort(new DOMException("Run timed out", "TimeoutError"));
+    const input = { ...request("agent"), signal: controller.signal };
+    const dependencies = {
+      workflow: executor,
+      skill: executor,
+      agent: executor,
+    } as AutomationExecutionDependencies;
+    await expect(
+      createAutomationExecutionAdapter(dependencies)(input),
+    ).resolves.toEqual({ status: "timed_out", message: "Run timed out" });
+    expect(executor).not.toHaveBeenCalled();
+  });
+
   test("returns structured retryable failures", async () => {
     const failing = vi.fn(async () => {
       throw new Error("provider unavailable");
@@ -267,6 +390,8 @@ describe("automation execution adapter", () => {
       succeed: vi.fn(),
       fail: vi.fn(),
       exhaustBudget: vi.fn(),
+      cancel: vi.fn(),
+      timeOut: vi.fn(),
     };
     const error = new BudgetExhaustedError("maxTokens", {
       steps: 1,
@@ -295,6 +420,97 @@ describe("automation execution adapter", () => {
       status: "budget_exhausted",
       message: "Run budget exhausted: maxTokens",
     });
+  });
+
+  test("terminalizes a thrown workflow executor failure and always cleans up", async () => {
+    const manager = {
+      start: vi.fn(async () => undefined),
+      succeed: vi.fn(),
+      fail: vi.fn(async () => undefined),
+      exhaustBudget: vi.fn(),
+      cancel: vi.fn(),
+      timeOut: vi.fn(),
+    };
+    const cleanup = vi.fn(async () => true);
+    const executor = vi.fn(() => ({
+      run: vi.fn(async () => {
+        throw new Error("executor exploded");
+      }),
+    }));
+
+    await expect(
+      executeWorkflowAutomation({
+        request: request("workflow"),
+        workflow: { nodes: [], edges: [] },
+        manager: manager as never,
+        executor: executor as never,
+        cleanup,
+        resolveBudget: async () => ({ maxTokens: 100 }) as never,
+      }),
+    ).resolves.toMatchObject({ status: "failed", message: "executor exploded" });
+    expect(manager.fail).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  test("falls back to failed and surfaces cleanup when terminalization throws", async () => {
+    const manager = {
+      start: vi.fn(async () => undefined),
+      succeed: vi.fn(async () => {
+        throw new Error("terminalization exploded");
+      }),
+      fail: vi.fn(async () => undefined),
+      exhaustBudget: vi.fn(),
+      cancel: vi.fn(),
+      timeOut: vi.fn(),
+    };
+    const cleanup = vi.fn(async () => {
+      throw new Error("cleanup exploded");
+    });
+
+    await expect(
+      executeWorkflowAutomation({
+        request: request("workflow"),
+        workflow: { nodes: [], edges: [] },
+        manager: manager as never,
+        executor: (() => ({
+          run: async () => ({ isOk: true, output: { ok: true } }),
+        })) as never,
+        cleanup,
+        resolveBudget: async () => ({ maxTokens: 100 }) as never,
+      }),
+    ).rejects.toThrow("Workflow terminalization and cleanup failed");
+    expect(manager.succeed).toHaveBeenCalledOnce();
+    expect(manager.fail).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  test("records cleanup failure without masking a primary workflow failure", async () => {
+    const manager = {
+      start: vi.fn(async () => undefined),
+      succeed: vi.fn(),
+      fail: vi.fn(async () => undefined),
+      exhaustBudget: vi.fn(),
+      cancel: vi.fn(),
+      timeOut: vi.fn(),
+    };
+    await expect(
+      executeWorkflowAutomation({
+        request: request("workflow"),
+        workflow: { nodes: [], edges: [] },
+        manager: manager as never,
+        executor: (() => ({
+          run: async () => ({ isOk: false, error: new Error("primary") }),
+        })) as never,
+        cleanup: async () => {
+          throw new Error("cleanup");
+        },
+        resolveBudget: async () => ({ maxTokens: 100 }) as never,
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message: "primary; cleanup failed: cleanup",
+    });
+    expect(manager.fail).toHaveBeenCalledOnce();
   });
 
   test("classifies exact coded failures without fragile message matching", async () => {

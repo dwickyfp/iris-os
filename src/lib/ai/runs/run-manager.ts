@@ -256,6 +256,10 @@ export class RunManager {
     return this.repository.listStaleDelegatedRunIds(before, limit);
   }
 
+  reconcileTerminalDelegatedRuns(limit = 100) {
+    return this.repository.reconcileTerminalDelegatedRuns(limit);
+  }
+
   listPendingDispatchRunIds(limit = 100) {
     return this.repository.listPendingDispatchRunIds(limit);
   }
@@ -308,8 +312,9 @@ export class RunManager {
     return this.repository.markParentResumeDispatched(runId);
   }
 
-  private finish(runId: string, leaseToken: string, outcome: RunOutcome) {
+  private async finish(runId: string, leaseToken: string, outcome: RunOutcome) {
+    const run = await this.repository.finishRunning(runId, leaseToken, outcome);
     this.foregroundLeases.delete(runId);
-    return this.repository.finishRunning(runId, leaseToken, outcome);
+    return run;
   }
 }

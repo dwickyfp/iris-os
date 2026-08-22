@@ -2,6 +2,7 @@ import type { ActivityEventInput } from "app-types/activity";
 import { hasArtifactClaims } from "../artifacts";
 import type { RunManager } from "../runs/run-manager";
 import type { RunLeaseState, RunOutcome } from "../runs/types";
+import { isTerminalAgentRunStatus } from "../runs/status";
 import type {
   HarnessEventRecorder,
   HarnessFailure,
@@ -49,13 +50,12 @@ function terminalStatus(
   status: unknown,
   fallback: RunOutcome["status"],
 ): RunOutcome["status"] {
-  return status === "succeeded" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "timed_out" ||
-    status === "budget_exhausted"
-    ? status
-    : fallback;
+  if (
+    typeof status === "string" &&
+    isTerminalAgentRunStatus(status as RunOutcome["status"])
+  )
+    return status as RunOutcome["status"];
+  return fallback;
 }
 
 export class IrisHarness {

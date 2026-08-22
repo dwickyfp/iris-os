@@ -33,6 +33,7 @@ const run = {
   parentRunId: null,
   rootRunId: "run-1",
   status: "running",
+  cancelRequestedAt: null,
 };
 
 function queueResults(...results: unknown[][]) {
@@ -65,6 +66,27 @@ describe("AgentRun observability when delegation is disabled", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).runs).toEqual([run]);
+  });
+
+  it("summarizes budget exhaustion as failed but never active or retryable", async () => {
+    queueResults(
+      [
+        run,
+        { ...run, id: "run-2", status: "budget_exhausted" },
+        { ...run, id: "run-3", status: "timed_out" },
+        { ...run, id: "run-4", status: "succeeded" },
+      ],
+      [],
+    );
+
+    const response = await listRuns();
+
+    expect((await response.json()).summary).toEqual({
+      active: 1,
+      failed: 2,
+      retryable: 1,
+      cancellable: 1,
+    });
   });
 
   it("gets an owned AgentRun", async () => {

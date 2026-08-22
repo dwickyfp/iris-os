@@ -8,14 +8,6 @@ import type { RunPreparationSnapshot } from "../runtime/run-preparer";
 export type AgentRun = typeof AgentRunTable.$inferSelect;
 export type DelegationRun = typeof DelegationRunTable.$inferSelect;
 export type AgentRunStatus = AgentRun["status"];
-export type TerminalAgentRunStatus = Exclude<
-  AgentRunStatus,
-  | "queued"
-  | "running"
-  | "waiting_approval"
-  | "waiting_input"
-  | "waiting_external"
->;
 
 export type RunOutcome =
   | { status: "succeeded"; result: Record<string, unknown> }

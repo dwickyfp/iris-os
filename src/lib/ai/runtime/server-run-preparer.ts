@@ -6,7 +6,7 @@ import { goalRequirementResolver } from "./goal-requirement-resolver";
 import { type RunPreparationDependencies, RunPreparer } from "./run-preparer";
 import { serverBudgetResolver } from "./server-budget-resolver";
 
-type ServerRunSurfaceBindings<Capabilities, Model> = Pick<
+export type ServerRunSurfaceBindings<Capabilities, Model> = Pick<
   RunPreparationDependencies<Capabilities, Model>,
   | "resolveCapabilities"
   | "resolvePolicy"
@@ -14,7 +14,10 @@ type ServerRunSurfaceBindings<Capabilities, Model> = Pick<
   | "resolveModel"
 > & {
   /** Narrow authority injection for claimed descendants and isolated tests. */
-  resolveBudget?: RunPreparationDependencies<Capabilities, Model>["resolveBudget"];
+  resolveBudget?: RunPreparationDependencies<
+    Capabilities,
+    Model
+  >["resolveBudget"];
 };
 
 /** Canonical server factory for chat, automation, delegation, and resume preparation. */

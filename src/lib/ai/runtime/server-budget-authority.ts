@@ -3,10 +3,15 @@ import "server-only";
 import { and, eq, lte, ne, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
+  lockRootBudget,
+  resolveRootRunId,
+} from "lib/db/pg/repositories/lock-order.pg";
+import {
   AgentRunTable,
   RootRunBudgetReservationTable,
   RootRunBudgetTable,
 } from "lib/db/pg/schema.pg";
+import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
 import { BudgetExhaustedError, type BudgetKind } from "./budget";
 
 export type DurableBudgetKind =
@@ -89,31 +94,18 @@ function exhausted(kind: DurableBudgetKind | "duration", committed = 0): never {
 type Transaction = Parameters<Parameters<typeof pgDb.transaction>[0]>[0];
 
 async function rootForRun(tx: Transaction, runId: string) {
-  const [run] = await tx
-    .select({ rootRunId: AgentRunTable.rootRunId })
-    .from(AgentRunTable)
-    .where(eq(AgentRunTable.id, runId));
-  if (!run) throw new Error("ROOT_RUN_BUDGET_RUN_NOT_FOUND");
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${run.rootRunId}`}, 0))`,
-  );
+  const rootRunId = await resolveRootRunId(tx, runId);
+  await lockRootBudget(tx, rootRunId);
   const [budget] = await tx
     .select()
     .from(RootRunBudgetTable)
-    .where(eq(RootRunBudgetTable.rootRunId, run.rootRunId))
+    .where(eq(RootRunBudgetTable.rootRunId, rootRunId))
     .for("update");
   if (!budget) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
   if (Date.now() - budget.createdAt.getTime() >= budget.maxDurationMs)
     exhausted("duration");
-  return { rootRunId: run.rootRunId, budget };
+  return { rootRunId, budget };
 }
-
-const terminalRunStates = [
-  "succeeded",
-  "failed",
-  "cancelled",
-  "timed_out",
-] as const;
 
 async function canReleaseExpiredReservation(
   tx: Transaction,
@@ -128,12 +120,7 @@ async function canReleaseExpiredReservation(
     .select({ status: AgentRunTable.status })
     .from(AgentRunTable)
     .where(eq(AgentRunTable.id, runId));
-  return Boolean(
-    run &&
-      terminalRunStates.includes(
-        run.status as (typeof terminalRunStates)[number],
-      ),
-  );
+  return Boolean(run && isTerminalAgentRunStatus(run.status));
 }
 
 export const serverBudgetAuthority = {
@@ -308,9 +295,7 @@ export const serverBudgetAuthority = {
     let released = 0;
     for (const candidate of candidates) {
       released += await pgDb.transaction(async (tx) => {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${candidate.rootRunId}`}, 0))`,
-        );
+        await lockRootBudget(tx, candidate.rootRunId);
         const [reservation] = await tx
           .select()
           .from(RootRunBudgetReservationTable)

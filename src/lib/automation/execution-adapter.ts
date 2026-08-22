@@ -18,12 +18,14 @@ import { isBudgetExhausted } from "lib/ai/runtime/budget";
 import {
   buildServerCapabilityResolutionInput,
   resolveServerCapabilities,
-  subtractAutomationCapabilities,
 } from "lib/ai/runtime/capabilities/server";
-import { policyEngine } from "lib/ai/runtime/policy-engine";
+import {
+  intersectPolicyAuthority,
+  type PolicyAuthority,
+} from "lib/ai/runtime/policy-engine";
 import { irisHarness } from "lib/ai/runtime/server";
 import { serverBudgetResolver } from "lib/ai/runtime/server-budget-resolver";
-import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
+import { createProductionRunAdapter } from "lib/ai/runtime/server-run-adapters";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import {
   agentRepository,
@@ -33,6 +35,8 @@ import {
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { sandboxManager, workflowSandboxServices } from "lib/sandbox/server";
 import { generateUUID } from "lib/utils";
+import type { AutomationAuthoritySnapshot } from "./authority";
+import { workflowAuthoritySnapshot } from "./authority";
 
 export type AutomationTarget = "workflow" | "skill" | "agent";
 
@@ -81,6 +85,7 @@ type AutomationExecutionRequestBase = {
   targetId: string;
   input: Record<string, unknown>;
   allowedTools?: string[];
+  authoritySnapshot?: AutomationAuthoritySnapshot;
   timeoutMs: number;
   signal: AbortSignal;
 };
@@ -160,29 +165,29 @@ async function resolveHeadlessTools(input: {
       workflowBinding: { signal: input.request.signal },
     }),
   );
-  const explicitlyAllowed = new Set(input.allowedTools ?? []);
-  const { descriptors, subtractions } = subtractAutomationCapabilities(
-    capabilities.ordered,
-    input.allowedTools,
-  );
+  const descriptors = capabilities.ordered;
   const tools = Object.fromEntries(
     descriptors
       .filter(({ key }) => Object.hasOwn(capabilities.model, key))
       .map(({ key }) => [key, capabilities.model[key] as Tool]),
   );
-  if (
-    capabilities.model.delegate_agent &&
-    (explicitlyAllowed.size === 0 || explicitlyAllowed.has("delegate_agent"))
-  )
+  if (capabilities.model.delegate_agent)
     tools.delegate_agent = capabilities.model.delegate_agent as Tool;
+  const policyDescriptors: HeadlessDescriptor[] = [
+    ...(descriptors as HeadlessDescriptor[]),
+    ...Object.keys(tools)
+      .filter(
+        (key) => !descriptors.some((descriptor) => descriptor.key === key),
+      )
+      .map((key) => ({ id: `tool:${key}`, key, kind: "tool" })),
+  ];
   return {
     tools,
-    descriptors: descriptors as HeadlessDescriptor[],
+    descriptors: policyDescriptors,
     snapshot: {
-      descriptorIds: descriptors.map(({ id }) => id),
+      descriptorIds: policyDescriptors.map(({ id }) => id),
       eligibleDelegationTargets: capabilities.eligibleDelegationTargets,
       diagnostics: capabilities.routing,
-      subtractions,
     },
   };
 }
@@ -200,7 +205,7 @@ export async function finishWorkflowAgentRun(
   result: { isOk: boolean; output?: unknown; error?: unknown },
   manager: Pick<
     typeof runManager,
-    "succeed" | "fail" | "exhaustBudget"
+    "succeed" | "fail" | "exhaustBudget" | "cancel" | "timeOut"
   > = runManager,
 ) {
   if (result.isOk)
@@ -211,7 +216,109 @@ export async function finishWorkflowAgentRun(
       : String(result.error).slice(0, 2_000);
   return isBudgetExhausted(result.error)
     ? manager.exhaustBudget(runId, message)
+    : /cancel/i.test(message)
+      ? manager.cancel(runId, message)
+      : /timeout/i.test(message)
+        ? manager.timeOut(runId, message)
     : manager.fail(runId, message, "WORKFLOW_FAILED");
+}
+
+export async function executeWorkflowAutomation(input: {
+  request: AutomationExecutionRequest;
+  workflow: { nodes: any[]; edges: any[] };
+  manager?: typeof runManager;
+  executor?: typeof createWorkflowExecutor;
+  cleanup?: typeof sandboxManager.cancelByRun;
+  resolveBudget?: typeof serverBudgetResolver;
+}) {
+  const manager = input.manager ?? runManager;
+  const sandboxRunId = generateUUID();
+  const budget = await (input.resolveBudget ?? serverBudgetResolver)({
+    surface: "automation",
+    userId: input.request.userId,
+  });
+  await manager.start({
+    id: sandboxRunId,
+    userId: input.request.userId,
+    workspaceId: input.request.workspaceId,
+    context: {
+      executionSource: "automation-workflow",
+      automationRunId: input.request.runId,
+      workflowId: input.request.targetId,
+    },
+    timeoutMs: input.request.timeoutMs,
+    budget,
+  });
+  let executionResult: { isOk: boolean; output?: unknown; error?: unknown };
+  let terminalizationError: unknown;
+  let cleanupError: unknown;
+  try {
+    executionResult = await (input.executor ?? createWorkflowExecutor)({
+      edges: input.workflow.edges,
+      nodes: input.workflow.nodes,
+      context: {
+        runId: sandboxRunId,
+        userId: input.request.userId,
+        workspaceId: input.request.workspaceId,
+        signal: input.request.signal,
+        services: workflowSandboxServices(sandboxRunId),
+      },
+    }).run(input.request.input as never, {
+      disableHistory: true,
+      timeout: input.request.timeoutMs,
+    });
+  } catch (error) {
+    executionResult = { isOk: false, error };
+  }
+  if (input.request.signal.aborted && !executionResult.isOk)
+    executionResult.error =
+      input.request.signal.reason instanceof Error
+        ? input.request.signal.reason
+        : new Error("Run was cancelled");
+  try {
+    await finishWorkflowAgentRun(sandboxRunId, executionResult, manager);
+  } catch (error) {
+    terminalizationError = error;
+    try {
+      await manager.fail(
+        sandboxRunId,
+        error instanceof Error ? error.message : String(error),
+        "WORKFLOW_TERMINALIZATION_FAILED",
+      );
+    } catch (fallbackError) {
+      terminalizationError = new AggregateError(
+        [error, fallbackError],
+        "Workflow terminalization failed",
+      );
+    }
+  } finally {
+    try {
+      await (input.cleanup ?? sandboxManager.cancelByRun)(sandboxRunId);
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
+  if (terminalizationError) {
+    if (cleanupError)
+      throw new AggregateError(
+        [terminalizationError, cleanupError],
+        "Workflow terminalization and cleanup failed",
+      );
+    throw terminalizationError;
+  }
+  const result = executionResult.isOk
+    ? {
+        status: "succeeded" as const,
+        output: mapWorkflowOutput(executionResult.output),
+      }
+    : classifyWorkflowFailure(executionResult.error);
+  if (!cleanupError) return result;
+  const cleanupMessage = cleanupError instanceof Error
+    ? cleanupError.message
+    : String(cleanupError);
+  return result.status === "succeeded"
+    ? { ...result, output: { ...result.output, cleanupError: cleanupMessage } }
+    : { ...result, message: `${result.message}; cleanup failed: ${cleanupMessage}` };
 }
 
 export function classifyWorkflowFailure(
@@ -238,6 +345,10 @@ export async function runHeadlessAgent(input: {
   allowedTools?: string[];
   harness?: AutomationHarness;
   resolveBudget?: typeof serverBudgetResolver;
+  resolveChildAllocation?: (request: AutomationExecutionRequest) => Promise<{
+    authority: PolicyAuthority;
+    budget?: Awaited<ReturnType<typeof serverBudgetResolver>>;
+  }>;
 }) {
   const runId =
     input.request.executionSource === "delegation"
@@ -247,58 +358,93 @@ export async function runHeadlessAgent(input: {
     input.request.executionSource === "delegation"
       ? "delegation-runner"
       : "automation-runner";
-  const resolved = await resolveHeadlessTools({ ...input, runId });
-  const tools = resolved.tools;
-  const prepared = await serverRunPreparer({
-    resolveCapabilities: async () => ({
-      value: tools,
-      snapshot: resolved.snapshot,
-    }),
-    resolvePolicy: async () =>
-      policyEngine.resolveSnapshot(
-        Object.keys(tools),
-        "never",
-        resolved.descriptors.map(({ id, key, kind, risks }) => ({
-          id,
-          key,
-          kind,
-          risks,
-        })),
-      ),
-    resolveRuntimeContext: async ({ policy }) => {
-      const common = {
-        requestId: generateUUID(),
-        runId,
-        userId: input.request.userId,
-        workspaceId: input.request.workspaceId,
-        toolMode: "auto" as const,
-        approvalPolicy: policy?.approvalPolicy ?? "never",
-      };
-      return input.profile.type === "custom"
-        ? createAgentRuntimeContext({ ...common, agent: input.profile.agent })
-        : createBaseAgentRuntimeContext(common);
+  const persistedAuthority =
+    input.request.executionSource === "delegation" &&
+    input.request.input.policyAuthority &&
+    typeof input.request.input.policyAuthority === "object"
+      ? (input.request.input.policyAuthority as PolicyAuthority)
+      : {};
+  const resolvedChildAllocation =
+    input.request.executionSource === "delegation"
+      ? await input.resolveChildAllocation?.(input.request)
+      : undefined;
+  const childAllocation =
+    input.request.executionSource === "delegation"
+      ? {
+          ...resolvedChildAllocation,
+          authority: intersectPolicyAuthority(
+            persistedAuthority,
+            resolvedChildAllocation?.authority ?? {},
+          ),
+        }
+      : undefined;
+  const preparationAdapter = createProductionRunAdapter(
+    input.request.executionSource === "delegation"
+      ? {
+          surface: "delegation",
+          approvalPolicy: "never",
+          allowedToolKeys: input.allowedTools ?? [],
+          childAllocation: childAllocation!,
+        }
+      : {
+          surface: "automation",
+          approvalPolicy: "never",
+          allowedToolKeys: input.allowedTools,
+          authority: input.request.authoritySnapshot?.capabilityIds.length
+            ? {
+                capabilityIds: input.request.authoritySnapshot.capabilityIds,
+              }
+            : undefined,
+        },
+    {
+      resolveCapabilities: async () => {
+        const resolved = await resolveHeadlessTools({ ...input, runId });
+        return {
+          value: resolved.tools,
+          tools: resolved.tools,
+          descriptors: resolved.descriptors,
+          selectedCapabilities: resolved.descriptors,
+          routing: resolved.snapshot,
+        };
+      },
+      resolveRuntimeContext: async ({ policy }) => {
+        const common = {
+          requestId: generateUUID(),
+          runId,
+          userId: input.request.userId,
+          workspaceId: input.request.workspaceId,
+          toolMode: "auto" as const,
+          approvalPolicy: policy.approvalPolicy,
+        };
+        return input.profile.type === "custom"
+          ? createAgentRuntimeContext({ ...common, agent: input.profile.agent })
+          : createBaseAgentRuntimeContext(common);
+      },
+      resolveModel: async () => ({
+        value: await customModelProvider.getEngineModel(engine),
+        descriptor: { engine },
+      }),
+      resolveBudget: input.resolveBudget,
     },
-    resolveModel: async () => ({
-      value: await customModelProvider.getEngineModel(engine),
-      descriptor: { engine },
-    }),
-    resolveBudget: input.resolveBudget,
-  }).prepare({
-    surface:
-      input.request.executionSource === "delegation"
-        ? "delegation"
-        : "automation",
-    runId: input.request.executionSource === "delegation" ? runId : undefined,
-    userId: input.request.userId,
-    workspaceId: input.request.workspaceId,
-    taskId: input.request.taskId,
-    agentId:
-      input.profile.type === "custom" ? input.profile.agent.id : undefined,
-    request: objective(input.request.input),
-    goal: objective(input.request.input),
-    selectedCapabilities: Object.keys(tools),
-    instructions: input.instructions,
-    contextWindow: 12_000,
+  );
+  const preparationCapabilities =
+    await preparationAdapter.resolveCapabilities(undefined);
+  const tools = preparationCapabilities.tools as Record<string, Tool>;
+  preparationCapabilities.value = tools;
+  const prepared = await preparationAdapter.prepare({
+    capabilities: preparationCapabilities,
+    request: {
+      runId: input.request.executionSource === "delegation" ? runId : undefined,
+      userId: input.request.userId,
+      workspaceId: input.request.workspaceId,
+      taskId: input.request.taskId,
+      agentId:
+        input.profile.type === "custom" ? input.profile.agent.id : undefined,
+      request: objective(input.request.input),
+      goal: objective(input.request.input),
+      instructions: input.instructions,
+      contextWindow: 12_000,
+    },
   });
   const runtimeContext = prepared.runtimeContext!;
   const execution = {
@@ -373,7 +519,7 @@ export async function runHeadlessAgent(input: {
           diagnostics?: Record<string, unknown>;
         }),
         model: prepared.snapshot.model as Record<string, unknown>,
-        driver: { driver: "ai-sdk" },
+        driver: prepared.snapshot.driver as Record<string, unknown>,
       },
       completionRequirement:
         prepared.completionRequirement ??
@@ -415,45 +561,22 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           message: "Automation workflow was not found",
           retryable: false,
         };
-      const sandboxRunId = generateUUID();
-      const budget = await serverBudgetResolver({
-        surface: "automation",
-        userId: request.userId,
-      });
-      await runManager.start({
-        id: sandboxRunId,
-        userId: request.userId,
-        workspaceId: request.workspaceId,
-        context: {
-          executionSource: "automation-workflow",
-          automationRunId: request.runId,
-          workflowId: request.targetId,
-        },
-        timeoutMs: request.timeoutMs,
-        budget,
-      });
-      const result = await createWorkflowExecutor({
-        edges: workflow.edges,
-        nodes: workflow.nodes,
-        context: {
-          runId: sandboxRunId,
-          userId: request.userId,
-          workspaceId: request.workspaceId,
-          signal: request.signal,
-          services: workflowSandboxServices(sandboxRunId),
-        },
-      }).run(request.input as never, {
-        disableHistory: true,
-        timeout: request.timeoutMs,
-      });
-      await finishWorkflowAgentRun(sandboxRunId, result, runManager);
-      await sandboxManager.cancelByRun(sandboxRunId).catch(() => undefined);
-      return result.isOk
-        ? {
-            status: "succeeded",
-            output: mapWorkflowOutput(result.output),
-          }
-        : classifyWorkflowFailure(result.error);
+      const currentAuthority = workflowAuthoritySnapshot(workflow.nodes);
+      const grantedCapabilities = new Set(
+        request.authoritySnapshot?.capabilityIds ?? [],
+      );
+      if (
+        currentAuthority.capabilityIds.some(
+          (capability) => !grantedCapabilities.has(capability),
+        )
+      )
+        return {
+          status: "failed",
+          errorCode: "AUTHORITY_CHANGED",
+          message: "Workflow capabilities changed after authorization",
+          retryable: false,
+        };
+      return executeWorkflowAutomation({ request, workflow });
     },
     skill: async (request) => {
       const skill = await skillRepository.selectSkillById(
@@ -506,12 +629,21 @@ export function createAutomationExecutionAdapter(
 ) {
   return async (request: AutomationExecutionRequest) => {
     if (request.signal.aborted)
-      return { status: "cancelled" as const, message: "Run was cancelled" };
+      return request.signal.reason instanceof DOMException &&
+        request.signal.reason.name === "TimeoutError"
+        ? { status: "timed_out" as const, message: request.signal.reason.message }
+        : { status: "cancelled" as const, message: "Run was cancelled" };
     try {
       return await dependencies[request.targetType](request);
     } catch (error) {
       if (request.signal.aborted)
-        return { status: "cancelled" as const, message: "Run was cancelled" };
+        return request.signal.reason instanceof DOMException &&
+          request.signal.reason.name === "TimeoutError"
+          ? {
+              status: "timed_out" as const,
+              message: request.signal.reason.message,
+            }
+          : { status: "cancelled" as const, message: "Run was cancelled" };
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith("VERIFICATION_REQUIRED:"))
         return {

@@ -17,6 +17,59 @@ afterAll(async () => {
 });
 
 describe("IRIS V2 PostgreSQL migrations", () => {
+  test("adds nullable automation authority snapshots without widening legacy runs", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, {
+      through: "0061_root_run_budget.sql",
+    });
+    const userId = randomUUID();
+    const automationId = randomUUID();
+    const legacyRunId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Automation Owner', $2, 'hash')`,
+      [userId, `automation-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO automation
+         (id, user_id, name, trigger_type, target_type, target_id,
+          approval_policy, timeout_ms)
+       VALUES ($1, $2, 'Legacy automation', 'manual', 'agent', $3, 'never', 1000)`,
+      [automationId, userId, randomUUID()],
+    );
+    await client.query(
+      `INSERT INTO automation_run
+         (id, automation_id, user_id, idempotency_key, scheduled_for)
+       VALUES ($1, $2, $3, 'legacy', NOW())`,
+      [legacyRunId, automationId, userId],
+    );
+
+    await applyMigrations(client, {
+      after: "0061_root_run_budget.sql",
+      through: "0062_automation_authority_snapshot.sql",
+    });
+
+    const legacy = await client.query(
+      `SELECT authorization_context FROM automation_run WHERE id = $1`,
+      [legacyRunId],
+    );
+    expect(legacy.rows[0].authorization_context).toBeNull();
+    const snapshot = {
+      version: 1,
+      allowedTools: [],
+      capabilityIds: [],
+    };
+    await client.query(
+      `UPDATE automation_run SET authorization_context = $2::json WHERE id = $1`,
+      [legacyRunId, JSON.stringify(snapshot)],
+    );
+    const persisted = await client.query(
+      `SELECT authorization_context FROM automation_run WHERE id = $1`,
+      [legacyRunId],
+    );
+    expect(persisted.rows[0].authorization_context).toEqual(snapshot);
+  });
+
   test("upgrades pre-0061 unsettled sandbox reservations into the root ledger", async () => {
     await recreatePublicSchema(client);
     await applyMigrations(client, {

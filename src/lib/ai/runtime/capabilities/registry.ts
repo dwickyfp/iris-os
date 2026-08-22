@@ -212,15 +212,20 @@ export class CapabilityRegistry<Context = unknown> {
     const isRequested = (descriptor: CapabilityDescriptor) =>
       requested.has(descriptor.id) ||
       descriptor.hintIds?.some((id) => requested.has(id)) === true;
+    const routingEligible = eligible.filter(
+      (descriptor) =>
+        descriptor.health?.status !== "auth_required" ||
+        isRequested(descriptor),
+    );
 
     let ordered: CapabilityDescriptor[];
     let routingDiagnostics: CapabilityRoutingDiagnostics;
     if (hints.mode === "only") {
-      ordered = eligible.filter(isRequested);
+      ordered = routingEligible.filter(isRequested);
       routingDiagnostics = {
         event: "capability.routing",
         strategy: "only",
-        candidateCount: eligible.length,
+        candidateCount: routingEligible.length,
         selectedCount: ordered.length,
         threshold: routing.config?.threshold ?? 20,
         topN: routing.config?.topN ?? ordered.length,
@@ -228,7 +233,9 @@ export class CapabilityRegistry<Context = unknown> {
         minScore: routing.config?.minScore ?? 0,
         elapsedMs: 0,
         reductionRate:
-          eligible.length === 0 ? 0 : 1 - ordered.length / eligible.length,
+          routingEligible.length === 0
+            ? 0
+            : 1 - ordered.length / routingEligible.length,
         signal: "not-evaluated",
         clarificationRequired: false,
         pinnedIds: ordered.map(({ id }) => id),
@@ -243,11 +250,12 @@ export class CapabilityRegistry<Context = unknown> {
           ...ids.map((id) => rank.get(id) ?? Number.POSITIVE_INFINITY),
         );
       };
-      const preferred = eligible
+      const preferred = routingEligible
         .map((descriptor, index) => ({ descriptor, index }))
         .sort(
           (a, b) =>
             requestedRank(a.descriptor) - requestedRank(b.descriptor) ||
+            healthTier(a.descriptor) - healthTier(b.descriptor) ||
             a.index - b.index,
         )
         .map(({ descriptor }) => descriptor);
@@ -292,6 +300,17 @@ export class CapabilityRegistry<Context = unknown> {
 
 function statusEligible(status: CapabilityHealthStatus) {
   return status !== "unavailable" && status !== "disabled";
+}
+
+function healthTier(descriptor: CapabilityDescriptor) {
+  switch (descriptor.health?.status) {
+    case "degraded":
+      return 1;
+    case "auth_required":
+      return 2;
+    default:
+      return 0;
+  }
 }
 
 export function modelCapabilityDescriptor<T>(input: {

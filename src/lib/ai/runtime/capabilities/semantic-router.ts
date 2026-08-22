@@ -1,3 +1,4 @@
+import type { CapabilityHealthStatus } from "app-types/capability-health";
 import type { CapabilityDescriptor } from "./registry";
 
 export type CapabilitySearchDocument = {
@@ -10,6 +11,7 @@ export type CapabilitySearchDocument = {
   provider: string[];
   skills: string[];
   tokens: string[];
+  healthTier: number;
 };
 
 export type CapabilityRouterConfig = {
@@ -91,6 +93,7 @@ export function capabilitySearchDocument(
     provider,
     skills,
     tokens: tokenizeCapabilityText(weightedText),
+    healthTier: capabilityHealthTier(descriptor.health?.status),
   };
 }
 
@@ -186,7 +189,12 @@ export function routeCapabilityDocuments(
       }, 0);
       return { document, index, score };
     });
-    scores.sort((a, b) => b.score - a.score || a.index - b.index);
+    scores.sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.document.healthTier - b.document.healthTier ||
+        a.index - b.index,
+    );
     const relevant = scores
       .filter(({ score }) => score >= config.minScore)
       .map(({ document }) => document);
@@ -220,6 +228,19 @@ export function routeCapabilityDocuments(
     return fallback(
       error instanceof RoutingTimeoutError ? "timeout" : "scoring_error",
     );
+  }
+}
+
+function capabilityHealthTier(status?: CapabilityHealthStatus) {
+  switch (status) {
+    case "healthy":
+      return 0;
+    case "degraded":
+      return 1;
+    case "auth_required":
+      return 2;
+    default:
+      return 3;
   }
 }
 

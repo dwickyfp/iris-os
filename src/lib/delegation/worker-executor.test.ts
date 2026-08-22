@@ -159,6 +159,7 @@ class DurableRunFixture {
     ["child-1", run()],
   ]);
   readonly events: DelegationWorkerEvent[] = [];
+  readonly terminalEventKeys = new Set<string>();
   continuation: RunContinuation | null = null;
   encryptedCredential: string | null = null;
   remoteCancellationIntent = false;
@@ -170,6 +171,9 @@ class DurableRunFixture {
   remoteMetadata: Record<string, unknown> | null = null;
   cancellationRequested = false;
   leaseSequence = 0;
+  terminalWrites = 0;
+  joinObservations = 0;
+  reservationSettlements = 0;
 
   private mutate(id: string, values: Partial<AgentRun>) {
     const current = this.runs.get(id);
@@ -257,6 +261,9 @@ class DurableRunFixture {
         ? "timed_out"
         : status;
     this.encryptedCredential = null;
+    this.terminalWrites += 1;
+    this.joinObservations += 1;
+    this.reservationSettlements += 1;
     return this.mutate(id, {
       ...(classifiedStatus === status
         ? values
@@ -432,6 +439,11 @@ class DurableRunFixture {
         } as never,
       ]),
       recordEvent: async (event: DelegationWorkerEvent) => {
+        if (event.kind === "terminal") {
+          const key = `${event.child.id}:${event.child.status}`;
+          if (this.terminalEventKeys.has(key)) return;
+          this.terminalEventKeys.add(key);
+        }
         this.events.push(event);
       },
       pollMs: 2,
@@ -504,6 +516,103 @@ describe("durable delegation worker with fake A2A", () => {
         .filter((event) => event.kind === "terminal")
         .every((event) => event.child.status === "budget_exhausted"),
     ).toBe(true);
+  });
+
+  it.each([
+    "succeeded",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "budget_exhausted",
+  ] as const)("cancels a queued child of a %s parent", async (status) => {
+    const fixture = new DurableRunFixture();
+    fixture.runs.set(
+      "parent-1",
+      run({ id: "parent-1", parentRunId: null, status, depth: 0 }),
+    );
+    const dependencies: DelegationWorkerExecutorDependencies =
+      fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
+
+    await createDelegationWorkerExecutor(dependencies)("child-1");
+
+    expect(fixture.runs.get("child-1")).toMatchObject({
+      status: "cancelled",
+      errorCode: "PARENT_CANCELLED",
+    });
+    expect(dependencies.executeLocal).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued child when its parent is cancel-requested", async () => {
+    const fixture = new DurableRunFixture();
+    fixture.runs.set(
+      "parent-1",
+      run({
+        id: "parent-1",
+        parentRunId: null,
+        status: "running",
+        cancelRequestedAt: new Date(),
+        depth: 0,
+      }),
+    );
+    const dependencies = fixture.dependencies(
+      remoteService(fakeA2A(["completed"]).fetcher),
+    );
+
+    await createDelegationWorkerExecutor(dependencies)("child-1");
+
+    expect(fixture.runs.get("child-1")).toMatchObject({
+      status: "cancelled",
+      errorCode: "PARENT_CANCELLED",
+    });
+    expect(dependencies.executeLocal).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "succeeded",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "budget_exhausted",
+    "cancel_requested",
+  ] as const)("cancels a running child when polling sees a %s parent", async (state) => {
+    const fixture = new DurableRunFixture();
+    fixture.runs.set(
+      "child-1",
+      run({ agentId: "agent-1", absoluteDeadlineAt: null }),
+    );
+    const dependencies: DelegationWorkerExecutorDependencies =
+      fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
+    dependencies.selectDelegation = async () => ({
+      targetKind: "local_agent",
+      remoteAgentId: null,
+    });
+    dependencies.executeLocal = vi.fn(async ({ signal }) => {
+      const parent = fixture.runs.get("parent-1")!;
+      fixture.runs.set("parent-1", {
+        ...parent,
+        ...(state === "cancel_requested"
+          ? { cancelRequestedAt: new Date() }
+          : { status: state }),
+      });
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return {
+        status: "failed" as const,
+        errorCode: "LOCAL_ABORTED",
+        message: "Local execution aborted",
+        retryable: true,
+      };
+    });
+
+    await createDelegationWorkerExecutor(dependencies)("child-1");
+
+    expect(fixture.runs.get("child-1")).toMatchObject({
+      status: "cancelled",
+      errorCode: "CANCELLED",
+    });
+    expect(fixture.reservationSettlements).toBe(1);
   });
 
   it("covers the H10 worker crash/recovery matrix", async () => {
@@ -598,6 +707,60 @@ describe("durable delegation worker with fake A2A", () => {
       "after_artifact_persist_before_verification",
     );
   });
+
+  it.each([
+    ["succeeded", { status: "succeeded", output: { ok: true } }],
+    [
+      "failed",
+      {
+        status: "failed",
+        errorCode: "LOCAL_FAILED",
+        message: "Local execution failed",
+        retryable: true,
+      },
+    ],
+    ["cancelled", { status: "cancelled", message: "Run was cancelled" }],
+    ["timed_out", { status: "timed_out", message: "Run timed out" }],
+    [
+      "budget_exhausted",
+      { status: "budget_exhausted", message: "Run budget exhausted" },
+    ],
+  ] as const)(
+    "recovers the post-terminal crash exactly once for %s",
+    async (status, outcome) => {
+      const fixture = new DurableRunFixture();
+      fixture.encryptedCredential = "transient-credential";
+      fixture.runs.set(
+        "child-1",
+        run({ agentId: "agent-1", absoluteDeadlineAt: null }),
+      );
+      const dependencies: DelegationWorkerExecutorDependencies =
+        fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
+      dependencies.selectDelegation = async () => ({
+        targetKind: "local_agent",
+        remoteAgentId: null,
+      });
+      dependencies.executeLocal = vi.fn(async () => outcome);
+      dependencies.crashAt = "after_child_terminal_before_event";
+
+      await expect(
+        createDelegationWorkerExecutor(dependencies)("child-1"),
+      ).rejects.toBeInstanceOf(DelegationWorkerCrash);
+      dependencies.crashAt = undefined;
+      await createDelegationWorkerExecutor(dependencies)("child-1");
+      await createDelegationWorkerExecutor(dependencies)("child-1");
+
+      expect(fixture.runs.get("child-1")?.status).toBe(status);
+      expect(dependencies.executeLocal).toHaveBeenCalledOnce();
+      expect(fixture.terminalWrites).toBe(1);
+      expect(fixture.joinObservations).toBe(1);
+      expect(fixture.reservationSettlements).toBe(1);
+      expect(fixture.encryptedCredential).toBeNull();
+      expect(
+        fixture.events.filter((event) => event.kind === "terminal"),
+      ).toHaveLength(1);
+    },
+  );
 
   it("uses a deterministic initial submission id across crash/reclaim and rejects the old lease", async () => {
     const fake = fakeA2A(["completed"]);

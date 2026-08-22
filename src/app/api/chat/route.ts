@@ -53,7 +53,7 @@ import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-
 import { policyEngine } from "lib/ai/runtime/policy-engine";
 import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
-import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
+import { createProductionRunAdapter } from "lib/ai/runtime/server-run-adapters";
 import { buildSkillManifestPrompt } from "lib/ai/skill";
 import { ImageToolName } from "lib/ai/tools";
 import {
@@ -400,7 +400,63 @@ export async function POST(request: Request) {
           },
           workflowBinding: { dataStream },
         });
-        const capabilities = await resolveServerCapabilities(capabilityInput);
+        const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
+        const preparationAdapter = createProductionRunAdapter(
+          { surface: "chat", approvalPolicy },
+          {
+            resolveCapabilities: async () => {
+              const value = await resolveServerCapabilities(capabilityInput);
+              return {
+                value,
+                tools: value.model,
+                descriptors: value.ordered,
+                selectedCapabilities: value.ordered,
+                routing: {
+                  descriptorIds: value.ordered.map(({ id }) => id),
+                  eligibleDelegationTargets: value.eligibleDelegationTargets,
+                  diagnostics: value.routing,
+                },
+              };
+            },
+            resolveRuntimeContext: async ({ policy, capabilities: value }) =>
+              agent
+                ? createAgentRuntimeContext({
+                    requestId,
+                    runId,
+                    userId: session.user.id,
+                    workspaceId: workspace?.id,
+                    taskId: task?.id,
+                    threadId: thread!.id,
+                    agent,
+                    userRole: (session.user as any).role,
+                    toolMode: toolChoice,
+                    approvalPolicy: policy.approvalPolicy,
+                    skills: value.skillManifest,
+                  })
+                : createBaseAgentRuntimeContext({
+                    requestId,
+                    runId,
+                    userId: session.user.id,
+                    workspaceId: workspace?.id,
+                    taskId: task?.id,
+                    threadId: thread!.id,
+                    userRole: (session.user as any).role,
+                    toolMode: toolChoice,
+                    approvalPolicy: policy.approvalPolicy,
+                  }),
+            resolveModel: async () => ({
+              value: model,
+              descriptor: {
+                provider: modelConfig.provider,
+                model: modelConfig.model,
+                contextWindow: modelConfig.contextWindow,
+              },
+            }),
+          },
+        );
+        const preparationCapabilities =
+          await preparationAdapter.resolveCapabilities(undefined);
+        const capabilities = preparationCapabilities.value;
         const MCP_TOOLS = Object.fromEntries(
           capabilities.ordered
             .filter(({ kind }) => kind === "mcp")
@@ -491,133 +547,78 @@ export async function POST(request: Request) {
         }
         logger.info(`model: ${chatModel?.provider}/${chatModel?.model}`);
 
-        const approvalPolicy = policyEngine.approvalPolicyForMode(autonomy);
-        const preparedRun = await serverRunPreparer({
-          resolveCapabilities: async () => ({
-            value: capabilities,
-            snapshot: {
-              descriptorIds: capabilities.ordered.map(({ id }) => id),
-              eligibleDelegationTargets: capabilities.eligibleDelegationTargets,
-              diagnostics: capabilities.routing,
-            },
-          }),
-          resolvePolicy: async () =>
-            policyEngine.resolveSnapshot(
-              Object.keys(vercelAITooles),
-              approvalPolicy,
-              capabilities.ordered.map(({ id, key, kind, risks }) => ({
-                id,
-                key,
-                kind,
-                risks,
-              })),
-            ),
-          resolveRuntimeContext: async ({ policy }) => {
-            const resolvedApproval = policy?.approvalPolicy ?? approvalPolicy;
-            return agent
-              ? createAgentRuntimeContext({
-                  requestId,
-                  runId,
-                  userId: session.user.id,
-                  workspaceId: workspace?.id,
-                  taskId: task?.id,
-                  threadId: thread!.id,
+        preparationCapabilities.tools = vercelAITooles;
+        const preparedRun = await preparationAdapter.prepare({
+          capabilities: preparationCapabilities,
+          request: {
+            requestedBudget: { maxTokens: 50_000 },
+            userId: session.user.id,
+            workspaceId: workspace?.id,
+            agentId: agent?.id,
+            threadId: thread!.id,
+            instructions: assembledInstructions,
+            request: userText,
+            goal: userText,
+            sources: [
+              {
+                id: "agent-and-skills",
+                kind: "agent",
+                content: [
+                  agent?.instructions,
+                  buildSkillManifestPrompt(capabilities.skillManifest),
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                trust: "trusted",
+                priority: 90,
+              },
+              {
+                id: "workspace",
+                kind: "workspace",
+                content: workspace
+                  ? buildWorkspaceInstructionsPrompt(workspace)
+                  : "",
+                trust: "trusted",
+                priority: 80,
+              },
+              {
+                id: "task",
+                kind: "task",
+                content: buildTaskContextPrompt(task),
+                trust: "trusted",
+                priority: 70,
+              },
+              {
+                id: "memory",
+                kind: "memory",
+                content: memoryContext.prompt,
+                trust: "mixed",
+                priority: 60,
+              },
+              {
+                id: "mcp-customization",
+                kind: "mcp",
+                content: buildMcpServerCustomizationsSystemPrompt(
+                  mcpServerCustomizations,
+                ),
+                trust: "mixed",
+                priority: 50,
+              },
+              {
+                id: "user-preferences",
+                kind: "user_preferences",
+                content: buildUserSystemPrompt(
+                  session.user,
+                  userPreferences,
                   agent,
-                  userRole: (session.user as any).role,
-                  toolMode: toolChoice,
-                  approvalPolicy: resolvedApproval,
-                  skills: capabilities.skillManifest,
-                })
-              : createBaseAgentRuntimeContext({
-                  requestId,
-                  runId,
-                  userId: session.user.id,
-                  workspaceId: workspace?.id,
-                  taskId: task?.id,
-                  threadId: thread!.id,
-                  userRole: (session.user as any).role,
-                  toolMode: toolChoice,
-                  approvalPolicy: resolvedApproval,
-                });
+                ),
+                trust: "trusted",
+                priority: 40,
+              },
+            ],
+            messages,
+            contextWindow: modelConfig.contextWindow,
           },
-          resolveModel: async () => ({
-            value: model,
-            descriptor: {
-              provider: modelConfig.provider,
-              model: modelConfig.model,
-              contextWindow: modelConfig.contextWindow,
-            },
-          }),
-        }).prepare({
-          surface: "chat",
-          requestedBudget: { maxTokens: 50_000 },
-          userId: session.user.id,
-          workspaceId: workspace?.id,
-          agentId: agent?.id,
-          threadId: thread!.id,
-          instructions: assembledInstructions,
-          request: userText,
-          goal: userText,
-          selectedCapabilities: capabilities.ordered,
-          sources: [
-            {
-              id: "agent-and-skills",
-              kind: "agent",
-              content: [
-                agent?.instructions,
-                buildSkillManifestPrompt(capabilities.skillManifest),
-              ]
-                .filter(Boolean)
-                .join("\n\n"),
-              trust: "trusted",
-              priority: 90,
-            },
-            {
-              id: "workspace",
-              kind: "workspace",
-              content: workspace
-                ? buildWorkspaceInstructionsPrompt(workspace)
-                : "",
-              trust: "trusted",
-              priority: 80,
-            },
-            {
-              id: "task",
-              kind: "task",
-              content: buildTaskContextPrompt(task),
-              trust: "trusted",
-              priority: 70,
-            },
-            {
-              id: "memory",
-              kind: "memory",
-              content: memoryContext.prompt,
-              trust: "mixed",
-              priority: 60,
-            },
-            {
-              id: "mcp-customization",
-              kind: "mcp",
-              content: buildMcpServerCustomizationsSystemPrompt(
-                mcpServerCustomizations,
-              ),
-              trust: "mixed",
-              priority: 50,
-            },
-            {
-              id: "user-preferences",
-              kind: "user_preferences",
-              content: buildUserSystemPrompt(
-                session.user,
-                userPreferences,
-                agent,
-              ),
-              trust: "trusted",
-              priority: 40,
-            },
-          ],
-          messages,
-          contextWindow: modelConfig.contextWindow,
         });
         const preparedContext = preparedRun.context;
         const modelMessages = await convertToModelMessages(

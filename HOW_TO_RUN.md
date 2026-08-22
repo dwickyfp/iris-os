@@ -114,6 +114,10 @@ curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/
 # Remote agents is an outbound peer connection manager, not an agent builder.
 # Completion verification enforces the resolved requirement; it does not prove
 # semantic correctness or external interoperability.
+# Capability verification requires canonical terminal success, not nonempty
+# output. Outcome verification separately requires a nonempty evaluated result.
+# /api/metrics has durable state counts, not latency histograms. Export request,
+# provider, worker, A2A, and sandbox-runner latency to external telemetry for SLOs.
 
 # CI source exists at .github/workflows/sandbox-gvisor.yml for a self-hosted
 # Linux + gvisor runner. The repository contains no retained successful run

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { drizzle } from "drizzle-orm/node-postgres";
 import type { SandboxSessionRecord } from "lib/sandbox";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
@@ -1277,6 +1278,100 @@ describe("sandbox repository concurrency", () => {
     expect(["cancelled", "timed_out"]).toContain(state.rows[0].status);
   });
 
+  test("root cancellation racing stale reconciliation settles once without deadlock", async () => {
+    await drainStaleExecutions();
+    const { userId, rootRunId, childRunId } = await createRunTree();
+    const sessionId = await createSession(userId, childRunId, new Date());
+    const running = await createExecution(
+      sessionId,
+      childRunId,
+      "running",
+      500,
+    );
+    await expireExecutions([running.id]);
+    const gateKey = `${rootRunId}:root-cancel-reconcile-gate`;
+    const sessionLockKey = `sandbox-session:${childRunId}`;
+    await installSandboxAdvisoryPauseTrigger(sessionId, gateKey);
+    await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [
+      gateKey,
+    ]);
+    await client.query(`SELECT pg_advisory_lock(hashtextextended($1, 0))`, [
+      sessionLockKey,
+    ]);
+    const cancellationClient = new Client({ connectionString });
+    const reconciliationClient = new Client({ connectionString });
+    await Promise.all([
+      cancellationClient.connect(),
+      reconciliationClient.connect(),
+    ]);
+    await Promise.all([
+      cancellationClient.query(`SET lock_timeout = '5s'`),
+      reconciliationClient.query(`SET lock_timeout = '5s'`),
+    ]);
+    const { createPgSandboxRepository } = await loadSandboxRepositoryModule();
+    const cancellationRepository = createPgSandboxRepository(
+      drizzle(cancellationClient) as never,
+    );
+    const reconciliationRepository = createPgSandboxRepository(
+      drizzle(reconciliationClient) as never,
+    );
+
+    const cancellation = cancellationRepository.cancelSessionsByRootRun(
+      rootRunId,
+      "iris-runner",
+      new Date(),
+    );
+    await waitForSandboxAdvisoryWait(sessionLockKey);
+    await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [
+      sessionLockKey,
+    ]);
+    await waitForSandboxAdvisoryWait(gateKey);
+    const reconciliation = reconciliationRepository.reconcileStaleExecutions(
+      new Date(),
+      10,
+    );
+    await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [
+      gateKey,
+    ]);
+    const [cancelled, reconciled] = await Promise.all([
+      cancellation,
+      reconciliation,
+    ]);
+    await Promise.all([cancellationClient.end(), reconciliationClient.end()]);
+    await repository.reconcileStaleExecutions(new Date(), 10);
+
+    expect(cancelled.map((session) => session.id)).toContain(sessionId);
+    expect(reconciled).toBe(0);
+    const state = await client.query(
+      `SELECT session.status AS session_status,
+              execution.status AS execution_status,
+              execution.charged_at IS NOT NULL AS charged,
+              budget.reserved_compute_ms, budget.committed_compute_ms,
+              root.reserved_sandbox_compute_ms,
+              root.committed_sandbox_compute_ms,
+              reservation.state, reservation.committed_amount
+       FROM sandbox_session session
+       JOIN sandbox_execution execution ON execution.session_id = session.id
+       JOIN sandbox_run_compute_budget budget ON budget.run_id = execution.run_id
+       JOIN root_run_budget root ON root.root_run_id = $2
+       JOIN root_run_budget_reservation reservation
+         ON reservation.token = 'sandbox:' || execution.reservation_token::text
+       WHERE session.id = $1`,
+      [sessionId, rootRunId],
+    );
+    expect(state.rows[0]).toEqual({
+      session_status: "cancelled",
+      execution_status: "cancelled",
+      charged: true,
+      reserved_compute_ms: 0,
+      committed_compute_ms: 500,
+      reserved_sandbox_compute_ms: 0,
+      committed_sandbox_compute_ms: 500,
+      state: "committed",
+      committed_amount: 500,
+    });
+  });
+
   test("claims cleanup for a storage key with no artifact row", async () => {
     const cleanupId = await artifactRepository.scheduleUploadCleanup(
       `orphan/${randomUUID()}`,
@@ -1440,4 +1535,43 @@ async function drainStaleExecutions() {
   while ((await repository.reconcileStaleExecutions(new Date(), 500)) > 0) {
     // Integration tests share one schema, so global reaper fixtures need draining.
   }
+}
+
+async function installSandboxAdvisoryPauseTrigger(
+  sessionId: string,
+  gateKey: string,
+) {
+  const suffix = sessionId.replaceAll("-", "_");
+  await client.query(`
+    CREATE OR REPLACE FUNCTION pause_sandbox_session_${suffix}()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtextextended('${gateKey}', 0));
+      RETURN NEW;
+    END $$;
+    CREATE TRIGGER pause_sandbox_session_${suffix}
+    BEFORE UPDATE ON sandbox_session
+    FOR EACH ROW
+    WHEN (OLD.id = '${sessionId}'::uuid AND OLD.status = 'active'
+          AND NEW.status = 'cancelled')
+    EXECUTE FUNCTION pause_sandbox_session_${suffix}();
+  `);
+}
+
+async function waitForSandboxAdvisoryWait(gateKey: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const waiting = await client.query(
+      `SELECT 1
+       FROM pg_locks
+       WHERE locktype = 'advisory' AND NOT granted
+         AND classid::bigint =
+             ((hashtextextended($1, 0) >> 32) & 4294967295)
+         AND objid::bigint =
+             (hashtextextended($1, 0) & 4294967295)`,
+      [gateKey],
+    );
+    if (waiting.rowCount) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("TEST_ADVISORY_WAIT_NOT_OBSERVED");
 }

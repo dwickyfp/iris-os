@@ -1,5 +1,8 @@
 import { eq } from "drizzle-orm";
-import { recordRuntimeActivityEvent } from "lib/activity/service";
+import {
+  recordActivityEvent,
+  recordRuntimeActivityEvent,
+} from "lib/activity/service";
 import {
   ArtifactService,
   createArtifactVerifier,
@@ -147,7 +150,7 @@ async function recordTerminalEvent(child: AgentRun) {
         : status === "timed_out"
           ? "delegation.timed_out"
           : "delegation.failed";
-  await recordRuntimeActivityEvent(child.userId, {
+  await recordActivityEvent(child.userId, {
     actorType: "agent",
     actorId: child.agentId ?? undefined,
     scopeType: child.taskId
@@ -166,6 +169,7 @@ async function recordTerminalEvent(child: AgentRun) {
     taskId: child.taskId ?? undefined,
     agentId: child.agentId ?? undefined,
     payload: { targetType: "agent", errorCode: child.errorCode },
+    idempotencyKey: `delegation-terminal:${child.id}`,
   });
   if (child.parentRunId) {
     const pending = await runManager.listPendingParentResumeIds(100);
@@ -204,6 +208,8 @@ export async function registerDelegationWorkers(boss: PgBoss) {
       100,
     );
     for (const runId of stale) await enqueueDelegatedRun(runId);
+    const terminal = await runManager.reconcileTerminalDelegatedRuns(100);
+    for (const run of terminal) await recordTerminalEvent(run);
     const cancellations =
       await runManager.listPendingRemoteCancellationRunIds(100);
     for (const runId of cancellations) {

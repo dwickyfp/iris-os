@@ -25,6 +25,29 @@ const snapshotSchema = z.object({
     passed: z.coerce.number(),
     failed: z.coerce.number(),
     missing: z.coerce.number(),
+    completionFailed: z.coerce.number(),
+  }),
+  budgets: z.object({
+    exhaustedRoots: z.coerce.number(),
+    exhaustedChildren: z.coerce.number(),
+    exhaustedRootsLastHour: z.coerce.number(),
+    exhaustedChildrenLastHour: z.coerce.number(),
+    expiredReservationsReleased: z.coerce.number(),
+  }),
+  delegations: z.object({
+    statuses: countMap,
+    depths: countMap,
+    activeChildren: z.coerce.number(),
+    total: z.coerce.number(),
+  }),
+  capabilityHealth: countMap,
+  sandbox: z.object({
+    sessions: countMap,
+    executions: countMap,
+    forcedDestroy: z.coerce.number(),
+    sessionReaped: z.coerce.number(),
+    timeouts: z.coerce.number(),
+    artifactRejections: z.coerce.number(),
   }),
   a2a: z.object({
     agents: countMap,
@@ -92,7 +115,7 @@ export async function getOperationsMigrationStatus(
   return result.rows[0]?.ready === true;
 }
 
-const SNAPSHOT_SQL = `
+export const SNAPSHOT_SQL = `
 SELECT jsonb_build_object(
   'capturedAt', CURRENT_TIMESTAMP,
   'database', jsonb_build_object(
@@ -135,7 +158,47 @@ SELECT jsonb_build_object(
     'failed', (SELECT count(*) FROM artifact_verification WHERE NOT verified),
     'missing', (SELECT count(*) FROM artifact a WHERE NOT EXISTS (
       SELECT 1 FROM artifact_verification v WHERE v.artifact_id = a.id
-    ))
+    )),
+    'completionFailed', (SELECT count(*) FROM iris_activity_event WHERE event_type = 'verification.failed')
+  ),
+  'budgets', jsonb_build_object(
+    'exhaustedRoots', (SELECT count(*) FROM agent_run WHERE status = 'budget_exhausted' AND depth = 0),
+    'exhaustedChildren', (SELECT count(*) FROM agent_run WHERE status = 'budget_exhausted' AND depth > 0),
+    'exhaustedRootsLastHour', (SELECT count(*) FROM agent_run WHERE status = 'budget_exhausted' AND depth = 0 AND completed_at >= CURRENT_TIMESTAMP - interval '1 hour'),
+    'exhaustedChildrenLastHour', (SELECT count(*) FROM agent_run WHERE status = 'budget_exhausted' AND depth > 0 AND completed_at >= CURRENT_TIMESTAMP - interval '1 hour'),
+    'expiredReservationsReleased', (SELECT count(*) FROM root_run_budget_reservation WHERE state = 'released' AND settled_at >= expires_at)
+  ),
+  'delegations', jsonb_build_object(
+    'statuses', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
+      SELECT status, count(*)::int AS count FROM delegation_run GROUP BY status
+    ) counts), '{}'::jsonb),
+    'depths', COALESCE((SELECT jsonb_object_agg(depth::text, count) FROM (
+      SELECT child.depth, count(*)::int AS count
+      FROM delegation_run delegation
+      JOIN agent_run child ON child.id = delegation.child_run_id
+      GROUP BY child.depth
+    ) counts), '{}'::jsonb),
+    'activeChildren', (SELECT count(*) FROM delegation_run WHERE status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_external')),
+    'total', (SELECT count(*) FROM delegation_run)
+  ),
+  'capabilityHealth', (SELECT jsonb_build_object(
+    'healthy', count(*) FILTER (WHERE status = 'active' AND agent_card IS NOT NULL AND discovered_at >= CURRENT_TIMESTAMP - interval '24 hours' AND NOT (CASE WHEN jsonb_typeof(agent_card::jsonb->'security') = 'array' THEN jsonb_array_length(agent_card::jsonb->'security') > 0 ELSE false END AND (credential_type IS NULL OR encrypted_credential IS NULL))),
+    'degraded', count(*) FILTER (WHERE status = 'active' AND agent_card IS NOT NULL AND discovered_at < CURRENT_TIMESTAMP - interval '24 hours' AND NOT (CASE WHEN jsonb_typeof(agent_card::jsonb->'security') = 'array' THEN jsonb_array_length(agent_card::jsonb->'security') > 0 ELSE false END AND (credential_type IS NULL OR encrypted_credential IS NULL))),
+    'auth_required', count(*) FILTER (WHERE status = 'active' AND agent_card IS NOT NULL AND CASE WHEN jsonb_typeof(agent_card::jsonb->'security') = 'array' THEN jsonb_array_length(agent_card::jsonb->'security') > 0 ELSE false END AND (credential_type IS NULL OR encrypted_credential IS NULL)),
+    'unavailable', count(*) FILTER (WHERE status = 'active' AND (agent_card IS NULL OR discovered_at IS NULL)),
+    'disabled', count(*) FILTER (WHERE status = 'disabled')
+  ) FROM remote_agent),
+  'sandbox', jsonb_build_object(
+    'sessions', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
+      SELECT status, count(*)::int AS count FROM sandbox_session GROUP BY status
+    ) counts), '{}'::jsonb),
+    'executions', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
+      SELECT status, count(*)::int AS count FROM sandbox_execution GROUP BY status
+    ) counts), '{}'::jsonb),
+    'forcedDestroy', (SELECT count(*) FROM sandbox_session WHERE error_code IN ('SANDBOX_TIMED_OUT', 'SANDBOX_SESSION_LOST')),
+    'sessionReaped', (SELECT count(*) FROM iris_activity_event WHERE event_type = 'sandbox.session_reaped'),
+    'timeouts', (SELECT count(*) FROM sandbox_execution WHERE status = 'timed_out'),
+    'artifactRejections', (SELECT count(*) FROM sandbox_execution WHERE error_code LIKE 'SANDBOX_ARTIFACT_%' AND error_code <> 'SANDBOX_ARTIFACT_CAPTURE_FAILED')
   ),
   'a2a', jsonb_build_object(
     'agents', COALESCE((SELECT jsonb_object_agg(status, count) FROM (

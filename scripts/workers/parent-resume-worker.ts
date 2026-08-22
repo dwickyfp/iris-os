@@ -26,7 +26,7 @@ import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
 import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
 import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
-import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
+import { createProductionRunAdapter } from "lib/ai/runtime/server-run-adapters";
 import { createSkillsRuntime } from "lib/ai/skill";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import {
@@ -174,80 +174,102 @@ async function resolveRuntime(
     : null;
   if (recipe.agentId && !agent)
     throw new Error("PARENT_RESUME_AGENT_UNAVAILABLE");
-  const runtimeContext = agent
-    ? createAgentRuntimeContext({
-        requestId: generateUUID(),
-        runId: claimed.run.id,
-        userId: recipe.userId,
-        workspaceId: recipe.workspaceId,
-        taskId: recipe.taskId,
-        threadId: recipe.threadId,
-        agent,
-        toolMode: toolChoice,
-        approvalPolicy: resolvedPolicy.approvalPolicy as ApprovalPolicy,
-      })
-    : createBaseAgentRuntimeContext({
-        requestId: generateUUID(),
-        runId: claimed.run.id,
-        userId: recipe.userId,
-        workspaceId: recipe.workspaceId,
-        taskId: recipe.taskId,
-        threadId: recipe.threadId,
-        toolMode: toolChoice,
-        approvalPolicy: resolvedPolicy.approvalPolicy as ApprovalPolicy,
-      });
-  const prepared = await serverRunPreparer({
-    resolveCapabilities: async () => ({
-      value: tools,
-      snapshot: recipe.routingSnapshot ?? {
-        descriptorIds: [...descriptorIds],
-        eligibleDelegationTargets: recipe.eligibleDelegationTargets ?? [],
-      },
-    }),
-    resolvePolicy: async () => resolvedPolicy,
-    resolveRuntimeContext: async () => runtimeContext,
-    resolveModel: async () => ({
-      value: await customModelProvider.getModel({
-        provider: modelRef.provider!,
-        model: modelRef.model!,
-      }),
-      descriptor: recipe.modelSnapshot ?? modelRef,
-    }),
-  }).prepare({
-    surface: "resume",
-    runId: claimed.run.id,
-    userId: recipe.userId,
-    workspaceId: recipe.workspaceId,
-    taskId: recipe.taskId,
-    agentId: recipe.agentId,
-    instructions: recipe.instructions ?? "Continue the task.",
-    sources: currentGenerationObservations(claimed).map(
-      (observation, index) => ({
-        id: `joined-observation-${index}`,
-        kind: "remote_observation" as const,
-        content: JSON.stringify(observation),
-        trust: "untrusted" as const,
-        priority: 100,
-      }),
-    ),
-    restore: {
-      routing: recipe.routingSnapshot,
-      budget: recipe.budgetSnapshot,
-      completion: recipe.completionSnapshot,
-      context: recipe.contextSnapshot,
-      model: recipe.modelSnapshot,
-      driver: recipe.driverSnapshot,
+  const preparationAdapter = createProductionRunAdapter(
+    {
+      surface: "resume",
+      approvalPolicy: resolvedPolicy.approvalPolicy as ApprovalPolicy,
+      persistedPolicy: resolvedPolicy,
     },
-    goal: claimed.checkpoint.goalRequirement?.goal,
-    selectedCapabilities: capabilities.ordered,
+    {
+      resolveCapabilities: async () => ({
+        value: tools,
+        tools,
+        descriptors: Object.keys(tools).map(
+          (key) =>
+            resolvedPolicy.capabilities?.[key] ?? {
+              id: `tool:${key}`,
+              key,
+            },
+        ),
+        selectedCapabilities: capabilities.ordered,
+        routing: (recipe.routingSnapshot ?? {
+          descriptorIds: [...descriptorIds],
+          eligibleDelegationTargets: recipe.eligibleDelegationTargets ?? [],
+        }) as Record<string, unknown>,
+      }),
+      resolveRuntimeContext: async ({ policy }) =>
+        agent
+          ? createAgentRuntimeContext({
+              requestId: generateUUID(),
+              runId: claimed.run.id,
+              userId: recipe.userId,
+              workspaceId: recipe.workspaceId,
+              taskId: recipe.taskId,
+              threadId: recipe.threadId,
+              agent,
+              toolMode: toolChoice,
+              approvalPolicy: policy.approvalPolicy as ApprovalPolicy,
+            })
+          : createBaseAgentRuntimeContext({
+              requestId: generateUUID(),
+              runId: claimed.run.id,
+              userId: recipe.userId,
+              workspaceId: recipe.workspaceId,
+              taskId: recipe.taskId,
+              threadId: recipe.threadId,
+              toolMode: toolChoice,
+              approvalPolicy: policy.approvalPolicy as ApprovalPolicy,
+            }),
+      resolveModel: async () => ({
+        value: await customModelProvider.getModel({
+          provider: modelRef.provider!,
+          model: modelRef.model!,
+        }),
+        descriptor: recipe.modelSnapshot ?? modelRef,
+      }),
+    },
+  );
+  const preparationCapabilities =
+    await preparationAdapter.resolveCapabilities(undefined);
+  const preparedTools = preparationCapabilities.tools as Record<string, Tool>;
+  preparationCapabilities.value = preparedTools;
+  const prepared = await preparationAdapter.prepare({
+    capabilities: preparationCapabilities,
+    request: {
+      runId: claimed.run.id,
+      userId: recipe.userId,
+      workspaceId: recipe.workspaceId,
+      taskId: recipe.taskId,
+      agentId: recipe.agentId,
+      instructions: recipe.instructions ?? "Continue the task.",
+      sources: currentGenerationObservations(claimed).map(
+        (observation, index) => ({
+          id: `joined-observation-${index}`,
+          kind: "remote_observation" as const,
+          content: JSON.stringify(observation),
+          trust: "untrusted" as const,
+          priority: 100,
+        }),
+      ),
+      restore: {
+        routing: recipe.routingSnapshot,
+        budget: recipe.budgetSnapshot,
+        completion: recipe.completionSnapshot,
+        context: recipe.contextSnapshot,
+        model: recipe.modelSnapshot,
+        driver: recipe.driverSnapshot,
+      },
+      goal: claimed.checkpoint.goalRequirement?.goal,
+    },
   });
+  const runtimeContext = prepared.runtimeContext!;
   const agentConfig = {
     profile: agent ? { type: "custom", agent } : { type: "base" },
     model: prepared.model!,
     instructions: prepared.instructions,
-    tools,
+    tools: preparedTools,
     runtimeContext,
-    resolvedPolicy,
+    resolvedPolicy: prepared.policy!,
   } as Parameters<typeof irisHarness.generateClaimed>[0]["agent"];
   return {
     preparationSnapshot: prepared.snapshot,
@@ -280,7 +302,7 @@ async function resolveRuntime(
             threadId: recipe.threadId,
           },
           run: { mode: "claimed", claimToken: claimed.token },
-          policy: resolvedPolicy,
+          policy: prepared.policy,
           completionRequirement: claimed.checkpoint.goalRequirement
             ? createGoalVerificationRequirement(
                 claimed.checkpoint.goalRequirement,
@@ -294,11 +316,13 @@ async function resolveRuntime(
                 ?.descriptorIds ??
               (prepared.snapshot.routing as { selectedIds?: string[] })
                 ?.selectedIds,
-            diagnostics: (prepared.snapshot.routing as {
-              diagnostics?: Record<string, unknown>;
-            })?.diagnostics,
+            diagnostics: (
+              prepared.snapshot.routing as {
+                diagnostics?: Record<string, unknown>;
+              }
+            )?.diagnostics,
             model: prepared.snapshot.model as Record<string, unknown>,
-            driver: { driver: "ai-sdk" },
+            driver: prepared.snapshot.driver as Record<string, unknown>,
           },
         },
       });

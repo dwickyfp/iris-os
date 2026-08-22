@@ -8,6 +8,7 @@ import {
 import type { NormalizedGoalRequirement } from "../runtime/goal-requirement-resolver";
 import {
   capabilityResultVerifier,
+  toolResultVerifier,
   AllRequirements,
   VerificationEngine,
 } from "../runtime/verification";
@@ -18,6 +19,7 @@ export function createDefaultArtifactVerificationRequirement() {
     new VerificationEngine([
       createArtifactVerifier(serverFileStorage, artifactRepository),
       capabilityResultVerifier,
+      toolResultVerifier,
     ]),
   );
 }
@@ -28,6 +30,7 @@ export function createGoalVerificationRequirement(
   const engine = new VerificationEngine([
     createArtifactVerifier(serverFileStorage, artifactRepository),
     capabilityResultVerifier,
+    toolResultVerifier,
   ]);
   return new AllRequirements([
     new OutcomeRequirement(),

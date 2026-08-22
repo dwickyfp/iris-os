@@ -434,6 +434,71 @@ describe("CapabilityRegistry", () => {
     ]);
   });
 
+  it("prefers an equally relevant healthy capability over a degraded one", async () => {
+    const registry = new CapabilityRegistry([
+      provider("remote", [
+        {
+          ...capability("remote-peer:degraded", "degraded"),
+          description: "Research market data",
+          health: { status: "degraded" },
+        },
+        {
+          ...capability("remote-peer:healthy", "healthy"),
+          description: "Research market data",
+          health: { status: "healthy" },
+        },
+        ...Array.from({ length: 19 }, (_, index) =>
+          capability(`builtin:noise-${index}`),
+        ),
+      ]),
+    ]);
+
+    const result = await registry.resolve(
+      { userId: "user-1" },
+      hints([]),
+      undefined,
+      { query: "research market data", config: { topN: 2 } },
+    );
+
+    expect(result.ordered.map(({ id }) => id)).toEqual([
+      "remote-peer:healthy",
+      "remote-peer:degraded",
+    ]);
+  });
+
+  it("surfaces auth-required health without automatic selection", async () => {
+    const registry = new CapabilityRegistry([
+      provider("remote", [
+        {
+          ...capability("remote-peer:auth", "Auth remote"),
+          description: "Research market data",
+          health: { status: "auth_required", reason: "credential_required" },
+        },
+        {
+          ...capability("remote-peer:healthy", "Healthy remote"),
+          description: "Research market data",
+          health: { status: "healthy" },
+        },
+      ]),
+    ]);
+
+    const result = await registry.resolve(
+      { userId: "user-1" },
+      hints([]),
+      undefined,
+      { query: "research market data" },
+    );
+
+    expect(result.ordered.map(({ id }) => id)).toEqual(["remote-peer:healthy"]);
+    expect(result.health).toContainEqual(
+      expect.objectContaining({
+        id: "remote-peer:auth",
+        status: "auth_required",
+        eligible: true,
+      }),
+    );
+  });
+
   it("pins an explicit auth-required hint but excludes unavailable hints", async () => {
     const registry = new CapabilityRegistry([
       provider("remote", [

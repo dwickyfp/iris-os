@@ -322,9 +322,10 @@ tool has the same policy.
 Artifact verification proves identity, ownership, persistence, metadata, and
 byte integrity. It does **not** prove that a report’s conclusions are factually
 correct, that arbitrary tool output is safe, or that a remote agent is honest.
-Likewise, capability verification proves that a required capability executed and
-returned non-empty structured output; outcome verification currently checks the
-configured structural requirement, not semantic truth or goal quality.
+Likewise, capability verification proves that a canonical terminal tool result
+exists and that execution succeeded. It does not require nonempty output. Outcome
+verification separately requires a nonempty evaluated result; neither check proves
+semantic truth or goal quality.
 
 ## Remote-Agent API and UX
 
@@ -623,7 +624,7 @@ not sufficient.
 | --- | --- |
 | `GET /api/health/live` | Process liveness only; returns `200` with `{"status":"live"}` and does not probe dependencies |
 | `GET /api/health/ready` | Returns `200` only when operations configuration, PostgreSQL, latest migration state, and any required worker/queue checks pass; otherwise `503` |
-| `GET /api/metrics` | Prometheus text for runs, waits, leases, outboxes, activity, artifacts, A2A, parent joins, worker heartbeats, and pg-boss; requires `Authorization: Bearer $OPERATIONS_METRICS_TOKEN` |
+| `GET /api/metrics` | Prometheus text for runs, waits, leases, outboxes, budgets, delegations, capability health, sandbox state/failures, artifact/completion verification, A2A, parent joins, worker heartbeats, and pg-boss; requires `Authorization: Bearer $OPERATIONS_METRICS_TOKEN` |
 
 ```bash
 curl --fail http://127.0.0.1:3000/api/health/live
@@ -711,9 +712,11 @@ for audit-only checks.
   gates, not permission to point tests or drills at production.
 - `.github/workflows/sandbox-gvisor.yml` defines a real Linux Docker/gVisor job
   for a self-hosted runner labeled `Linux` and `gvisor`. It checks registered
-  `runsc`, builds the images, runs the smoke profile, and executes runtime
-  security assertions. No retained successful run evidence is present in this
-  repository, so the workflow's existence is not a validation result.
+  `runsc`, builds the images, runs the smoke profile, invokes archive/artifact
+  attack tests, and executes bounded runtime isolation, network, pressure,
+  overflow, timeout, and cancellation assertions. The suite is defined, but no
+  retained successful external run evidence is present in this repository, so
+  its workflow or static-definition success is not a runtime validation result.
 
 The current workstream verification records passing local A2A 0.3 and 1.0
 conformance profiles, a disposable A2A lifecycle benchmark, and the isolated
@@ -777,9 +780,10 @@ not a future-feature list:
   those credential forms require provider-specific integration.
 - Completion verification enforces only the resolved requirement. Artifact
   verification checks durable byte identity and ownership; capability checks
-  require execution and non-empty structured output; neither establishes
-  semantic correctness. Execution-level goals have no goal-specific verifier,
-  and no general `tool_result` verifier is registered by default.
+  require a canonical terminal successful tool result but do not require
+  nonempty output. Outcome checks separately require a nonempty evaluated result.
+  None establishes semantic correctness. A generic `tool_result` verifier checks
+  terminal success only; it does not evaluate output quality.
 - `prefer` and `only` route among capabilities already authorized by the server;
   they are not a semantic planner guarantee that the model will invoke a
   particular tool or peer.
@@ -820,9 +824,14 @@ evidence for all of the following:
    when a required worker is absent and becomes ready only with a current
    heartbeat.
 3. Protect and scrape `/api/metrics`; alert on readiness, stale/missing workers,
-   queue lag/failures, expired leases, pending outboxes/joins, failed artifact
-   verification, and A2A failures. Establish deployment-specific latency,
-   throughput, saturation, and retention baselines.
+   queue lag/failures, expired leases, pending outboxes/joins, budget exhaustion,
+   delegation/sandbox failures, and failed artifact verification. The snapshot
+   intentionally exposes no latency histograms because it has no durable latency
+   series. Collect request, provider, worker, A2A, and sandbox-runner latency in
+   external telemetry. Runner quarantine is likewise runner-local and must be
+   exported by runner telemetry. Use those signals to establish
+   deployment-specific latency SLOs, throughput, saturation, and retention
+   baselines.
 4. Capture conformance evidence against each actual external A2A endpoint and
    exercise send/get/cancel, waiting input/auth, resume, timeout, polling,
    credential rotation, artifact bounds, and remote cancellation. Local profiles
