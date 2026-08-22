@@ -181,6 +181,7 @@ export type DelegationWorkerExecutorDependencies = {
     runId: string;
     userId: string;
     workspaceId?: string;
+    taskId?: string;
     targetType: "agent";
     targetId: string;
     input: Record<string, unknown>;
@@ -360,6 +361,7 @@ export function createDelegationWorkerExecutor(
           runId: run.id,
           userId: run.userId,
           workspaceId: run.workspaceId ?? undefined,
+          taskId: run.taskId ?? undefined,
           targetType: "agent",
           targetId: run.agentId!,
           input: run.context,

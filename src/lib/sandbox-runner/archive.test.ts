@@ -55,6 +55,7 @@ describe("sandbox archives", () => {
   it.each([
     [{ name: "../secret", type: "file" }, "path"],
     [{ name: "/etc/passwd", type: "file" }, "path"],
+    [{ name: "hard", type: "link", linkname: "target" }, "special"],
     [{ name: "link", type: "symlink", linkname: "../secret" }, "special"],
     [{ name: "device", type: "character-device" }, "special"],
   ] as const)("rejects unsafe archive entry %#", async (header, message) => {
@@ -81,5 +82,67 @@ describe("sandbox archives", () => {
     await expect(validateAndRepackArchive(pack, limits)).rejects.toThrow(
       "too many",
     );
+  });
+
+  it("rejects aggregate bytes before consuming the complete source", async () => {
+    const pack = tar.pack();
+    pack.entry({ name: "one" }, Buffer.alloc(12));
+    pack.entry({ name: "two" }, Buffer.alloc(12));
+    pack.finalize();
+    const encoded = Buffer.concat(await Array.fromAsync(pack));
+    let consumed = 0;
+    const source = Readable.from(
+      (async function* () {
+        for (let offset = 0; offset < encoded.length; offset += 64) {
+          consumed = Math.min(offset + 64, encoded.length);
+          yield encoded.subarray(offset, consumed);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      })(),
+    );
+
+    await expect(
+      validateAndRepackArchive(source, {
+        maxFiles: 3,
+        maxFileBytes: 16,
+        maxTotalBytes: 20,
+      }),
+    ).rejects.toThrow("limit");
+    expect(consumed).toBeLessThan(encoded.length);
+  });
+
+  it("rejects bounded path components and oversized header metadata", async () => {
+    await expect(
+      validateAndRepackArchive(
+        Readable.from(await archive({ name: "a".repeat(256) })),
+        limits,
+      ),
+    ).rejects.toThrow("metadata limit");
+
+    await expect(
+      validateAndRepackArchive(
+        Readable.from(
+          await archive({
+            name: "safe",
+            pax: { comment: "x".repeat(8_192) },
+          } as Headers),
+        ),
+        limits,
+      ),
+    ).rejects.toThrow("metadata");
+  });
+
+  it("rejects malformed and truncated tar input", async () => {
+    await expect(
+      validateAndRepackArchive(Readable.from(Buffer.alloc(512, 0xff)), limits),
+    ).rejects.toThrow();
+
+    const encoded = await archive(
+      { name: "partial", size: 16 },
+      Buffer.alloc(16),
+    );
+    await expect(
+      validateAndRepackArchive(Readable.from(encoded.subarray(0, 520)), limits),
+    ).rejects.toThrow();
   });
 });

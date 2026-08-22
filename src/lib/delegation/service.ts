@@ -6,6 +6,7 @@ import { sanitizeActivityPayload } from "lib/activity/sanitize";
 import { recordActivityEvent } from "lib/activity/service";
 import { intersectDelegationAuthority } from "lib/ai/agent/delegation-policy";
 import { runManager } from "lib/ai/runs/server";
+import type { RunBudget } from "lib/ai/runtime/budget";
 import {
   type PolicyAuthority,
   policyEngine,
@@ -21,7 +22,6 @@ import { assertDelegationTargetEligible } from "lib/delegation/targets";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { generateUUID } from "lib/utils";
 import { enqueueDelegatedRun } from "./queue";
-import { BudgetGuard, type RunBudget } from "lib/ai/runtime/budget";
 
 export const DELEGATION_LIMITS = {
   maxDepth: 3,
@@ -167,14 +167,11 @@ export async function createDelegatedRun(input: {
     200_000,
     Math.max(1_000, input.tokenBudget ?? DELEGATION_LIMITS.defaultTokenBudget),
   );
-  const parentBudget = parent.context.budget as RunBudget | undefined;
-  const parentGuard = parentBudget ? new BudgetGuard(parentBudget) : undefined;
   const childBudget: RunBudget = {
     maxTokens: tokenBudget,
     maxDurationMs: timeoutMs,
     maxDepth: DELEGATION_LIMITS.maxDepth,
   };
-  if (parentGuard) parentGuard.child(childBudget, parent.depth + 1);
   const idempotencyKey =
     input.idempotencyKey ??
     createHash("sha256")

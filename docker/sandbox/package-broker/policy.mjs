@@ -52,6 +52,9 @@ export function authorizePackageRequest(value) {
 }
 
 export const packagePolicy = Object.freeze({
+  mode: "authorization-only",
+  delivery: "disabled",
+  claims: "unsupported",
   maxPackages: MAX_PACKAGES,
   npm: "name@exact-semver",
   pypi: "name==exact-version",

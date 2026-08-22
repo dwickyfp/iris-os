@@ -39,4 +39,21 @@ describe("Docker exec multiplex decoder", () => {
       ),
     ).rejects.toThrow("Truncated");
   });
+
+  it("rejects nonzero reserved header bytes and source stream errors", async () => {
+    const malformed = frame(1, "x");
+    malformed[1] = 1;
+    await expect(
+      decodeDockerMultiplexedStream(Readable.from(malformed), 4),
+    ).rejects.toThrow("Invalid");
+
+    const source = new Readable({
+      read() {
+        this.destroy(new Error("socket failed"));
+      },
+    });
+    await expect(decodeDockerMultiplexedStream(source, 4)).rejects.toThrow(
+      "socket failed",
+    );
+  });
 });

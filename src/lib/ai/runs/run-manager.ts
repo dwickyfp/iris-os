@@ -132,6 +132,16 @@ export class RunManager {
     });
   }
 
+  exhaustBudget(
+    runId: string,
+    error: string,
+    errorCode = "BUDGET_EXHAUSTED",
+  ) {
+    const leaseToken = this.foregroundLeases.get(runId);
+    if (!leaseToken) return Promise.resolve(null);
+    return this.exhaustBudgetWithLease(runId, leaseToken, error, errorCode);
+  }
+
   cancel(runId: string, error?: string, errorCode?: string) {
     const leaseToken = this.foregroundLeases.get(runId);
     if (!leaseToken) return Promise.resolve(null);

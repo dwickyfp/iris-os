@@ -8,6 +8,7 @@ import type {
   ApprovalPolicy,
   RuntimeToolMode,
 } from "lib/ai/agent/runtime-context";
+import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import { customModelProvider } from "lib/ai/models";
 import {
   type ParentResumeGeneration,
@@ -22,13 +23,12 @@ import {
 import { runManager } from "lib/ai/runs/server";
 import type { ClaimedParentRun } from "lib/ai/runs/types";
 import type { ResolvedPolicySnapshot } from "lib/ai/runtime";
-import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
+import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
 import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
 import { createSkillsRuntime } from "lib/ai/skill";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
-import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import {
   agentRepository,
   chatRepository,
@@ -36,10 +36,10 @@ import {
   skillRepository,
 } from "lib/db/repository";
 import type { DelegationTarget } from "lib/delegation/targets";
+import { sandboxCapability } from "lib/sandbox/server";
 import { generateUUID } from "lib/utils";
 import type PgBoss from "pg-boss";
 import { workflowToVercelAITool } from "../../src/app/api/chat/shared.chat";
-import { sandboxCapability } from "lib/sandbox/server";
 
 type Recipe = {
   userId: string;
@@ -205,7 +205,6 @@ async function resolveRuntime(
       },
     }),
     resolvePolicy: async () => resolvedPolicy,
-    resolveBudget: async () => recipe.budgetSnapshot,
     resolveRuntimeContext: async () => runtimeContext,
     resolveModel: async () => ({
       value: await customModelProvider.getModel({
@@ -214,25 +213,23 @@ async function resolveRuntime(
       }),
       descriptor: recipe.modelSnapshot ?? modelRef,
     }),
-    resolveDriver: async () => ({
-      descriptor: recipe.driverSnapshot ?? { id: "ai-sdk" },
-    }),
-    resolveCompletion: async () => ({
-      snapshot: recipe.completionSnapshot,
-    }),
   }).prepare({
     surface: "resume",
+    runId: claimed.run.id,
     userId: recipe.userId,
     workspaceId: recipe.workspaceId,
+    taskId: recipe.taskId,
     agentId: recipe.agentId,
     instructions: recipe.instructions ?? "Continue the task.",
-    sources: currentGenerationObservations(claimed).map((observation, index) => ({
-      id: `joined-observation-${index}`,
-      kind: "remote_observation" as const,
-      content: JSON.stringify(observation),
-      trust: "untrusted" as const,
-      priority: 100,
-    })),
+    sources: currentGenerationObservations(claimed).map(
+      (observation, index) => ({
+        id: `joined-observation-${index}`,
+        kind: "remote_observation" as const,
+        content: JSON.stringify(observation),
+        trust: "untrusted" as const,
+        priority: 100,
+      }),
+    ),
     restore: {
       routing: recipe.routingSnapshot,
       budget: recipe.budgetSnapshot,
@@ -291,6 +288,18 @@ async function resolveRuntime(
             : undefined,
           context: prepared.context,
           budget: prepared.budget,
+          routing: {
+            descriptorIds:
+              (prepared.snapshot.routing as { descriptorIds?: string[] })
+                ?.descriptorIds ??
+              (prepared.snapshot.routing as { selectedIds?: string[] })
+                ?.selectedIds,
+            diagnostics: (prepared.snapshot.routing as {
+              diagnostics?: Record<string, unknown>;
+            })?.diagnostics,
+            model: prepared.snapshot.model as Record<string, unknown>,
+            driver: { driver: "ai-sdk" },
+          },
         },
       });
       const result = lifecycle.native;

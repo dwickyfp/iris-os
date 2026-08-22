@@ -20,6 +20,10 @@ function sessionRequest(
   overrides: Partial<SandboxRunnerSessionCreateRequest["limits"]> = {},
 ): SandboxRunnerSessionCreateRequest {
   return {
+    identity: {
+      sessionId: "00000000-0000-4000-8000-000000000001",
+      rootRunId: "00000000-0000-4000-8000-000000000002",
+    },
     profile: { id: "python", network: "none" },
     limits: {
       cpuMillis: 1_000,
@@ -41,6 +45,16 @@ class FakeDocker {
   calls: Call[] = [];
   createCount = 0;
   hasRunsc = true;
+  execOutput: Readable = Readable.from([]);
+  execStatus = 200;
+  execInspect: unknown = { ExitCode: 0, Running: false };
+  inspectError?: Error;
+  removeFailures = 0;
+  containers: Array<{
+    Id: string;
+    Labels?: Record<string, string>;
+    State?: string | { Running?: boolean; Status?: string };
+  }> = [{ Id: "stale" }];
 
   async request<T = unknown>(
     method: string,
@@ -48,24 +62,61 @@ class FakeDocker {
     body?: unknown,
   ): Promise<T> {
     this.calls.push({ method, path, body });
+    if (method === "DELETE" && this.removeFailures > 0) {
+      this.removeFailures -= 1;
+      throw new Error("remove failed");
+    }
     if (path === "/info")
       return { Runtimes: this.hasRunsc ? { runsc: {} } : { runc: {} } } as T;
     if (path.startsWith("/images/")) return { RepoDigests: [image] } as T;
-    if (path.startsWith("/containers/json")) return [{ Id: "stale" }] as T;
+    if (path.startsWith("/containers/json")) return this.containers as T;
     if (path.startsWith("/containers/create"))
       return { Id: `container-${++this.createCount}` } as T;
     if (path.includes("/wait?")) return { StatusCode: 0 } as T;
+    if (path.match(/^\/containers\/[^/]+\/exec$/)) {
+      return { Id: "exec-1" } as T;
+    }
+    if (path.startsWith("/exec/") && path.endsWith("/json")) {
+      if (this.inspectError) throw this.inspectError;
+      return this.execInspect as T;
+    }
     if (path.endsWith("/json")) return { State: { Status: "running" } } as T;
     return "OK" as T;
   }
 
-  async stream(): Promise<DockerStreamResponse> {
+  async stream(_method?: string, path?: string): Promise<DockerStreamResponse> {
+    if (path?.endsWith("/start")) {
+      return {
+        statusCode: this.execStatus,
+        headers: {},
+        stream: this.execOutput,
+      };
+    }
     return { statusCode: 200, headers: {}, stream: Readable.from([]) };
   }
 }
 
+function execFrame(stream: number, value: string) {
+  const body = Buffer.from(value);
+  const header = Buffer.alloc(8);
+  header[0] = stream;
+  header.writeUInt32BE(body.length, 4);
+  return Buffer.concat([header, body]);
+}
+
+async function runnerWithSession(docker: FakeDocker, overrides = {}) {
+  const runner = new SandboxRunner(
+    config(overrides),
+    docker as unknown as DockerClient,
+  );
+  await runner.start();
+  const session = await runner.createSession(sessionRequest());
+  docker.calls.length = 0;
+  return { runner, session };
+}
+
 describe("SandboxRunner", () => {
-  it("runs exact startup probes, startup cleanup, canary, and secure create JSON", async () => {
+  it("runs exact startup probes, startup inventory, canary, and secure create JSON", async () => {
     const docker = new FakeDocker();
     const runner = new SandboxRunner(
       config(),
@@ -108,6 +159,12 @@ describe("SandboxRunner", () => {
         "com.iris-os.sandbox-runner": "true",
         "com.iris-os.sandbox-session": session.id,
         "com.iris-os.sandbox-created-ms": expect.stringMatching(/^\d+$/),
+        "com.iris-os.control-session": "00000000-0000-4000-8000-000000000001",
+        "com.iris-os.root-run": "00000000-0000-4000-8000-000000000002",
+        "com.iris-os.runner-boot": runner.bootId,
+        "com.iris-os.sandbox-profile": "python",
+        "com.iris-os.sandbox-network": "none",
+        "com.iris-os.sandbox-limits": JSON.stringify(session.limits),
       },
       HostConfig: {
         Runtime: "runsc",
@@ -155,6 +212,67 @@ describe("SandboxRunner", () => {
     expect(
       docker.calls.some((call) => call.path.startsWith("/containers/create")),
     ).toBe(false);
+  });
+
+  it("adopts valid owned sessions across runner boot without deleting them", async () => {
+    const docker = new FakeDocker();
+    docker.containers = [];
+    const first = new SandboxRunner(
+      config(),
+      docker as unknown as DockerClient,
+    );
+    await first.start();
+    const created = await first.createSession(sessionRequest());
+    const create = docker.calls.find(
+      (call) =>
+        call.path.startsWith("/containers/create") &&
+        (call.body as { Labels?: Record<string, string> }).Labels?.[
+          "com.iris-os.sandbox-session"
+        ] === created.id,
+    )!;
+    docker.containers = [
+      {
+        Id: created.containerId,
+        Labels: (create.body as { Labels: Record<string, string> }).Labels,
+        State: "running",
+      },
+    ];
+    docker.calls.length = 0;
+
+    const restarted = new SandboxRunner(
+      config(),
+      docker as unknown as DockerClient,
+    );
+    await restarted.start();
+
+    expect(restarted.inventory()).toMatchObject({
+      bootId: restarted.bootId,
+      sessions: [
+        {
+          id: created.id,
+          controlPlaneSessionId: sessionRequest().identity.sessionId,
+          rootRunId: sessionRequest().identity.rootRunId,
+          bootId: first.bootId,
+          state: "live",
+          profile: sessionRequest().profile,
+          limits: created.limits,
+          createdAt: new Date(created.createdAt).toISOString(),
+          expiresAt: expect.any(String),
+        },
+      ],
+    });
+    expect(docker.calls).not.toContainEqual({
+      method: "DELETE",
+      path: `/containers/${created.containerId}?force=true&v=true`,
+      body: undefined,
+    });
+    await restarted.stop();
+    await first.stop();
+    expect(docker.calls).not.toContainEqual({
+      method: "DELETE",
+      path: `/containers/${created.containerId}?force=true&v=true`,
+      body: undefined,
+    });
   });
 
   it("reaps expired sessions using forced deletion", async () => {
@@ -265,10 +383,12 @@ describe("SandboxRunner", () => {
     vi.useRealTimers();
   });
 
-  it("attaches egress sessions only to the configured control network", async () => {
+  it("attaches networked sessions only to the configured child-broker network", async () => {
     const docker = new FakeDocker();
     const runner = new SandboxRunner(
-      config({ SANDBOX_RUNNER_EGRESS_NETWORK: "sandbox-control" }),
+      config({
+        SANDBOX_RUNNER_CHILD_BROKER_NETWORK: "sandbox-child-broker",
+      }),
       docker as unknown as DockerClient,
     );
     await runner.start();
@@ -283,7 +403,24 @@ describe("SandboxRunner", () => {
       HostConfig: { NetworkMode: string };
     };
     expect(create.NetworkDisabled).toBe(false);
-    expect(create.HostConfig.NetworkMode).toBe("sandbox-control");
+    expect(create.HostConfig.NetworkMode).toBe("sandbox-child-broker");
+    await runner.stop();
+  });
+
+  it("rejects networked sessions when no child-broker network is configured", async () => {
+    const docker = new FakeDocker();
+    const runner = new SandboxRunner(
+      config(),
+      docker as unknown as DockerClient,
+    );
+    await runner.start();
+
+    await expect(
+      runner.createSession({
+        ...sessionRequest(),
+        profile: { id: "python-egress", network: "egress" },
+      }),
+    ).rejects.toThrow("Child-broker network is not configured");
     await runner.stop();
   });
 
@@ -317,6 +454,148 @@ describe("SandboxRunner", () => {
     );
     releaseCreate?.();
     await first;
+    await runner.stop();
+  });
+
+  it.each([
+    [
+      "output overflow",
+      (docker: FakeDocker) => {
+        docker.execOutput = Readable.from(execFrame(1, "12345"));
+      },
+    ],
+    [
+      "malformed multiplex",
+      (docker: FakeDocker) => {
+        docker.execOutput = Readable.from(execFrame(3, "x"));
+      },
+    ],
+    [
+      "truncated multiplex",
+      (docker: FakeDocker) => {
+        docker.execOutput = Readable.from(execFrame(1, "x").subarray(0, 8));
+      },
+    ],
+    [
+      "stream error",
+      (docker: FakeDocker) => {
+        docker.execOutput = new Readable({
+          read() {
+            this.destroy(new Error("stream failed"));
+          },
+        });
+      },
+    ],
+    [
+      "inspect failure",
+      (docker: FakeDocker) => {
+        docker.inspectError = new Error("inspect failed");
+      },
+    ],
+    [
+      "still running",
+      (docker: FakeDocker) => {
+        docker.execInspect = { ExitCode: 0, Running: true };
+      },
+    ],
+    [
+      "inconsistent inspection",
+      (docker: FakeDocker) => {
+        docker.execInspect = { ExitCode: null, Running: false };
+      },
+    ],
+    [
+      "non-success start response",
+      (docker: FakeDocker) => {
+        docker.execStatus = 500;
+      },
+    ],
+  ] as const)("quarantines and removes after %s", async (_name, arrange) => {
+    const docker = new FakeDocker();
+    const { runner, session } = await runnerWithSession(docker, {
+      SANDBOX_RUNNER_MAX_EXEC_OUTPUT_BYTES: "4",
+    });
+    arrange(docker);
+
+    await expect(runner.exec(session.id, ["true"])).rejects.toThrow();
+    expect(docker.calls).toContainEqual({
+      method: "DELETE",
+      path: "/containers/container-2?force=true&v=true",
+      body: undefined,
+    });
+    await expect(runner.getSession(session.id)).rejects.toThrow("not found");
+    await runner.stop();
+  });
+
+  it("quarantines timeout and caller abort failures", async () => {
+    for (const abort of [false, true]) {
+      const docker = new FakeDocker();
+      const { runner, session } = await runnerWithSession(docker);
+      const controller = new AbortController();
+      docker.stream = async (
+        _method?: string,
+        path?: string,
+        _body?: unknown,
+        signal?: AbortSignal,
+      ) => {
+        if (!path?.endsWith("/start")) {
+          return { statusCode: 200, headers: {}, stream: Readable.from([]) };
+        }
+        const stream = new Readable({ read() {} });
+        const fail = () => stream.destroy(new Error("aborted"));
+        if (signal?.aborted) setImmediate(fail);
+        else signal?.addEventListener("abort", fail, { once: true });
+        return { statusCode: 200, headers: {}, stream };
+      };
+
+      const execution = runner.exec(
+        session.id,
+        ["sleep", "1"],
+        controller.signal,
+        100,
+      );
+      if (abort) controller.abort();
+      await expect(execution).rejects.toThrow(
+        abort ? "destroyed" : "timed out",
+      );
+      await expect(runner.getSession(session.id)).rejects.toThrow("not found");
+      await runner.stop();
+    }
+  });
+
+  it("retains failed removal for reaper retry", async () => {
+    const docker = new FakeDocker();
+    const { runner, session } = await runnerWithSession(docker);
+    docker.execOutput = Readable.from(execFrame(3, "x"));
+    docker.removeFailures = 1;
+
+    await expect(runner.exec(session.id, ["true"])).rejects.toThrow("Invalid");
+    await expect(runner.getSession(session.id)).rejects.toThrow("not found");
+    expect(
+      docker.calls.filter((call) => call.method === "DELETE"),
+    ).toHaveLength(1);
+
+    await runner.reap();
+    expect(
+      docker.calls.filter((call) => call.method === "DELETE"),
+    ).toHaveLength(2);
+    await runner.stop();
+  });
+
+  it("reuses a session after a known terminal nonzero exit", async () => {
+    const docker = new FakeDocker();
+    const { runner, session } = await runnerWithSession(docker);
+    docker.execInspect = { ExitCode: 7, Running: false };
+    docker.execOutput = Readable.from(execFrame(2, "failed"));
+
+    await expect(runner.exec(session.id, ["false"])).resolves.toMatchObject({
+      exitCode: 7,
+      stderr: "failed",
+    });
+    await expect(runner.getSession(session.id)).resolves.toMatchObject({
+      id: session.id,
+    });
+    expect(docker.calls.some((call) => call.method === "DELETE")).toBe(false);
     await runner.stop();
   });
 });

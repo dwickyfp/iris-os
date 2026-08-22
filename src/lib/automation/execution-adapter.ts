@@ -2,39 +2,37 @@ import "server-only";
 
 import type { Tool } from "ai";
 import type { Agent } from "app-types/agent";
-import type { CapabilityRef } from "app-types/chat";
+import type { CapabilityHints } from "app-types/chat";
 import {
   createAgentRuntimeContext,
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
-import { customModelProvider } from "lib/ai/models";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
+import { customModelProvider } from "lib/ai/models";
+import { runManager } from "lib/ai/runs/server";
 import {
   type DriverGenerateInput,
   type HarnessOrchestration,
 } from "lib/ai/runtime";
-import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
+import { isBudgetExhausted } from "lib/ai/runtime/budget";
+import {
+  buildServerCapabilityResolutionInput,
+  resolveServerCapabilities,
+  subtractAutomationCapabilities,
+} from "lib/ai/runtime/capabilities/server";
 import { policyEngine } from "lib/ai/runtime/policy-engine";
 import { irisHarness } from "lib/ai/runtime/server";
+import { serverBudgetResolver } from "lib/ai/runtime/server-budget-resolver";
 import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
-import { createSkillsRuntime } from "lib/ai/skill";
-import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
-import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import {
   agentRepository,
   skillRepository,
   workflowRepository,
 } from "lib/db/repository";
-import { generateUUID } from "lib/utils";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import {
-  sandboxCapability,
-  sandboxManager,
-  workflowSandboxServices,
-} from "lib/sandbox/server";
-import { runManager } from "lib/ai/runs/server";
-import { workflowToVercelAITool } from "../../app/api/chat/shared.chat";
+import { sandboxManager, workflowSandboxServices } from "lib/sandbox/server";
+import { generateUUID } from "lib/utils";
 
 export type AutomationTarget = "workflow" | "skill" | "agent";
 
@@ -50,10 +48,35 @@ export type AutomationExecutionResult =
   | { status: "timed_out"; message: string }
   | { status: "budget_exhausted"; message: string };
 
+export function projectAutomationExecutionResult(
+  result: AutomationExecutionResult,
+) {
+  const retryable =
+    result.status === "timed_out" ||
+    (result.status === "failed" && result.retryable);
+  return {
+    status: result.status,
+    attemptStatus: result.status,
+    retryable,
+    error: result.status === "succeeded" ? null : result.message,
+    errorCode:
+      result.status === "failed"
+        ? result.errorCode
+        : result.status === "budget_exhausted"
+          ? "BUDGET_EXHAUSTED"
+          : null,
+    output: result.status === "succeeded" ? result.output : null,
+  };
+}
+
 type AutomationExecutionRequestBase = {
   runId: string;
   userId: string;
   workspaceId?: string;
+  taskId?: string;
+  capabilityHints?: CapabilityHints;
+  allowedMcpServers?: Record<string, { tools: string[] }>;
+  allowedAppDefaultToolkit?: string[];
   targetType: AutomationTarget;
   targetId: string;
   input: Record<string, unknown>;
@@ -88,28 +111,6 @@ function objective(input: Record<string, unknown>) {
     : JSON.stringify(input);
 }
 
-function availableTools(allowedTools: string[]) {
-  const all = Object.assign(
-    {},
-    ...Object.values(APP_DEFAULT_TOOL_KIT),
-  ) as Record<string, Tool>;
-  const allowed = new Set(allowedTools);
-  return Object.fromEntries(
-    Object.entries(all).filter(([name]) => allowed.has(name)),
-  );
-}
-
-function mcpAllowlist(capabilities: readonly CapabilityRef[]) {
-  const allowed: Record<string, { tools: string[] }> = {};
-  for (const capability of capabilities) {
-    if (capability.type !== "mcpTool") continue;
-    const server = (allowed[capability.serverId] ??= { tools: [] });
-    if (!server.tools.includes(capability.name))
-      server.tools.push(capability.name);
-  }
-  return allowed;
-}
-
 type HeadlessDescriptor = {
   id: string;
   key: string;
@@ -127,72 +128,42 @@ type HeadlessDescriptor = {
 async function resolveHeadlessTools(input: {
   request: AutomationExecutionRequest;
   profile: { type: "base" } | { type: "custom"; agent: Agent };
-  allowedTools: string[];
+  allowedTools?: string[];
   runId: string;
 }): Promise<{
   tools: Record<string, Tool>;
   descriptors: HeadlessDescriptor[];
   snapshot: Record<string, unknown>;
 }> {
-  if (input.profile.type === "base") {
-    const tools = availableTools(input.allowedTools);
-    return {
-      tools,
-      descriptors: Object.keys(tools).map(
-        (key): HeadlessDescriptor => ({
-          id: `builtin:${key}`,
-          key,
-          kind: "builtin",
-        }),
-      ),
-      snapshot: {
-        descriptorIds: Object.keys(tools).map((key) => `builtin:${key}`),
+  const agent =
+    input.profile.type === "custom" ? input.profile.agent : undefined;
+  const capabilities = await resolveServerCapabilities(
+    await buildServerCapabilityResolutionInput({
+      userId: input.request.userId,
+      workspaceId: input.request.workspaceId,
+      taskId: input.request.taskId,
+      runId: input.runId,
+      goal: objective(input.request.input),
+      agent,
+      hints: input.request.capabilityHints,
+      permissions: {
+        allowedMcpServers: input.request.allowedMcpServers,
+        allowedAppDefaultToolkit: input.request.allowedAppDefaultToolkit,
       },
-    };
-  }
-  const allowedCapabilities =
-    input.profile.agent.instructions.capabilities ?? [];
-  const capabilities = await resolveServerCapabilities({
-    query: objective(input.request.input),
-    context: {
-      userId: input.request.userId,
-      primaryAgentId: input.profile.agent.id,
-      allowedMcpServers: mcpAllowlist(allowedCapabilities),
-      toolsEnabled: true,
-      workflowsEnabled: true,
-      delegationEnabled: isV2FeatureEnabled("delegation"),
-      remoteAgentsEnabled: isV2FeatureEnabled("remoteAgents"),
-    },
-    hints: { mode: "prefer", requested: [] },
-    allowedCapabilities,
-    skillsRuntime: await createSkillsRuntime({
-      repository: skillRepository,
-      agentId: input.profile.agent.id,
-      userId: input.request.userId,
+      featureState: {
+        tools: true,
+        workflows: true,
+        delegation: isV2FeatureEnabled("delegation"),
+        remoteAgents: isV2FeatureEnabled("remoteAgents"),
+        learning: isV2FeatureEnabled("learning"),
+      },
+      workflowBinding: { signal: input.request.signal },
     }),
-    workflowTool: (workflow) =>
-      workflowToVercelAITool({
-        ...workflow,
-        dataStream: { write() {} } as any,
-        executionContext: {
-          runId: input.runId,
-          userId: input.request.userId,
-          workspaceId: input.request.workspaceId,
-          signal: input.request.signal,
-          services: workflowSandboxServices(input.runId),
-        },
-      }),
-    createDelegationTool: (targets) =>
-      createDelegateWorkTool({
-        parentRunId: input.runId,
-        userId: input.request.userId,
-        targets,
-      }),
-    sandbox: sandboxCapability,
-  });
-  const explicitlyAllowed = new Set(input.allowedTools);
-  const descriptors = capabilities.ordered.filter(
-    ({ key }) => explicitlyAllowed.size === 0 || explicitlyAllowed.has(key),
+  );
+  const explicitlyAllowed = new Set(input.allowedTools ?? []);
+  const { descriptors, subtractions } = subtractAutomationCapabilities(
+    capabilities.ordered,
+    input.allowedTools,
   );
   const tools = Object.fromEntries(
     descriptors
@@ -211,6 +182,7 @@ async function resolveHeadlessTools(input: {
       descriptorIds: descriptors.map(({ id }) => id),
       eligibleDelegationTargets: capabilities.eligibleDelegationTargets,
       diagnostics: capabilities.routing,
+      subtractions,
     },
   };
 }
@@ -223,12 +195,49 @@ export function mapWorkflowOutput(output: unknown): Record<string, unknown> {
     : { output };
 }
 
+export async function finishWorkflowAgentRun(
+  runId: string,
+  result: { isOk: boolean; output?: unknown; error?: unknown },
+  manager: Pick<
+    typeof runManager,
+    "succeed" | "fail" | "exhaustBudget"
+  > = runManager,
+) {
+  if (result.isOk)
+    return manager.succeed(runId, mapWorkflowOutput(result.output));
+  const message =
+    result.error instanceof Error
+      ? result.error.message.slice(0, 2_000)
+      : String(result.error).slice(0, 2_000);
+  return isBudgetExhausted(result.error)
+    ? manager.exhaustBudget(runId, message)
+    : manager.fail(runId, message, "WORKFLOW_FAILED");
+}
+
+export function classifyWorkflowFailure(
+  error: unknown,
+): Exclude<AutomationExecutionResult, { status: "succeeded" }> {
+  const message =
+    error instanceof Error
+      ? error.message.slice(0, 2_000)
+      : String(error).slice(0, 2_000);
+  return isBudgetExhausted(error)
+    ? { status: "budget_exhausted", message }
+    : {
+        status: "failed",
+        errorCode: "WORKFLOW_FAILED",
+        message,
+        retryable: true,
+      };
+}
+
 export async function runHeadlessAgent(input: {
   request: AutomationExecutionRequest;
   profile: { type: "base" } | { type: "custom"; agent: Agent };
   instructions: string;
-  allowedTools: string[];
+  allowedTools?: string[];
   harness?: AutomationHarness;
+  resolveBudget?: typeof serverBudgetResolver;
 }) {
   const runId =
     input.request.executionSource === "delegation"
@@ -273,16 +282,21 @@ export async function runHeadlessAgent(input: {
       value: await customModelProvider.getEngineModel(engine),
       descriptor: { engine },
     }),
-    resolveDriver: async () => ({ descriptor: { id: "ai-sdk" } }),
+    resolveBudget: input.resolveBudget,
   }).prepare({
-    surface: "automation",
+    surface:
+      input.request.executionSource === "delegation"
+        ? "delegation"
+        : "automation",
+    runId: input.request.executionSource === "delegation" ? runId : undefined,
     userId: input.request.userId,
     workspaceId: input.request.workspaceId,
+    taskId: input.request.taskId,
     agentId:
       input.profile.type === "custom" ? input.profile.agent.id : undefined,
     request: objective(input.request.input),
     goal: objective(input.request.input),
-    selectedCapabilities: input.allowedTools,
+    selectedCapabilities: Object.keys(tools),
     instructions: input.instructions,
     contextWindow: 12_000,
   });
@@ -309,6 +323,7 @@ export async function runHeadlessAgent(input: {
         agentId:
           input.profile.type === "custom" ? input.profile.agent.id : undefined,
         workspaceId: input.request.workspaceId,
+        taskId: input.request.taskId,
       },
       run:
         input.request.executionSource === "delegation"
@@ -324,6 +339,7 @@ export async function runHeadlessAgent(input: {
                     ? input.profile.agent.id
                     : undefined,
                 workspaceId: input.request.workspaceId,
+                taskId: input.request.taskId,
                 context: {
                   automationRunId: input.request.runId,
                   targetType: input.request.targetType,
@@ -331,8 +347,9 @@ export async function runHeadlessAgent(input: {
                   objective: objective(input.request.input),
                   goalRequirement: prepared.goalRequirement,
                 },
-                allowedTools: input.allowedTools,
+                allowedTools: Object.keys(tools),
                 timeoutMs: input.request.timeoutMs,
+                budget: prepared.budget,
               },
             },
       policy: {
@@ -340,11 +357,27 @@ export async function runHeadlessAgent(input: {
       },
       context: prepared.context,
       budget: prepared.budget,
+      routing: {
+        descriptorIds:
+          (prepared.snapshot.routing as { descriptorIds?: string[] })
+            ?.descriptorIds ??
+          (prepared.snapshot.routing as { selectedIds?: string[] })
+            ?.selectedIds,
+        diagnostics: (
+          prepared.snapshot.routing as {
+            diagnostics?: Record<string, unknown>;
+          }
+        )?.diagnostics,
+        ...(prepared.snapshot.routing as {
+          descriptorIds?: string[];
+          diagnostics?: Record<string, unknown>;
+        }),
+        model: prepared.snapshot.model as Record<string, unknown>,
+        driver: { driver: "ai-sdk" },
+      },
       completionRequirement:
         prepared.completionRequirement ??
-        (prepared.goalRequirement.level === "execution"
-          ? undefined
-          : createGoalVerificationRequirement(prepared.goalRequirement)),
+        createGoalVerificationRequirement(prepared.goalRequirement),
     } satisfies HarnessOrchestration,
   };
   const result = await (input.harness ?? irisHarness).generate(execution);
@@ -383,6 +416,10 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           retryable: false,
         };
       const sandboxRunId = generateUUID();
+      const budget = await serverBudgetResolver({
+        surface: "automation",
+        userId: request.userId,
+      });
       await runManager.start({
         id: sandboxRunId,
         userId: request.userId,
@@ -393,6 +430,7 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
           workflowId: request.targetId,
         },
         timeoutMs: request.timeoutMs,
+        budget,
       });
       const result = await createWorkflowExecutor({
         edges: workflow.edges,
@@ -408,26 +446,14 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
         disableHistory: true,
         timeout: request.timeoutMs,
       });
-      if (result.isOk)
-        await runManager.succeed(sandboxRunId, mapWorkflowOutput(result.output));
-      else
-        await runManager.fail(
-          sandboxRunId,
-          String(result.error).slice(0, 2_000),
-          "WORKFLOW_FAILED",
-        );
+      await finishWorkflowAgentRun(sandboxRunId, result, runManager);
       await sandboxManager.cancelByRun(sandboxRunId).catch(() => undefined);
       return result.isOk
         ? {
             status: "succeeded",
             output: mapWorkflowOutput(result.output),
           }
-        : {
-            status: "failed",
-            errorCode: "WORKFLOW_FAILED",
-            message: String(result.error).slice(0, 2_000),
-            retryable: true,
-          };
+        : classifyWorkflowFailure(result.error);
     },
     skill: async (request) => {
       const skill = await skillRepository.selectSkillById(
@@ -470,7 +496,7 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
         instructions: [agent.instructions.role, agent.instructions.systemPrompt]
           .filter(Boolean)
           .join("\n\n"),
-        allowedTools: request.allowedTools ?? [],
+        allowedTools: request.allowedTools,
       });
     },
   };
@@ -494,7 +520,7 @@ export function createAutomationExecutionAdapter(
           message: message.slice(0, 2_000),
           retryable: false,
         };
-      if (message === "BUDGET_EXHAUSTED" || /budget exhausted/i.test(message))
+      if (isBudgetExhausted(error))
         return {
           status: "budget_exhausted" as const,
           message: message.slice(0, 2_000),

@@ -18,6 +18,7 @@ import {
   decryptRemoteAgentSecret,
   encryptRemoteAgentSecret,
 } from "lib/security/secrets";
+import { remoteAgentHealth } from "./health";
 
 type InsertRemoteAgent = Omit<
   RemoteAgent,
@@ -45,6 +46,7 @@ function publicAgent(agent: RemoteAgent): PublicRemoteAgent {
   return {
     ...safe,
     hasCredential: Boolean(encryptedCredential),
+    health: remoteAgentHealth(agent),
   };
 }
 

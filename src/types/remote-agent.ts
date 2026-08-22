@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CapabilityHealth } from "./capability-health";
 
 export const RemoteAgentStatusSchema = z.enum(["active", "disabled"]);
 export const RemoteAgentCredentialSchema = z.discriminatedUnion("type", [
@@ -147,6 +148,7 @@ export type PublicRemoteAgent = Omit<
 > & {
   credentialType: RemoteAgentCredential["type"] | null;
   hasCredential: boolean;
+  health: CapabilityHealth;
 };
 
 export type A2ATaskState =

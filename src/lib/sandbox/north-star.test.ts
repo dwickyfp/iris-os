@@ -12,26 +12,45 @@ describe("Harness sandbox north star", () => {
     const repository: SandboxRepository = {
       claimSession: vi.fn(async (session) => {
         const existing = sessions[0];
-        if (existing) return { session: existing, claimed: false };
+        if (existing)
+          return {
+            session: existing,
+            claimed: false,
+            rootRunId: session.runId,
+          };
         sessions.push(session);
-        return { session, claimed: true };
+        return { session, claimed: true, rootRunId: session.runId };
       }),
-      activateSession: vi.fn(async (id, _creatorToken, providerInstanceId) => {
-        Object.assign(sessions.find((session) => session.id === id)!, {
-          status: "active",
+      activateSession: vi.fn(
+        async (
+          id,
+          _creatorToken,
           providerInstanceId,
-        });
-        return true;
-      }),
+          _expiresAt,
+          activatedAt,
+        ) => {
+          Object.assign(sessions.find((session) => session.id === id)!, {
+            status: "active",
+            providerInstanceId,
+            lastUsedAt: activatedAt,
+          });
+          return true;
+        },
+      ),
       failSessionCreation: vi.fn(async () => undefined),
       cancelSessionsByRun: vi.fn(async () => {
         sessions[0].status = "cancelled";
         return sessions;
       }),
       cancelSessionsByRootRun: vi.fn(async () => sessions),
-      touchSession: vi.fn(async () => undefined),
+      touchSession: vi.fn(async () => true),
       finishSession: vi.fn(async () => undefined),
-      listExpiredSessions: vi.fn(async () => []),
+      claimExpiredSessions: vi.fn(async () => []),
+      listSessionsForReconciliation: vi.fn(async () => []),
+      reconcileSession: vi.fn(async () => "rejected" as const),
+      retainSessionAfterLookup: vi.fn(async () => true),
+      markSessionLost: vi.fn(async () => true),
+      reconcileStaleExecutions: vi.fn(async () => 0),
       reserveExecution: vi.fn(async () => true),
       startExecution: vi.fn(async () => true),
       releaseExecution: vi.fn(async () => true),
@@ -71,6 +90,11 @@ describe("Harness sandbox north star", () => {
         })),
         create: vi.fn(async () => instance),
         connect: vi.fn(async () => instance),
+        inventory: vi.fn(async () => ({
+          bootId: "boot-1",
+          capturedAt: new Date().toISOString(),
+          sessions: [],
+        })),
       },
       repository,
       policy: { authorize: vi.fn(async () => undefined) },

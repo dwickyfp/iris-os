@@ -1,9 +1,12 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:a116514e19457bcb7af7efe9c3dd0b9b71e85b317694e7882a1c52aa15a78134
+
+ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \
   PIP_DISABLE_PIP_VERSION_CHECK=1 \
-  PIP_NO_CACHE_DIR=1
+  PIP_NO_CACHE_DIR=1 \
+  MPLCONFIGDIR=/tmp/matplotlib
 
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates \
@@ -11,11 +14,15 @@ RUN apt-get update \
   && groupadd --gid 10001 sandbox \
   && useradd --uid 10001 --gid sandbox --create-home sandbox
 
-COPY docker/sandbox/requirements-runtime.txt /tmp/requirements-runtime.txt
-RUN pip install --require-hashes --requirement /tmp/requirements-runtime.txt \
+COPY docker/sandbox/requirements-runtime-${TARGETARCH}.txt /tmp/requirements-runtime.txt
+COPY docker/sandbox/runtime-smoke.py /usr/local/bin/runtime-smoke.py
+RUN pip install --require-hashes --no-deps --only-binary=:all: \
+    --requirement /tmp/requirements-runtime.txt \
   && rm /tmp/requirements-runtime.txt
 
 WORKDIR /workspace
 USER sandbox
 
-CMD ["python", "-c", "import os,sys; print(f'sandbox-ready uid={os.getuid()} python={sys.version.split()[0]}')"]
+RUN python /usr/local/bin/runtime-smoke.py
+
+CMD ["python", "/usr/local/bin/runtime-smoke.py"]

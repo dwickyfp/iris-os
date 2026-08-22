@@ -45,6 +45,10 @@ export function createPythonComputeTool(input: {
         .optional(),
       outputPaths: z.array(z.string().min(1).max(500)).max(32).optional(),
       timeoutMs: z.number().int().positive().optional(),
+      packages: z
+        .array(z.string())
+        .refine(() => false, "Dynamic package installation is disabled")
+        .optional(),
     }),
     execute: async (request, options) => {
       const context = computeContext(options.context);
@@ -64,6 +68,7 @@ export function createPythonComputeTool(input: {
           files,
           outputPaths: request.outputPaths,
           timeoutMs: request.timeoutMs,
+          packages: request.packages,
         },
         maxComputeMs: input.maxComputeMs,
         signal: options.abortSignal,

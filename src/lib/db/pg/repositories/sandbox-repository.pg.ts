@@ -7,6 +7,8 @@ import { pgDb as db } from "../db.pg";
 import {
   AgentRunTable,
   AutomationRunTable,
+  RootRunBudgetReservationTable,
+  RootRunBudgetTable,
   SandboxExecutionTable,
   SandboxRunComputeBudgetTable,
   SandboxSessionTable,
@@ -58,6 +60,11 @@ export const pgSandboxRepository: SandboxRepository = {
             eq(SandboxSessionTable.provider, record.provider),
           ),
         );
+      const [run] = await tx
+        .select({ rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(eq(AgentRunTable.id, record.runId));
+      const rootRunId = run?.rootRunId ?? record.runId;
 
       if (!(await authoritativeRunIsLive(tx, record.runId, false))) {
         return {
@@ -67,6 +74,7 @@ export const pgSandboxRepository: SandboxRepository = {
             errorCode: "RUN_CANCELLED",
           },
           claimed: false,
+          rootRunId,
         };
       }
 
@@ -77,7 +85,11 @@ export const pgSandboxRepository: SandboxRepository = {
           (existing.status === "creating" &&
             existing.expiresAt > record.createdAt))
       ) {
-        return { session: normalizeSession(existing), claimed: false };
+        return {
+          session: normalizeSession(existing),
+          claimed: false,
+          rootRunId,
+        };
       }
 
       const { id: _candidateId, ...replacement } = record;
@@ -100,7 +112,7 @@ export const pgSandboxRepository: SandboxRepository = {
             .values({ id: record.id, ...values })
             .returning();
       if (!session) throw new Error("SANDBOX_SESSION_CLAIM_FAILED");
-      return { session: normalizeSession(session), claimed: true };
+      return { session: normalizeSession(session), claimed: true, rootRunId };
     });
   },
   async activateSession(
@@ -108,20 +120,30 @@ export const pgSandboxRepository: SandboxRepository = {
     creatorToken,
     providerInstanceId,
     expiresAt,
+    activatedAt,
     profile,
   ) {
     return db.transaction(async (tx) => {
       const [session] = await tx
-        .select({ runId: SandboxSessionTable.runId })
+        .select({
+          runId: SandboxSessionTable.runId,
+          status: SandboxSessionTable.status,
+          providerInstanceId: SandboxSessionTable.providerInstanceId,
+          creatorToken: SandboxSessionTable.creatorToken,
+        })
         .from(SandboxSessionTable)
-        .where(
-          and(
-            eq(SandboxSessionTable.id, id),
-            eq(SandboxSessionTable.status, "creating"),
-            eq(SandboxSessionTable.creatorToken, creatorToken),
-          ),
-        );
+        .where(eq(SandboxSessionTable.id, id))
+        .for("update");
+      // Serialize creator activation with reconciliation takeover.
+      // Cancellation is fenced by the authoritative run locks below.
       if (!session) return false;
+      if (session.status === "active")
+        return session.providerInstanceId === providerInstanceId;
+      if (
+        session.status !== "creating" ||
+        session.creatorToken !== creatorToken
+      )
+        return false;
 
       if (!(await authoritativeRunIsLive(tx, session.runId, false))) {
         return false;
@@ -133,6 +155,7 @@ export const pgSandboxRepository: SandboxRepository = {
           providerInstanceId,
           creatorToken: null,
           expiresAt,
+          lastUsedAt: activatedAt,
           ...(profile ? { profile } : {}),
         })
         .where(
@@ -199,10 +222,17 @@ export const pgSandboxRepository: SandboxRepository = {
     });
   },
   async touchSession(id, lastUsedAt, expiresAt) {
-    await db
+    const rows = await db
       .update(SandboxSessionTable)
       .set({ lastUsedAt, expiresAt })
-      .where(eq(SandboxSessionTable.id, id));
+      .where(
+        and(
+          eq(SandboxSessionTable.id, id),
+          eq(SandboxSessionTable.status, "active"),
+        ),
+      )
+      .returning({ id: SandboxSessionTable.id });
+    return rows.length === 1;
   },
   async finishSession(id, status, input = {}) {
     await db
@@ -215,18 +245,305 @@ export const pgSandboxRepository: SandboxRepository = {
         ),
       );
   },
-  async listExpiredSessions(before, limit) {
+  async claimExpiredSessions(before, limit, retryAt) {
+    if (!Number.isInteger(limit) || limit <= 0)
+      throw new RangeError("Session claim limit must be positive");
+    return db.transaction(async (tx) => {
+      const candidates = await tx
+        .select()
+        .from(SandboxSessionTable)
+        .where(
+          and(
+            inArray(SandboxSessionTable.status, ["active", "destroying"]),
+            lt(SandboxSessionTable.expiresAt, before),
+            sql`NOT EXISTS (
+              SELECT 1 FROM ${SandboxExecutionTable} execution
+              WHERE execution.session_id = ${SandboxSessionTable.id}
+                AND execution.status IN ('reserved', 'running')
+            )`,
+          ),
+        )
+        .orderBy(SandboxSessionTable.expiresAt, SandboxSessionTable.id)
+        .limit(limit)
+        .for("update", { skipLocked: true });
+      const claimed: SandboxSessionRecord[] = [];
+      for (const candidate of candidates) {
+        const rows = await tx
+          .update(SandboxSessionTable)
+          .set({ status: "destroying", expiresAt: retryAt })
+          .where(
+            and(
+              eq(SandboxSessionTable.id, candidate.id),
+              eq(SandboxSessionTable.status, candidate.status),
+              eq(SandboxSessionTable.expiresAt, candidate.expiresAt),
+              eq(SandboxSessionTable.lastUsedAt, candidate.lastUsedAt),
+            ),
+          )
+          .returning();
+        if (rows.length === 1) claimed.push(normalizeSession(rows[0]));
+      }
+      return claimed;
+    });
+  },
+  async listSessionsForReconciliation(provider, providerInstanceIds) {
+    const conditions = [
+      inArray(SandboxSessionTable.status, ["creating", "active"]),
+    ];
+    if (providerInstanceIds.length > 0) {
+      conditions.push(
+        inArray(SandboxSessionTable.providerInstanceId, providerInstanceIds),
+      );
+    }
     const sessions = await db
-      .select()
+      .select({
+        session: SandboxSessionTable,
+        rootRunId: AgentRunTable.rootRunId,
+      })
       .from(SandboxSessionTable)
+      .innerJoin(AgentRunTable, eq(SandboxSessionTable.runId, AgentRunTable.id))
       .where(
-        and(
-          inArray(SandboxSessionTable.status, nonterminalStatuses),
-          lt(SandboxSessionTable.expiresAt, before),
-        ),
+        and(eq(SandboxSessionTable.provider, provider), or(...conditions)),
+      );
+    return sessions.map(({ session, rootRunId }) => ({
+      ...normalizeSession(session),
+      rootRunId,
+    }));
+  },
+  async reconcileSession(input) {
+    return db.transaction(async (tx) => {
+      const [session] = await tx
+        .select()
+        .from(SandboxSessionTable)
+        .where(eq(SandboxSessionTable.id, input.id))
+        .for("update");
+      if (
+        !session ||
+        session.provider !== input.provider ||
+        !["creating", "active"].includes(session.status) ||
+        session.profile.id !== input.profile.id ||
+        session.profile.network !== input.profile.network
       )
-      .limit(limit);
-    return sessions.map(normalizeSession);
+        return "rejected";
+
+      const [run] = await tx
+        .select({ rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(eq(AgentRunTable.id, session.runId));
+      if (
+        !run ||
+        run.rootRunId !== input.rootRunId ||
+        !(await authoritativeRunIsLive(tx, session.runId, false))
+      )
+        return "rejected";
+
+      if (session.status === "active") {
+        if (session.providerInstanceId !== input.providerInstanceId)
+          return "rejected";
+        await tx
+          .update(SandboxSessionTable)
+          .set({ profile: input.profile, expiresAt: input.expiresAt })
+          .where(eq(SandboxSessionTable.id, input.id));
+        return "active";
+      }
+
+      if (input.creatorMayBeLive && session.expiresAt > input.reconciledAt)
+        return "creator_owned";
+
+      const activated = await tx
+        .update(SandboxSessionTable)
+        .set({
+          status: "active",
+          providerInstanceId: input.providerInstanceId,
+          creatorToken: null,
+          profile: input.profile,
+          expiresAt: input.expiresAt,
+        })
+        .where(
+          and(
+            eq(SandboxSessionTable.id, input.id),
+            eq(SandboxSessionTable.status, "creating"),
+          ),
+        )
+        .returning({ id: SandboxSessionTable.id });
+      return activated.length === 1 ? "active" : "rejected";
+    });
+  },
+  async retainSessionAfterLookup(input) {
+    return db.transaction(async (tx) => {
+      const [session] = await tx
+        .select()
+        .from(SandboxSessionTable)
+        .where(eq(SandboxSessionTable.id, input.id))
+        .for("update");
+      if (
+        !session ||
+        session.status !== "active" ||
+        session.provider !== input.provider ||
+        session.providerInstanceId !== input.providerInstanceId ||
+        session.profile.id !== input.profile.id ||
+        session.profile.network !== input.profile.network
+      )
+        return false;
+      const [run] = await tx
+        .select({ rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(eq(AgentRunTable.id, session.runId));
+      return (
+        run?.rootRunId === input.rootRunId &&
+        (await authoritativeRunIsLive(tx, session.runId, false))
+      );
+    });
+  },
+  async markSessionLost(
+    id,
+    providerInstanceId,
+    reconciliationStartedAt,
+    completedAt,
+  ) {
+    return db.transaction(async (tx) => {
+      const sessions = await tx
+        .update(SandboxSessionTable)
+        .set({
+          status: "failed",
+          creatorToken: null,
+          errorCode: "SANDBOX_SESSION_LOST",
+          destroyedAt: completedAt,
+        })
+        .where(
+          and(
+            eq(SandboxSessionTable.id, id),
+            eq(SandboxSessionTable.status, "active"),
+            eq(SandboxSessionTable.providerInstanceId, providerInstanceId),
+            lte(SandboxSessionTable.createdAt, reconciliationStartedAt),
+            lte(SandboxSessionTable.lastUsedAt, reconciliationStartedAt),
+          ),
+        )
+        .returning({ id: SandboxSessionTable.id });
+      if (sessions.length !== 1) return false;
+      await terminalizeLostExecutions(tx, id, completedAt);
+      return true;
+    });
+  },
+  async reconcileStaleExecutions(before, limit) {
+    if (!Number.isInteger(limit) || limit <= 0)
+      throw new RangeError("Reconciliation limit must be positive");
+    let reconciled = 0;
+    while (reconciled < limit) {
+      const settled = await db.transaction(async (tx) => {
+        const candidates = await tx.execute<{
+          id: string;
+          run_id: string;
+        }>(sql`
+          SELECT session.id, session.run_id
+          FROM ${SandboxSessionTable} session
+          JOIN ${AgentRunTable} run ON run.id = session.run_id
+          WHERE EXISTS (
+            SELECT 1 FROM ${SandboxExecutionTable} execution
+            JOIN ${RootRunBudgetReservationTable} reservation
+              ON reservation.token = 'sandbox:' || execution.reservation_token::text
+             AND reservation.run_id = execution.run_id
+             AND reservation.state = 'reserved'
+            WHERE execution.session_id = session.id
+              AND ((execution.status = 'reserved'
+                    AND execution.reservation_expires_at <= ${before})
+                OR (execution.charged_at IS NULL
+                    AND execution.status = 'running'
+                    AND execution.settlement_deadline_at <= ${before})
+                OR (execution.charged_at IS NULL
+                    AND execution.status NOT IN ('reserved', 'running')
+                    AND execution.started_at IS NOT NULL))
+          )
+          ORDER BY run.root_run_id, session.id
+          FOR UPDATE OF session SKIP LOCKED
+          LIMIT ${limit - reconciled}
+        `);
+        let changed = 0;
+        for (const session of candidates.rows) {
+          await lockRun(tx, session.run_id);
+          const executions = await tx
+            .select()
+            .from(SandboxExecutionTable)
+            .where(
+              and(
+                eq(SandboxExecutionTable.sessionId, session.id),
+                sql`EXISTS (
+                  SELECT 1 FROM ${RootRunBudgetReservationTable} reservation
+                  WHERE reservation.token = 'sandbox:' || ${SandboxExecutionTable.reservationToken}::text
+                    AND reservation.run_id = ${SandboxExecutionTable.runId}
+                    AND reservation.state = 'reserved'
+                )`,
+                or(
+                  and(
+                    eq(SandboxExecutionTable.status, "reserved"),
+                    lte(SandboxExecutionTable.reservationExpiresAt, before),
+                  ),
+                  and(
+                    isNull(SandboxExecutionTable.chargedAt),
+                    eq(SandboxExecutionTable.status, "running"),
+                    lte(SandboxExecutionTable.settlementDeadlineAt, before),
+                  ),
+                  and(
+                    isNull(SandboxExecutionTable.chargedAt),
+                    sql`${SandboxExecutionTable.status} NOT IN ('reserved', 'running')`,
+                    sql`${SandboxExecutionTable.startedAt} IS NOT NULL`,
+                  ),
+                ),
+              ),
+            )
+            .orderBy(SandboxExecutionTable.id)
+            .limit(limit - reconciled - changed)
+            .for("update", { skipLocked: true });
+          for (const execution of executions) {
+            const started = execution.startedAt !== null;
+            const status =
+              execution.status === "running"
+                ? "timed_out"
+                : execution.status === "reserved"
+                  ? "failed"
+                  : execution.status;
+            const charge = started ? execution.reservedComputeMs : null;
+            const rows = await tx
+              .update(SandboxExecutionTable)
+              .set({
+                status,
+                errorCode: started
+                  ? "SANDBOX_SETTLEMENT_EXPIRED"
+                  : "SANDBOX_RESERVATION_EXPIRED",
+                durationMs: charge,
+                observedWallDurationMs: charge,
+                chargedAt: started ? before : null,
+                completedAt: before,
+              })
+              .where(
+                and(
+                  eq(SandboxExecutionTable.id, execution.id),
+                  isNull(SandboxExecutionTable.chargedAt),
+                ),
+              )
+              .returning({ id: SandboxExecutionTable.id });
+            if (rows.length !== 1) continue;
+            await adjustBudget(
+              tx,
+              execution.runId,
+              -execution.reservedComputeMs,
+              charge ?? 0,
+            );
+            await settleRootCompute(
+              tx,
+              execution.runId,
+              execution.reservationToken,
+              charge,
+            );
+            changed += 1;
+          }
+          if (reconciled + changed >= limit) break;
+        }
+        return changed;
+      });
+      if (settled === 0) break;
+      reconciled += settled;
+    }
+    return reconciled;
   },
   async reserveExecution(record, maxComputeMs) {
     if (!Number.isInteger(maxComputeMs) || maxComputeMs <= 0)
@@ -246,11 +563,11 @@ export const pgSandboxRepository: SandboxRepository = {
         session.runId !== record.runId
       )
         return false;
-      await lockRun(tx, record.runId);
+      const rootRunId = await lockRun(tx, record.runId);
       if (!(await authoritativeRunIsLive(tx, record.runId, true))) return false;
       await tx
         .insert(SandboxRunComputeBudgetTable)
-        .values({ runId: record.runId, maxComputeMs })
+        .values({ runId: record.runId, maxComputeMs: null })
         .onConflictDoNothing();
       await reclaimExpiredCompute(tx, record.runId);
       const [budget] = await tx
@@ -258,47 +575,52 @@ export const pgSandboxRepository: SandboxRepository = {
         .from(SandboxRunComputeBudgetTable)
         .where(eq(SandboxRunComputeBudgetTable.runId, record.runId));
       if (!budget) throw new Error("SANDBOX_COMPUTE_BUDGET_NOT_FOUND");
-      if (budget.maxComputeMs !== null && budget.maxComputeMs !== maxComputeMs)
-        throw new Error("SANDBOX_COMPUTE_BUDGET_LIMIT_MISMATCH");
+      const [rootBudget] = await tx
+        .select()
+        .from(RootRunBudgetTable)
+        .where(eq(RootRunBudgetTable.rootRunId, rootRunId))
+        .for("update");
+      if (!rootBudget) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
       if (
-        budget.reservedComputeMs +
-          budget.committedComputeMs +
+        rootBudget.reservedSandboxComputeMs +
+          rootBudget.committedSandboxComputeMs +
           record.reservedComputeMs >
-        maxComputeMs
+        rootBudget.maxSandboxComputeMs
       )
         throw new BudgetExhaustedError("maxComputeMs", {
           ...zeroUsage,
-          computeMs: budget.committedComputeMs,
+          computeMs: rootBudget.committedSandboxComputeMs,
         });
       const updated = await tx
         .update(SandboxRunComputeBudgetTable)
         .set({
-          maxComputeMs,
           reservedComputeMs: sql`${SandboxRunComputeBudgetTable.reservedComputeMs} + ${record.reservedComputeMs}`,
           updatedAt: record.reservationExpiresAt,
         })
-        .where(
-          and(
-            eq(SandboxRunComputeBudgetTable.runId, record.runId),
-            lte(
-              sql`${SandboxRunComputeBudgetTable.reservedComputeMs} + ${SandboxRunComputeBudgetTable.committedComputeMs} + ${record.reservedComputeMs}`,
-              maxComputeMs,
-            ),
-          ),
-        )
+        .where(and(eq(SandboxRunComputeBudgetTable.runId, record.runId)))
         .returning({ runId: SandboxRunComputeBudgetTable.runId });
       if (updated.length !== 1)
         throw new BudgetExhaustedError("maxComputeMs", zeroUsage);
+      await tx
+        .update(RootRunBudgetTable)
+        .set({
+          reservedSandboxComputeMs: sql`${RootRunBudgetTable.reservedSandboxComputeMs} + ${record.reservedComputeMs}`,
+          updatedAt: record.reservationExpiresAt,
+        })
+        .where(eq(RootRunBudgetTable.rootRunId, rootRunId));
+      await tx.insert(RootRunBudgetReservationTable).values({
+        token: `sandbox:${record.reservationToken}`,
+        rootRunId,
+        runId: record.runId,
+        kind: "sandbox_compute_ms",
+        amount: record.reservedComputeMs,
+        expiresAt: record.reservationExpiresAt,
+      });
       await tx.insert(SandboxExecutionTable).values(record);
       return true;
     });
   },
-  async startExecution(
-    id,
-    reservationToken,
-    startedAt,
-    settlementDeadlineAt,
-  ) {
+  async startExecution(id, reservationToken, startedAt, settlementDeadlineAt) {
     return db.transaction(async (tx) => {
       const [execution] = await tx
         .select({
@@ -374,9 +696,17 @@ export const pgSandboxRepository: SandboxRepository = {
             eq(SandboxExecutionTable.status, "reserved"),
           ),
         )
-        .returning({ reservedComputeMs: SandboxExecutionTable.reservedComputeMs });
+        .returning({
+          reservedComputeMs: SandboxExecutionTable.reservedComputeMs,
+        });
       if (rows.length !== 1) return false;
       await adjustBudget(tx, execution.runId, -rows[0].reservedComputeMs, 0);
+      await settleRootCompute(
+        tx,
+        execution.runId,
+        execution.reservationToken,
+        null,
+      );
       return true;
     });
   },
@@ -428,6 +758,12 @@ export const pgSandboxRepository: SandboxRepository = {
         -execution.reservedComputeMs,
         charge,
       );
+      await settleRootCompute(
+        tx,
+        execution.runId,
+        execution.reservationToken,
+        charge,
+      );
       return true;
     });
   },
@@ -466,7 +802,7 @@ export const pgSandboxRepository: SandboxRepository = {
             inArray(SandboxExecutionTable.status, ["reserved", "running"]),
           ),
         );
-      await releaseCancelledReservations(tx, executions);
+      await releaseCancelledReservations(tx, executions, completedAt);
     });
   },
 };
@@ -474,9 +810,47 @@ export const pgSandboxRepository: SandboxRepository = {
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 async function lockRun(tx: Transaction, runId: string) {
+  const [run] = await tx
+    .select({ rootRunId: AgentRunTable.rootRunId })
+    .from(AgentRunTable)
+    .where(eq(AgentRunTable.id, runId));
+  if (!run) throw new Error("ROOT_RUN_BUDGET_RUN_NOT_FOUND");
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`sandbox-compute:${runId}`}, 0))`,
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${run.rootRunId}`}, 0))`,
   );
+  return run.rootRunId;
+}
+
+async function settleRootCompute(
+  tx: Transaction,
+  runId: string,
+  reservationToken: string,
+  committedAmount: number | null,
+) {
+  const [reservation] = await tx
+    .update(RootRunBudgetReservationTable)
+    .set({
+      state: committedAmount === null ? "released" : "committed",
+      committedAmount,
+      settledAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(
+      and(
+        eq(RootRunBudgetReservationTable.token, `sandbox:${reservationToken}`),
+        eq(RootRunBudgetReservationTable.runId, runId),
+        eq(RootRunBudgetReservationTable.state, "reserved"),
+      ),
+    )
+    .returning();
+  if (!reservation) throw new Error("ROOT_RUN_BUDGET_RESERVATION_NOT_FOUND");
+  await tx
+    .update(RootRunBudgetTable)
+    .set({
+      reservedSandboxComputeMs: sql`${RootRunBudgetTable.reservedSandboxComputeMs} - ${reservation.amount}`,
+      committedSandboxComputeMs: sql`${RootRunBudgetTable.committedSandboxComputeMs} + ${committedAmount ?? 0}`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(RootRunBudgetTable.rootRunId, reservation.rootRunId));
 }
 
 async function authoritativeRunIsLive(
@@ -514,7 +888,8 @@ async function authoritativeRunIsLive(
   )
     return false;
 
-  const contexts = run.id === root.id ? [run.context] : [run.context, root.context];
+  const contexts =
+    run.id === root.id ? [run.context] : [run.context, root.context];
   const automationRunIds: string[] = [];
   for (const context of contexts) {
     if (!("automationRunId" in context)) continue;
@@ -563,10 +938,7 @@ async function adjustBudget(
     .where(eq(SandboxRunComputeBudgetTable.runId, runId));
 }
 
-async function reclaimExpiredCompute(
-  tx: Transaction,
-  runId: string,
-) {
+async function reclaimExpiredCompute(tx: Transaction, runId: string) {
   const released = await tx
     .update(SandboxExecutionTable)
     .set({
@@ -581,7 +953,10 @@ async function reclaimExpiredCompute(
         lte(SandboxExecutionTable.reservationExpiresAt, sql`CURRENT_TIMESTAMP`),
       ),
     )
-    .returning({ reservedComputeMs: SandboxExecutionTable.reservedComputeMs });
+    .returning({
+      reservedComputeMs: SandboxExecutionTable.reservedComputeMs,
+      reservationToken: SandboxExecutionTable.reservationToken,
+    });
   const charged = await tx
     .update(SandboxExecutionTable)
     .set({
@@ -596,13 +971,13 @@ async function reclaimExpiredCompute(
       and(
         eq(SandboxExecutionTable.runId, runId),
         isNull(SandboxExecutionTable.chargedAt),
-        lte(
-          SandboxExecutionTable.settlementDeadlineAt,
-          sql`CURRENT_TIMESTAMP`,
-        ),
+        lte(SandboxExecutionTable.settlementDeadlineAt, sql`CURRENT_TIMESTAMP`),
       ),
     )
-    .returning({ reservedComputeMs: SandboxExecutionTable.reservedComputeMs });
+    .returning({
+      reservedComputeMs: SandboxExecutionTable.reservedComputeMs,
+      reservationToken: SandboxExecutionTable.reservationToken,
+    });
   const releasedMs = released.reduce(
     (total, row) => total + row.reservedComputeMs,
     0,
@@ -613,6 +988,15 @@ async function reclaimExpiredCompute(
   );
   if (releasedMs || chargedMs)
     await adjustBudget(tx, runId, -releasedMs - chargedMs, chargedMs);
+  for (const row of released)
+    await settleRootCompute(tx, runId, row.reservationToken, null);
+  for (const row of charged)
+    await settleRootCompute(
+      tx,
+      runId,
+      row.reservationToken,
+      row.reservedComputeMs,
+    );
 }
 
 async function cancelSessions(
@@ -674,23 +1058,118 @@ async function cancelExecutions(
         inArray(SandboxExecutionTable.status, ["reserved", "running"]),
       ),
     );
-  await releaseCancelledReservations(tx, executions);
+  await releaseCancelledReservations(tx, executions, completedAt);
+}
+
+async function terminalizeLostExecutions(
+  tx: Transaction,
+  sessionId: string,
+  completedAt: Date,
+) {
+  const executions = await tx
+    .select()
+    .from(SandboxExecutionTable)
+    .where(
+      and(
+        eq(SandboxExecutionTable.sessionId, sessionId),
+        inArray(SandboxExecutionTable.status, ["reserved", "running"]),
+      ),
+    );
+  for (const runId of new Set(executions.map((row) => row.runId)))
+    await lockRun(tx, runId);
+  await tx
+    .update(SandboxExecutionTable)
+    .set({
+      status: "failed",
+      errorCode: "SANDBOX_SESSION_LOST",
+      durationMs: sql`CASE WHEN ${SandboxExecutionTable.status} = 'running' THEN ${SandboxExecutionTable.reservedComputeMs} ELSE ${SandboxExecutionTable.durationMs} END`,
+      observedWallDurationMs: sql`CASE WHEN ${SandboxExecutionTable.status} = 'running' THEN ${SandboxExecutionTable.reservedComputeMs} ELSE ${SandboxExecutionTable.observedWallDurationMs} END`,
+      chargedAt: sql`CASE WHEN ${SandboxExecutionTable.status} = 'running' THEN ${completedAt} ELSE ${SandboxExecutionTable.chargedAt} END`,
+      completedAt,
+    })
+    .where(
+      and(
+        eq(SandboxExecutionTable.sessionId, sessionId),
+        inArray(SandboxExecutionTable.status, ["reserved", "running"]),
+      ),
+    );
+  const reservedByRun = new Map<string, number>();
+  const chargedByRun = new Map<string, number>();
+  for (const execution of executions) {
+    const charged = execution.status === "running";
+    const target = charged ? chargedByRun : reservedByRun;
+    target.set(
+      execution.runId,
+      (target.get(execution.runId) ?? 0) + execution.reservedComputeMs,
+    );
+    await settleRootCompute(
+      tx,
+      execution.runId,
+      execution.reservationToken,
+      charged ? execution.reservedComputeMs : null,
+    );
+  }
+  for (const runId of new Set([
+    ...reservedByRun.keys(),
+    ...chargedByRun.keys(),
+  ]))
+    await adjustBudget(
+      tx,
+      runId,
+      -(reservedByRun.get(runId) ?? 0) - (chargedByRun.get(runId) ?? 0),
+      chargedByRun.get(runId) ?? 0,
+    );
 }
 
 async function releaseCancelledReservations(
   tx: Transaction,
   executions: Array<typeof SandboxExecutionTable.$inferSelect>,
+  completedAt: Date,
 ) {
   const releasedByRun = new Map<string, number>();
+  const chargedByRun = new Map<string, number>();
   for (const execution of executions) {
-    if (execution.status !== "reserved") continue;
-    releasedByRun.set(
+    const charge =
+      execution.status === "running" &&
+      execution.settlementDeadlineAt !== null &&
+      execution.settlementDeadlineAt <= completedAt;
+    if (execution.status !== "reserved" && !charge) continue;
+    const target = charge ? chargedByRun : releasedByRun;
+    target.set(
       execution.runId,
-      (releasedByRun.get(execution.runId) ?? 0) + execution.reservedComputeMs,
+      (target.get(execution.runId) ?? 0) + execution.reservedComputeMs,
+    );
+    if (charge)
+      await tx
+        .update(SandboxExecutionTable)
+        .set({
+          durationMs: execution.reservedComputeMs,
+          observedWallDurationMs: execution.reservedComputeMs,
+          chargedAt: completedAt,
+        })
+        .where(
+          and(
+            eq(SandboxExecutionTable.id, execution.id),
+            isNull(SandboxExecutionTable.chargedAt),
+          ),
+        );
+    await settleRootCompute(
+      tx,
+      execution.runId,
+      execution.reservationToken,
+      charge ? execution.reservedComputeMs : null,
     );
   }
-  for (const [runId, releasedMs] of releasedByRun)
-    await adjustBudget(tx, runId, -releasedMs, 0);
+  for (const runId of new Set([
+    ...releasedByRun.keys(),
+    ...chargedByRun.keys(),
+  ]))
+    await adjustBudget(
+      tx,
+      runId,
+      -(releasedByRun.get(runId) ?? 0) - (chargedByRun.get(runId) ?? 0),
+      chargedByRun.get(runId) ?? 0,
+    );
 }
 
 function normalizeSession(

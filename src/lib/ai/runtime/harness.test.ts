@@ -92,6 +92,12 @@ describe("IrisHarness", () => {
       recorder,
     );
     const spec = orchestration({
+      routing: {
+        descriptorIds: ["builtin:search"],
+        diagnostics: { strategy: "semantic" },
+        model: { provider: "fake", model: "model-1" },
+        driver: { driver: "test" },
+      },
       context: {
         provenance: [{ source: "conversation", messageIds: ["message-1"] }],
         diagnostics: {
@@ -131,13 +137,26 @@ describe("IrisHarness", () => {
       messageId: "m-1",
     });
     expect(runs.failWithLease).not.toHaveBeenCalled();
+    expect(recorder.recordRuntime).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({
+        eventType: "routing.resolved",
+        payload: {
+          descriptorIds: ["builtin:search"],
+          diagnostics: { strategy: "semantic" },
+          provider: "fake",
+          model: "model-1",
+          driver: "test",
+        },
+      }),
+    );
     expect(
       recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
+      "routing.resolved",
       "trajectory.started",
       "run.started",
       "context.prepared",
-      "routing.resolved",
       "verification.started",
       "verification.completed",
       "trajectory.completed",
@@ -172,6 +191,49 @@ describe("IrisHarness", () => {
     expect(
       recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toContain("trajectory.cancelled");
+  });
+
+  test("classifies structured stream failures as budget exhaustion", async () => {
+    const { runs, recorder } = dependencies();
+    const harness = new IrisHarness(
+      {
+        id: "test",
+        generate: vi.fn(),
+        stream: vi.fn(async () => ({})),
+      } as never,
+      runs as never,
+      [],
+      recorder,
+    );
+    const stream = await harness.stream({
+      agent: {},
+      execution: {},
+      orchestration: orchestration(),
+    } as never);
+    const error = Object.assign(new Error("token ceiling reached"), {
+      code: "BUDGET_EXHAUSTED",
+    });
+
+    await stream.fail({ error, errorCode: "STREAM_ERROR" });
+
+    expect(runs.exhaustBudgetWithLease).toHaveBeenCalledWith(
+      "run-1",
+      "lease-1",
+      "token ceiling reached",
+      "BUDGET_EXHAUSTED",
+    );
+    expect(runs.failWithLease).not.toHaveBeenCalled();
+    expect(
+      recorder.recordRuntime.mock.calls.map((call: any[]) => call[1]),
+    ).toContainEqual(
+      expect.objectContaining({
+        eventType: "run.budget_exhausted",
+        payload: expect.objectContaining({
+          toStatus: "budget_exhausted",
+          errorCode: "BUDGET_EXHAUSTED",
+        }),
+      }),
+    );
   });
 
   test("durably suspends a stream and gives waiting terminal precedence", async () => {
@@ -327,9 +389,9 @@ describe("IrisHarness", () => {
     expect(
       recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
+      "routing.resolved",
       "trajectory.started",
       "run.started",
-      "routing.resolved",
       "verification.started",
       "verification.completed",
       "trajectory.completed",
@@ -374,9 +436,9 @@ describe("IrisHarness", () => {
     expect(
       recorder.recordRuntime.mock.calls.map((call: any[]) => call[1].eventType),
     ).toEqual([
+      "routing.resolved",
       "trajectory.started",
       "run.started",
-      "routing.resolved",
       "verification.started",
       "verification.failed",
       "trajectory.failed",

@@ -29,19 +29,29 @@ function setup() {
           current.runId === session.runId &&
           current.provider === session.provider,
       );
-      if (existing) return { session: existing, claimed: false };
+      if (existing)
+        return { session: existing, claimed: false, rootRunId: session.runId };
       sessions.push(session);
-      return { session, claimed: true };
+      return { session, claimed: true, rootRunId: session.runId };
     }),
-    activateSession: vi.fn(async (id, _creatorToken, providerInstanceId) => {
-      const session = sessions.find((session) => session.id === id)!;
-      if (session.status !== "creating") return false;
-      Object.assign(session, {
-        status: "active",
+    activateSession: vi.fn(
+      async (
+        id,
+        _creatorToken,
         providerInstanceId,
-      });
-      return true;
-    }),
+        _expiresAt,
+        activatedAt,
+      ) => {
+        const session = sessions.find((session) => session.id === id)!;
+        if (session.status !== "creating") return false;
+        Object.assign(session, {
+          status: "active",
+          providerInstanceId,
+          lastUsedAt: activatedAt,
+        });
+        return true;
+      },
+    ),
     failSessionCreation: vi.fn(async (id) => {
       const session = sessions.find((session) => session.id === id)!;
       if (session.status === "creating") session.status = "failed";
@@ -65,11 +75,18 @@ function setup() {
       for (const session of found) session.status = "cancelled";
       return found;
     }),
-    touchSession: vi.fn(async () => undefined),
+    touchSession: vi.fn(async () => true),
     finishSession: vi.fn(async (id, status) => {
       Object.assign(sessions.find((session) => session.id === id)!, { status });
     }),
-    listExpiredSessions: vi.fn(async () => []),
+    claimExpiredSessions: vi.fn(async () => []),
+    listSessionsForReconciliation: vi.fn(async () => []),
+    reconcileSession: vi.fn(async (input) =>
+      input.creatorMayBeLive ? "creator_owned" : "active",
+    ),
+    retainSessionAfterLookup: vi.fn(async () => true),
+    markSessionLost: vi.fn(async () => true),
+    reconcileStaleExecutions: vi.fn(async () => 0),
     reserveExecution: vi.fn(async (execution) => {
       executions.set(execution.id, execution);
       return true;
@@ -141,6 +158,11 @@ function setup() {
     })),
     create: vi.fn(async () => instance),
     connect: vi.fn(async () => instance),
+    inventory: vi.fn(async () => ({
+      bootId: "boot-1",
+      capturedAt: new Date().toISOString(),
+      sessions: [],
+    })),
   };
   const policy = { authorize: vi.fn(async () => undefined) };
   const events: SandboxEventSink = {
@@ -175,6 +197,275 @@ function setup() {
 }
 
 describe("SandboxManager", () => {
+  it("bounds and delegates independent stale execution reconciliation", async () => {
+    const { manager, repository } = setup();
+    const before = new Date("2026-08-22T00:00:00.000Z");
+    vi.mocked(repository.reconcileStaleExecutions).mockResolvedValueOnce(3);
+
+    await expect(
+      manager.reconcileStaleExecutions({ before, limit: 10_000 }),
+    ).resolves.toBe(3);
+    expect(repository.reconcileStaleExecutions).toHaveBeenCalledWith(
+      before,
+      500,
+    );
+  });
+
+  it("retries an expired destroying claim after provider removal fails", async () => {
+    const { manager, repository, instance, sessions } = setup();
+    const expired = reconciliationSession("destroying", "runner-1");
+    sessions.push(expired);
+    vi.mocked(repository.claimExpiredSessions)
+      .mockResolvedValueOnce([expired])
+      .mockResolvedValueOnce([expired]);
+    vi.mocked(instance.destroy)
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(manager.reap()).resolves.toBe(0);
+    expect(repository.finishSession).not.toHaveBeenCalled();
+    expect(sessions[0].status).toBe("destroying");
+
+    await expect(manager.reap()).resolves.toBe(1);
+    expect(instance.destroy).toHaveBeenCalledTimes(2);
+    expect(sessions[0].status).toBe("destroyed");
+  });
+
+  it("rejects dynamic package requests before policy or provider access", async () => {
+    const { manager, policy, provider } = setup();
+
+    await expect(
+      manager.executePython({
+        scope: { runId: "run-1", userId: "user-1" },
+        profile,
+        request: { code: "print('ok')", packages: ["numpy==2.3.2"] },
+      }),
+    ).rejects.toThrow("SANDBOX_DYNAMIC_PACKAGES_DISABLED");
+    expect(policy.authorize).not.toHaveBeenCalled();
+    expect(provider.create).not.toHaveBeenCalled();
+  });
+
+  it("reconciliation retains an exact active DB and live runner match", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("active", "runner-1");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-2",
+      capturedAt: new Date().toISOString(),
+      sessions: [inventorySession(session)],
+    });
+
+    await expect(manager.reconcile()).resolves.toEqual({
+      retained: 1,
+      destroyed: 0,
+      lost: 0,
+      bootId: "boot-2",
+    });
+    expect(instance.destroy).not.toHaveBeenCalled();
+  });
+
+  it("reconciliation destroys a runner container for a terminal DB session", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("destroyed", "runner-1");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(repository.reconcileSession).mockResolvedValueOnce("rejected");
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-2",
+      capturedAt: new Date().toISOString(),
+      sessions: [inventorySession(session)],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ destroyed: 1 });
+    expect(instance.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("reconciliation destroys an owned runner container with no DB session", async () => {
+    const { manager, provider, instance } = setup();
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-2",
+      capturedAt: new Date().toISOString(),
+      sessions: [
+        {
+          id: "runner-orphan",
+          controlPlaneSessionId: "00000000-0000-4000-8000-000000000099",
+          rootRunId: "00000000-0000-4000-8000-000000000098",
+          bootId: "boot-1",
+          state: "live",
+          profile: { id: profile.id, network: profile.network },
+          limits: runnerLimits(),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 5_000).toISOString(),
+        },
+      ],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ destroyed: 1 });
+    expect(instance.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("reconciliation marks an active DB session lost when its container is absent", async () => {
+    const { manager, provider, repository } = setup();
+    const session = reconciliationSession("active", "runner-missing");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(provider.connect).mockRejectedValueOnce(
+      new Error("IRIS_RUNNER_HTTP_404"),
+    );
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ lost: 1 });
+    expect(repository.markSessionLost).toHaveBeenCalledWith(
+      session.id,
+      "runner-missing",
+      expect.any(Date),
+      expect.any(Date),
+    );
+  });
+
+  it("retains a session activated after inventory when exact lookup finds it", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const capturedAt = new Date("2026-08-22T10:00:00.000Z");
+    const session = {
+      ...reconciliationSession("active", "runner-1"),
+      lastUsedAt: new Date(capturedAt.getTime() + 1),
+    };
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-2",
+      capturedAt: capturedAt.toISOString(),
+      sessions: [],
+    });
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+
+    await expect(manager.reconcile()).resolves.toMatchObject({
+      retained: 1,
+      lost: 0,
+    });
+    expect(provider.connect).toHaveBeenCalledWith("runner-1", session.profile, {
+      identity: {
+        controlPlaneSessionId: session.id,
+        rootRunId: session.rootRunId,
+      },
+    });
+    expect(repository.markSessionLost).not.toHaveBeenCalled();
+    expect(instance.destroy).not.toHaveBeenCalled();
+  });
+
+  it("destroys an exact lookup when cancellation wins the retain CAS", async () => {
+    const { manager, repository, instance } = setup();
+    const session = reconciliationSession("active", "runner-1");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(repository.retainSessionAfterLookup).mockResolvedValueOnce(false);
+
+    await expect(manager.reconcile()).resolves.toMatchObject({
+      retained: 0,
+      destroyed: 1,
+      lost: 0,
+    });
+    expect(instance.destroy).toHaveBeenCalledOnce();
+    expect(repository.markSessionLost).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when exact lookup errors", async () => {
+    const { manager, provider, repository } = setup();
+    const session = reconciliationSession("active", "runner-missing");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(provider.connect).mockRejectedValueOnce(
+      new Error("IRIS_RUNNER_HTTP_503"),
+    );
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ lost: 0 });
+    expect(repository.markSessionLost).not.toHaveBeenCalled();
+  });
+
+  it("activates a matching container after a crash before DB activation", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("creating");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-after-restart",
+      capturedAt: new Date().toISOString(),
+      sessions: [inventorySession(session)],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ retained: 1 });
+    expect(repository.reconcileSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        rootRunId: session.rootRunId,
+        providerInstanceId: "runner-1",
+        creatorMayBeLive: false,
+        profile: expect.objectContaining(profile),
+      }),
+    );
+    expect(instance.destroy).not.toHaveBeenCalled();
+    expect(repository.markSessionLost).not.toHaveBeenCalled();
+  });
+
+  it("destroys the container when cancellation wins during reconciliation", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("creating");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(repository.reconcileSession).mockResolvedValueOnce("rejected");
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-after-restart",
+      capturedAt: new Date().toISOString(),
+      sessions: [inventorySession(session)],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ destroyed: 1 });
+    expect(instance.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("destroys a container whose inventory identity mismatches the DB row", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("creating");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(repository.reconcileSession).mockResolvedValueOnce("rejected");
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-after-restart",
+      capturedAt: new Date().toISOString(),
+      sessions: [{ ...inventorySession(session), rootRunId: "wrong-root" }],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ destroyed: 1 });
+    expect(instance.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("leaves an unexpired creator on the current runner boot in control", async () => {
+    const { manager, provider, repository, instance } = setup();
+    const session = reconciliationSession("creating");
+    vi.mocked(repository.listSessionsForReconciliation).mockResolvedValueOnce([
+      session,
+    ]);
+    vi.mocked(provider.inventory).mockResolvedValueOnce({
+      bootId: "boot-before-restart",
+      capturedAt: new Date().toISOString(),
+      sessions: [inventorySession(session)],
+    });
+
+    await expect(manager.reconcile()).resolves.toMatchObject({ retained: 1 });
+    expect(repository.reconcileSession).toHaveBeenCalledWith(
+      expect.objectContaining({ creatorMayBeLive: true }),
+    );
+    expect(instance.destroy).not.toHaveBeenCalled();
+  });
+
   it("reuses one sandbox session for executions in the same run", async () => {
     const { manager, provider, instance, executions, repository } = setup();
     const scope = { runId: "run-1", userId: "user-1" };
@@ -322,6 +613,7 @@ describe("SandboxManager", () => {
           errorCode: "RUN_CANCELLED",
         },
         claimed: false,
+        rootRunId: session.runId,
       }),
     );
 
@@ -353,12 +645,30 @@ describe("SandboxManager", () => {
     ).rejects.toThrow("RUN_CANCELLED");
 
     expect(instance.executePython).not.toHaveBeenCalled();
+    expect(repository.touchSession).toHaveBeenCalledOnce();
     expect(repository.startExecution).not.toHaveBeenCalled();
     expect(repository.releaseExecution).not.toHaveBeenCalled();
   });
 
-  it("does not call the provider when the start fence loses", async () => {
+  it("does not reserve or execute when expiry claim wins the touch CAS", async () => {
     const { manager, repository, instance } = setup();
+    vi.mocked(repository.touchSession).mockResolvedValueOnce(false);
+
+    await expect(
+      manager.executePython({
+        scope: { runId: "run-reaped-before-reserve", userId: "user-1" },
+        profile,
+        request: { code: "print('never')" },
+        maxComputeMs: 1_000,
+      }),
+    ).rejects.toThrow("SANDBOX_SESSION_DESTROYING");
+
+    expect(repository.reserveExecution).not.toHaveBeenCalled();
+    expect(instance.executePython).not.toHaveBeenCalled();
+  });
+
+  it("does not call the provider when the start fence loses", async () => {
+    const { manager, repository, instance, events } = setup();
     vi.mocked(repository.startExecution).mockResolvedValueOnce(false);
 
     await expect(
@@ -372,6 +682,13 @@ describe("SandboxManager", () => {
 
     expect(instance.executePython).not.toHaveBeenCalled();
     expect(repository.releaseExecution).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(events.record).mock.calls.map(([event]) => event.type),
+    ).toEqual([
+      "sandbox.session_created",
+      "sandbox.execution_requested",
+      "sandbox.execution_failed",
+    ]);
   });
 
   it("never extends a reused session beyond its absolute lifetime", async () => {
@@ -445,9 +762,9 @@ describe("SandboxManager", () => {
     {
       name: "execution persistence failure",
       fail(setupResult: ReturnType<typeof setup>) {
-        vi.mocked(setupResult.repository.reserveExecution).mockRejectedValueOnce(
-          new Error("execution db failed"),
-        );
+        vi.mocked(
+          setupResult.repository.reserveExecution,
+        ).mockRejectedValueOnce(new Error("execution db failed"));
       },
     },
     {
@@ -640,7 +957,10 @@ describe("SandboxManager", () => {
         vi.mocked(result.repository.releaseExecution).mockResolvedValueOnce(
           false,
         );
-      else vi.mocked(result.repository.finishExecution).mockResolvedValueOnce(false);
+      else
+        vi.mocked(result.repository.finishExecution).mockResolvedValueOnce(
+          false,
+        );
 
       await expect(
         result.manager.executePython({
@@ -703,3 +1023,51 @@ describe("SandboxManager", () => {
     },
   );
 });
+
+function reconciliationSession(
+  status: SandboxSessionRecord["status"],
+  providerInstanceId?: string,
+): SandboxSessionRecord & { rootRunId: string } {
+  const now = new Date();
+  return {
+    id: "00000000-0000-4000-8000-000000000010",
+    runId: "00000000-0000-4000-8000-000000000011",
+    rootRunId: "00000000-0000-4000-8000-000000000012",
+    userId: "user-1",
+    provider: "fake",
+    providerInstanceId,
+    profile,
+    status,
+    lastUsedAt: now,
+    expiresAt: new Date(now.getTime() + 5_000),
+    createdAt: now,
+  };
+}
+
+function inventorySession(
+  session: SandboxSessionRecord & { rootRunId: string },
+) {
+  return {
+    id: session.providerInstanceId ?? "runner-1",
+    controlPlaneSessionId: session.id,
+    rootRunId: session.rootRunId,
+    bootId: "boot-before-restart",
+    state: "live" as const,
+    profile: { id: profile.id, network: profile.network },
+    limits: runnerLimits(),
+    createdAt: session.createdAt.toISOString(),
+    expiresAt: session.expiresAt.toISOString(),
+  };
+}
+
+function runnerLimits() {
+  return {
+    nanoCpus: profile.cpuMillis * 1_000_000,
+    memoryBytes: profile.memoryMb * 1_048_576,
+    tmpfsBytes: profile.diskMb * 1_048_576,
+    pidsLimit: profile.pidsLimit ?? 64,
+    executionTimeoutMs: profile.executionTimeoutMs,
+    idleTimeoutMs: profile.idleTimeoutMs,
+    absoluteTimeoutMs: profile.absoluteTimeoutMs ?? profile.idleTimeoutMs * 3,
+  };
+}

@@ -129,7 +129,7 @@ describe("capability providers", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("includes only active remote peers when enabled", async () => {
+  it("exposes active and disabled remote health while excluding happens in the registry", async () => {
     const now = new Date();
     const remote = (id: string, status: "active" | "disabled") => ({
       id,
@@ -152,7 +152,68 @@ describe("capability providers", () => {
     });
 
     expect(await provider.eligible({})).toMatchObject([
-      { id: "remote-peer:ready", kind: "remotePeer", value: "ready" },
+      {
+        id: "remote-peer:ready",
+        kind: "remotePeer",
+        value: "ready",
+        health: { status: "unavailable", reason: "agent_card_unavailable" },
+      },
+      {
+        id: "remote-peer:off",
+        kind: "remotePeer",
+        value: "off",
+        health: { status: "disabled", reason: "connection_disabled" },
+      },
+    ]);
+  });
+
+  it("derives auth-required and stale degraded health from cached discovery", async () => {
+    const now = new Date();
+    const stale = new Date(now.getTime() - 25 * 60 * 60 * 1_000);
+    const provider = remotePeerCapabilities({
+      enabled: () => true,
+      load: async () => [
+        {
+          id: "auth",
+          userId: "user-1",
+          name: "Auth",
+          endpointUrl: "https://auth.example.com",
+          status: "active" as const,
+          credentialType: null,
+          credentialHeader: null,
+          encryptedCredential: null,
+          agentCard: { name: "Auth", security: [{ bearer: [] }] },
+          discoveredAt: now,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: "stale",
+          userId: "user-1",
+          name: "Stale",
+          endpointUrl: "https://stale.example.com",
+          status: "active" as const,
+          credentialType: null,
+          credentialHeader: null,
+          encryptedCredential: null,
+          agentCard: { name: "Stale" },
+          discoveredAt: stale,
+          createdAt: stale,
+          updatedAt: stale,
+        },
+      ],
+      value: ({ id }) => id,
+    });
+
+    expect(await provider.eligible({})).toMatchObject([
+      {
+        id: "remote-peer:auth",
+        health: { status: "auth_required", reason: "credential_required" },
+      },
+      {
+        id: "remote-peer:stale",
+        health: { status: "degraded", reason: "agent_card_stale" },
+      },
     ]);
   });
 

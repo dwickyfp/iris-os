@@ -6,7 +6,6 @@ import {
 import type {
   CompletionRequirement,
   CapabilityVerification,
-  GoalVerificationSpec,
   VerificationResult,
 } from "./verification";
 import { VerificationEngine, nonEmptyStructuredOutput } from "./verification";
@@ -47,21 +46,11 @@ function capabilityExecutions(value: unknown) {
       return;
     visited.add(candidate);
     const record = candidate as Record<string, unknown>;
-    if (Array.isArray(record.capabilityResults)) {
-      for (const item of record.capabilityResults) {
-        if (!item || typeof item !== "object") continue;
-        const execution = item as Record<string, unknown>;
-        if (typeof execution.capability === "string")
-          executions.set(execution.capability, {
-            capability: execution.capability,
-            executed: execution.executed === true,
-            result: execution.result,
-          });
-      }
-    }
     const toolName =
       typeof record.toolName === "string" ? record.toolName : undefined;
-    if (record.type === "tool-result" && toolName) {
+    const toolCallId =
+      typeof record.toolCallId === "string" ? record.toolCallId : undefined;
+    if (record.type === "tool-result" && toolName && toolCallId) {
       const output =
         record.output &&
         typeof record.output === "object" &&
@@ -77,6 +66,7 @@ function capabilityExecutions(value: unknown) {
     if (
       typeof record.type === "string" &&
       record.type.startsWith("tool-") &&
+      toolCallId &&
       record.state === "output-available"
     ) {
       const capability = record.type.slice("tool-".length);
@@ -92,49 +82,23 @@ function capabilityExecutions(value: unknown) {
       visit(nested);
   };
   visit(value);
-  if (nonEmptyStructuredOutput(value) && !executions.has("analysis"))
-    executions.set("analysis", {
-      capability: "analysis",
-      executed: true,
-      result: value,
-    });
   return executions;
 }
 
-export class GoalAwareVerificationRequirement implements CompletionRequirement {
+export class CapabilityRequirement implements CompletionRequirement {
+  readonly kind = "capability" as const;
+
   constructor(
     private readonly engine: VerificationEngine,
-    private readonly spec: GoalVerificationSpec,
+    private readonly capabilities: readonly string[],
   ) {}
 
   async verifyCompletion(
     value: unknown,
-    expected: { userId: string; runId: string },
+    _expected: { userId: string; runId: string },
   ): Promise<VerificationResult> {
-    const level = this.spec.level ?? "outcome";
-    if (level === "execution" && !nonEmptyStructuredOutput(value))
-      return { verified: false, reason: "EXECUTION_OUTPUT_EMPTY" };
-    if (
-      level === "outcome" &&
-      !nonEmptyStructuredOutput(value) &&
-      !this.spec.analysisOnlyAllowed
-    )
-      return { verified: false, reason: "OUTCOME_EMPTY" };
-
-    const references = findArtifactReferences(value);
-    if (hasArtifactClaims(value) && references.length === 0)
-      return { verified: false, reason: "ARTIFACT_REFERENCE_INVALID" };
-    if (this.spec.requiredArtifactKinds?.length && references.length === 0) {
-      if (this.spec.analysisOnlyAllowed && level === "outcome")
-        return { verified: true };
-      return { verified: false, reason: "REQUIRED_ARTIFACT_MISSING" };
-    }
-    const verifiedArtifacts: Array<{
-      reference: (typeof references)[number];
-      content?: ReturnType<typeof extractArtifactContent>;
-    }> = [];
     const executions = capabilityExecutions(value);
-    for (const capability of this.spec.requiredCapabilities ?? []) {
+    for (const capability of this.capabilities) {
       const execution = executions.get(capability);
       if (!execution)
         return { verified: false, reason: "REQUIRED_CAPABILITY_NOT_EXECUTED" };
@@ -146,6 +110,62 @@ export class GoalAwareVerificationRequirement implements CompletionRequirement {
       });
       if (!result.verified) return result;
     }
+    return {
+      verified: true,
+      verificationKind: "capability",
+      details: { capabilities: [...this.capabilities] },
+    };
+  }
+}
+
+export class OutcomeRequirement implements CompletionRequirement {
+  readonly kind = "outcome" as const;
+
+  async verifyCompletion(
+    value: unknown,
+    _expected?: { userId: string; runId: string },
+  ): Promise<VerificationResult> {
+    return nonEmptyStructuredOutput(value)
+      ? { verified: true, verificationKind: "outcome" }
+      : {
+          verified: false,
+          verificationKind: "outcome",
+          reason: "OUTCOME_EMPTY",
+        };
+  }
+}
+
+export type ArtifactRequirementSpec = {
+  goal?: string;
+  requiredArtifactKinds?: string[];
+  requiredMediaTypes?: string[];
+  requiredTitle?: string;
+  requiredPeriod?: string;
+  requiredSections?: string[];
+};
+
+export class ArtifactRequirement implements CompletionRequirement {
+  readonly kind = "artifact" as const;
+
+  constructor(
+    private readonly engine: VerificationEngine,
+    private readonly spec: ArtifactRequirementSpec = {},
+  ) {}
+
+  async verifyCompletion(
+    value: unknown,
+    expected: { userId: string; runId: string },
+  ): Promise<VerificationResult> {
+    const references = findArtifactReferences(value);
+    if (hasArtifactClaims(value) && references.length === 0)
+      return { verified: false, reason: "ARTIFACT_REFERENCE_INVALID" };
+    if (references.length === 0)
+      return { verified: false, reason: "REQUIRED_ARTIFACT_MISSING" };
+
+    const verifiedArtifacts: Array<{
+      reference: (typeof references)[number];
+      content?: ReturnType<typeof extractArtifactContent>;
+    }> = [];
     for (const reference of references) {
       const result = await this.engine.verify({
         kind: "artifact",
@@ -208,39 +228,10 @@ export class GoalAwareVerificationRequirement implements CompletionRequirement {
       )
     )
       return { verified: false, reason: "REQUIRED_SECTION_MISSING" };
-    if (level === "artifact" && references.length === 0)
-      return { verified: false, reason: "REQUIRED_ARTIFACT_MISSING" };
     return {
       verified: true,
+      verificationKind: "artifact",
       details: { goal: this.spec.goal, artifactCount: references.length },
-    };
-  }
-}
-
-export class ArtifactVerificationRequirement implements CompletionRequirement {
-  constructor(private readonly engine: VerificationEngine) {}
-
-  async verifyCompletion(
-    value: unknown,
-    expected: { userId: string; runId: string },
-  ): Promise<VerificationResult> {
-    const references = findArtifactReferences(value);
-    if (hasArtifactClaims(value) && references.length === 0) {
-      return { verified: false, reason: "ARTIFACT_REFERENCE_INVALID" };
-    }
-    for (const reference of references) {
-      const result = await this.engine.verify({
-        kind: "artifact",
-        value: reference,
-        mediaType: reference.mediaType,
-        expectedUserId: expected.userId,
-        expectedRunId: expected.runId,
-      });
-      if (!result.verified) return result;
-    }
-    return {
-      verified: true,
-      details: { artifactCount: references.length },
     };
   }
 }

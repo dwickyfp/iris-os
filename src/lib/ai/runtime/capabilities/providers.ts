@@ -3,6 +3,7 @@ import type { MCPToolInfo } from "app-types/mcp";
 import type { RemoteAgent } from "app-types/remote-agent";
 import type { SkillSummary } from "app-types/skill";
 import type { WorkflowRepository, WorkflowSummary } from "app-types/workflow";
+import { remoteAgentHealth } from "lib/remote-agent/health";
 import { classifyToolName } from "../policy-engine";
 import type {
   CapabilityDescriptor,
@@ -138,22 +139,40 @@ export function remotePeerCapabilities<Context, T>(options: {
   load: (context: Context) => Promise<readonly RemoteAgent[]>;
   value: (agent: RemoteAgent, context: Context) => T;
 }): CapabilityProvider<Context> {
-  return entityProvider(
-    "remote-peers",
-    "remotePeer",
-    "remote-peer",
-    async (context) => (options.enabled(context) ? options.load(context) : []),
-    options.value,
-    (agent) => agent.status === "active",
-    [],
-    (agent) => ({
-      aliases: agent.agentCard?.name ? [agent.agentCard.name] : [],
-      provider: semanticStrings(agent.agentCard?.provider),
-      skills: (agent.agentCard?.skills ?? []).flatMap((skill) =>
-        semanticStrings(skill),
-      ),
-    }),
-  );
+  return {
+    name: "remote-peers",
+    async readiness(context) {
+      return options.enabled(context)
+        ? { status: "healthy" }
+        : { status: "disabled", reason: "feature_disabled" };
+    },
+    async eligible(context) {
+      if (!options.enabled(context)) return [];
+      return (await options.load(context)).map((agent) => ({
+        ...descriptor(
+          {
+            key: agent.name,
+            name: agent.name,
+            description: agent.agentCard?.description,
+            value: options.value(agent, context),
+            surfaces: [],
+          },
+          {
+            id: `remote-peer:${agent.id}`,
+            kind: "remotePeer",
+          },
+        ),
+        health: remoteAgentHealth(agent),
+        search: {
+          aliases: agent.agentCard?.name ? [agent.agentCard.name] : [],
+          provider: semanticStrings(agent.agentCard?.provider),
+          skills: (agent.agentCard?.skills ?? []).flatMap((skill) =>
+            semanticStrings(skill),
+          ),
+        },
+      }));
+    },
+  };
 }
 
 function entityProvider<

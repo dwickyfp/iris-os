@@ -1,0 +1,49 @@
+name: Sandbox gVisor Security
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  sandbox-gvisor:
+    runs-on: [self-hosted, Linux, gvisor]
+    timeout-minutes: 30
+    env:
+      SANDBOX_RUNNER_TOKEN: sandbox-ci-${{ github.run_id }}-${{ github.run_attempt }}-dedicated-runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.2.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Verify dedicated Linux Docker and runsc
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Linux"
+          test "$(docker info --format '{{.OSType}}')" = "linux"
+          docker info --format '{{json .Runtimes}}' | node -e \
+            'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{if(!JSON.parse(s).runsc)process.exit(1)})'
+      - run: pnpm install --frozen-lockfile
+      - name: Build sandbox images
+        run: pnpm sandbox:build
+      - name: Run gVisor smoke test
+        run: pnpm sandbox:smoke
+      - name: Run sandbox security assertions
+        run: pnpm sandbox:security
+      - name: Generate runtime SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: iris-sandbox-runtime:local
+          format: cyclonedx-json
+          output-file: iris-sandbox-runtime.cdx.json
+      - name: Upload runtime SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-sandbox-runtime-sbom
+          path: iris-sandbox-runtime.cdx.json
+          if-no-files-found: error

@@ -21,9 +21,13 @@ describe("python_compute", () => {
       "inputArtifacts",
       "outputPaths",
       "timeoutMs",
+      "packages",
     ]);
     expect(properties).not.toContain("command");
     expect(properties).not.toContain("instanceId");
     expect(properties).not.toContain("destroy");
+    expect(() =>
+      schema.parse({ code: "print('ok')", packages: ["requests==2.32.5"] }),
+    ).toThrow("Dynamic package installation is disabled");
   });
 });

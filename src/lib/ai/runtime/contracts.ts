@@ -56,6 +56,12 @@ export type HarnessOrchestration = {
   completionRequirement?: CompletionRequirement;
   budget?: RunBudget;
   sandbox?: unknown;
+  routing?: {
+    descriptorIds?: string[];
+    diagnostics?: Record<string, unknown>;
+    model?: Record<string, unknown>;
+    driver?: Record<string, unknown>;
+  };
 };
 
 export type HarnessFailure = {

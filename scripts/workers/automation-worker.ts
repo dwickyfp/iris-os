@@ -1,7 +1,10 @@
 import type PgBoss from "pg-boss";
 import { and, eq, inArray } from "drizzle-orm";
 import { recordActivityEvent } from "lib/activity/service";
-import { createAutomationExecutionAdapter } from "lib/automation/execution-adapter";
+import {
+  createAutomationExecutionAdapter,
+  projectAutomationExecutionResult,
+} from "lib/automation/execution-adapter";
 import {
   AUTOMATION_EXECUTE_QUEUE,
   AUTOMATION_REFRESH_QUEUE,
@@ -118,35 +121,19 @@ async function execute(runId: string) {
     clearInterval(cancellationPoll);
   });
 
-  const retryable =
-    result.status === "timed_out" ||
-    (result.status === "failed" && result.retryable);
+  const projection = projectAutomationExecutionResult(result);
+  const { retryable, error, errorCode, output } = projection;
   const retry = retryable && attempt <= automation.retryLimit;
   const delaySeconds = Math.min(3_600, 30 * 2 ** Math.max(0, attempt - 1));
   const status = retry
     ? "retry_scheduled"
-    : result.status === "succeeded"
-      ? "succeeded"
-      : result.status === "budget_exhausted"
-        ? "failed"
-        : result.status;
-  const error = result.status === "succeeded" ? null : result.message;
-  const errorCode =
-    result.status === "failed"
-      ? result.errorCode
-      : result.status === "budget_exhausted"
-        ? "BUDGET_EXHAUSTED"
-        : null;
-  const output = result.status === "succeeded" ? result.output : null;
+    : projection.status;
 
   await pgDb.transaction(async (tx) => {
     await tx
       .update(AutomationRunAttemptTable)
       .set({
-        status:
-          result.status === "failed" || result.status === "budget_exhausted"
-            ? "failed"
-            : result.status,
+        status: projection.attemptStatus,
         result: output,
         error,
         errorCode,
@@ -174,6 +161,8 @@ async function execute(runId: string) {
     ? "automation.retried"
     : result.status === "succeeded"
       ? "automation.completed"
+      : result.status === "budget_exhausted"
+        ? "automation.budget_exhausted"
       : result.status === "cancelled"
         ? "automation.cancelled"
         : "automation.failed";
@@ -190,6 +179,7 @@ async function execute(runId: string) {
       attempt,
       retryable,
       errorCode,
+      toStatus: status,
     },
     idempotencyKey: `${eventType}:${run.id}:${attempt}`,
   });

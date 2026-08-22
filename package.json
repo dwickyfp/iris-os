@@ -61,15 +61,18 @@
     "docker:redis": "docker run --name iris-os-redis -p 6379:6379 -d redis:7-alpine",
     "docker:app": "docker build -f docker/Dockerfile -t iris-os . && docker run -p 3000:3000 -e NO_HTTPS=1 iris-os",
     "sandbox:build": "cross-env SANDBOX_RUNNER_TOKEN=sandbox-build-interpolation-only-not-runtime-secret docker compose -f docker/compose.yml -f docker/sandbox/compose.yml --profile smoke build sandbox-runner sandbox-package-broker sandbox-smoke",
+    "sandbox:lock": "docker/sandbox/lock-runtime.sh",
     "sandbox:check:packages": "node --test docker/sandbox/package-broker/policy.test.mjs",
     "sandbox:check:compose": "node docker/sandbox/check-compose.mjs",
-    "sandbox:check": "pnpm sandbox:check:packages && pnpm sandbox:check:compose",
+    "sandbox:check:security": "node docker/sandbox/security.mjs --static",
+    "sandbox:check": "pnpm sandbox:check:packages && pnpm sandbox:check:compose && pnpm sandbox:check:security",
     "sandbox:smoke": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml --profile smoke run --rm sandbox-smoke",
+    "sandbox:security": "node docker/sandbox/security.mjs",
     "sandbox:up": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml up -d --build",
     "sandbox:down": "docker compose -f docker/compose.yml -f docker/sandbox/compose.yml -f docker/sandbox/compose.linux-gvisor.yml down",
     "prepare": "husky",
     "playwright:install": "playwright install",
-    "check": "pnpm lint:fix && pnpm check-types && pnpm test"
+    "check": "pnpm lint && pnpm check-types && pnpm test"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.38",

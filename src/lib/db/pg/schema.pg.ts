@@ -1,31 +1,8 @@
-import { Agent } from "app-types/agent";
-import { UserPreferences } from "app-types/user";
-import { MCPServerConfig, MCPToolInfo } from "app-types/mcp";
-import { sql } from "drizzle-orm";
-import {
-  type AnyPgColumn,
-  pgTable,
-  text,
-  timestamp,
-  json,
-  uuid,
-  boolean,
-  integer,
-  unique,
-  varchar,
-  index,
-  check,
-} from "drizzle-orm/pg-core";
-import { isNotNull } from "drizzle-orm";
-import { DBWorkflow, DBEdge, DBNode } from "app-types/workflow";
-import { UIMessage } from "ai";
-import { ChatMetadata } from "app-types/chat";
 import { TipTapMentionJsonContent } from "@/types/util";
-import type {
-  SkillMetadata,
-  SkillProvenance,
-  SkillVisibility,
-} from "app-types/skill";
+import { UIMessage } from "ai";
+import { Agent } from "app-types/agent";
+import { ChatMetadata } from "app-types/chat";
+import { MCPServerConfig, MCPToolInfo } from "app-types/mcp";
 import type {
   MemoryEdgeType,
   MemoryGraphStatus,
@@ -34,14 +11,37 @@ import type {
   MemoryProvenance,
   MemoryStatus,
 } from "app-types/memory";
-import type { Workspace, WorkspaceStatus } from "app-types/workspace";
-import type { TaskPriority, TaskStatus } from "app-types/task";
 import type { SystemModelEngineKey } from "app-types/model-settings";
 import type {
   AgentCard,
   RemoteAgentCredential,
   RemoteAgentStatus,
 } from "app-types/remote-agent";
+import type {
+  SkillMetadata,
+  SkillProvenance,
+  SkillVisibility,
+} from "app-types/skill";
+import type { TaskPriority, TaskStatus } from "app-types/task";
+import { UserPreferences } from "app-types/user";
+import { DBEdge, DBNode, DBWorkflow } from "app-types/workflow";
+import type { Workspace, WorkspaceStatus } from "app-types/workspace";
+import { sql } from "drizzle-orm";
+import { isNotNull } from "drizzle-orm";
+import {
+  type AnyPgColumn,
+  boolean,
+  check,
+  index,
+  integer,
+  json,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
 import type { SandboxProfile } from "lib/sandbox/contracts";
 
 export const RemoteAgentTable = pgTable(
@@ -1413,7 +1413,14 @@ export const AutomationRunAttemptTable = pgTable(
       .references(() => AutomationRunTable.id, { onDelete: "cascade" }),
     attempt: integer("attempt").notNull(),
     status: varchar("status", {
-      enum: ["running", "succeeded", "failed", "cancelled", "timed_out"],
+      enum: [
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "budget_exhausted",
+      ],
     }).notNull(),
     result: json("result").$type<Record<string, unknown>>(),
     errorCode: varchar("error_code", { length: 120 }),
@@ -1498,6 +1505,96 @@ export const AgentRunTable = pgTable(
     index("agent_run_parent_idx").on(table.parentRunId),
     index("agent_run_root_idx").on(table.rootRunId),
     index("agent_run_reclaim_idx").on(table.status, table.leaseExpiresAt),
+  ],
+);
+
+export const RootRunBudgetTable = pgTable(
+  "root_run_budget",
+  {
+    rootRunId: uuid("root_run_id")
+      .primaryKey()
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    maxSteps: integer("max_steps").notNull(),
+    maxTokens: integer("max_tokens").notNull(),
+    maxDurationMs: integer("max_duration_ms").notNull(),
+    maxToolCalls: integer("max_tool_calls").notNull(),
+    maxDelegations: integer("max_delegations").notNull(),
+    maxDelegationDepth: integer("max_delegation_depth").notNull(),
+    maxParallelChildren: integer("max_parallel_children").notNull(),
+    maxSandboxComputeMs: integer("max_sandbox_compute_ms").notNull(),
+    committedSteps: integer("committed_steps").notNull().default(0),
+    committedTokens: integer("committed_tokens").notNull().default(0),
+    committedToolCalls: integer("committed_tool_calls").notNull().default(0),
+    committedDelegations: integer("committed_delegations").notNull().default(0),
+    committedChildren: integer("committed_children").notNull().default(0),
+    committedSandboxComputeMs: integer("committed_sandbox_compute_ms")
+      .notNull()
+      .default(0),
+    reservedSteps: integer("reserved_steps").notNull().default(0),
+    reservedTokens: integer("reserved_tokens").notNull().default(0),
+    reservedToolCalls: integer("reserved_tool_calls").notNull().default(0),
+    reservedDelegations: integer("reserved_delegations").notNull().default(0),
+    reservedChildren: integer("reserved_children").notNull().default(0),
+    reservedSandboxComputeMs: integer("reserved_sandbox_compute_ms")
+      .notNull()
+      .default(0),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "root_run_budget_limits_check",
+      sql`${table.maxSteps} > 0 AND ${table.maxTokens} > 0 AND ${table.maxDurationMs} > 0 AND ${table.maxToolCalls} >= 0 AND ${table.maxDelegations} >= 0 AND ${table.maxDelegationDepth} >= 0 AND ${table.maxParallelChildren} >= 0 AND ${table.maxSandboxComputeMs} >= 0`,
+    ),
+    check(
+      "root_run_budget_usage_check",
+      sql`${table.committedSteps} >= 0 AND ${table.committedTokens} >= 0 AND ${table.committedToolCalls} >= 0 AND ${table.committedDelegations} >= 0 AND ${table.committedChildren} >= 0 AND ${table.committedSandboxComputeMs} >= 0 AND ${table.reservedSteps} >= 0 AND ${table.reservedTokens} >= 0 AND ${table.reservedToolCalls} >= 0 AND ${table.reservedDelegations} >= 0 AND ${table.reservedChildren} >= 0 AND ${table.reservedSandboxComputeMs} >= 0 AND ${table.committedSteps} + ${table.reservedSteps} <= ${table.maxSteps} AND ${table.committedTokens} + ${table.reservedTokens} <= ${table.maxTokens} AND ${table.committedToolCalls} + ${table.reservedToolCalls} <= ${table.maxToolCalls} AND ${table.committedDelegations} + ${table.reservedDelegations} <= ${table.maxDelegations} AND ${table.reservedChildren} <= ${table.maxParallelChildren} AND ${table.committedSandboxComputeMs} + ${table.reservedSandboxComputeMs} <= ${table.maxSandboxComputeMs}`,
+    ),
+  ],
+);
+
+export const RootRunBudgetReservationTable = pgTable(
+  "root_run_budget_reservation",
+  {
+    token: varchar("token", { length: 240 }).primaryKey().notNull(),
+    rootRunId: uuid("root_run_id")
+      .notNull()
+      .references(() => RootRunBudgetTable.rootRunId, { onDelete: "cascade" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    kind: varchar("kind", {
+      enum: [
+        "steps",
+        "tokens",
+        "tool_calls",
+        "delegations",
+        "children",
+        "sandbox_compute_ms",
+      ],
+    }).notNull(),
+    amount: integer("amount").notNull(),
+    state: varchar("state", {
+      enum: ["reserved", "committed", "released"],
+    })
+      .notNull()
+      .default("reserved"),
+    committedAmount: integer("committed_amount"),
+    expiresAt: timestamp("expires_at").notNull(),
+    settledAt: timestamp("settled_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("root_run_budget_reservation_stale_idx")
+      .on(table.rootRunId, table.expiresAt)
+      .where(sql`${table.state} = 'reserved'`),
   ],
 );
 
@@ -1609,7 +1706,9 @@ export const SandboxRunComputeBudgetTable = pgTable(
     maxComputeMs: integer("max_compute_ms"),
     reservedComputeMs: integer("reserved_compute_ms").notNull().default(0),
     committedComputeMs: integer("committed_compute_ms").notNull().default(0),
-    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     check(

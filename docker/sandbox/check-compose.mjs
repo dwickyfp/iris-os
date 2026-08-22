@@ -63,17 +63,98 @@ function socketServices(config) {
     .sort();
 }
 
+function serviceNetworks(service) {
+  return Object.keys(service.networks ?? {}).sort();
+}
+
+function networkServices(config, network) {
+  return Object.entries(config.services)
+    .filter(([, service]) => serviceNetworks(service).includes(network))
+    .map(([name]) => name)
+    .sort();
+}
+
+function assertNetworkTopology(config) {
+  assert.equal(config.networks["sandbox-control"].internal, true);
+  assert.equal(config.networks["sandbox-child-broker"].internal, true);
+  assert.notEqual(config.networks["sandbox-broker-egress"].internal, true);
+  assert.equal(
+    new Set(
+      [
+        "iris-os-network",
+        "sandbox-control",
+        "sandbox-child-broker",
+        "sandbox-broker-egress",
+      ].map((network) => config.networks[network].name),
+    ).size,
+    4,
+    "app, control, child-broker, and broker-egress networks must be distinct",
+  );
+  assert.deepEqual(networkServices(config, "sandbox-control"), [
+    "sandbox-runner",
+  ]);
+  assert.deepEqual(networkServices(config, "sandbox-child-broker"), [
+    "sandbox-package-broker",
+  ]);
+  assert.deepEqual(networkServices(config, "sandbox-broker-egress"), [
+    "sandbox-package-broker",
+  ]);
+  assert.deepEqual(serviceNetworks(config.services["sandbox-runner"]), [
+    "iris-os-network",
+    "sandbox-control",
+  ]);
+  assert.deepEqual(
+    serviceNetworks(config.services["sandbox-package-broker"]),
+    ["sandbox-broker-egress", "sandbox-child-broker"],
+  );
+  assert.equal(
+    config.services["sandbox-runner"].environment
+      .SANDBOX_RUNNER_CHILD_BROKER_NETWORK,
+    config.networks["sandbox-child-broker"].name,
+  );
+  assert.equal(
+    config.services["sandbox-runner"].environment
+      .SANDBOX_RUNNER_EGRESS_NETWORK,
+    undefined,
+  );
+
+  for (const service of [
+    "iris-os",
+    "iris-worker",
+    "memory-worker",
+    "postgres",
+    "sandbox-runner",
+  ]) {
+    assert.equal(
+      serviceNetworks(config.services[service]).includes(
+        "sandbox-child-broker",
+      ),
+      false,
+      `${service} must not join the child-broker network`,
+    );
+    assert.equal(
+      serviceNetworks(config.services[service]).includes(
+        "sandbox-broker-egress",
+      ),
+      false,
+      `${service} must not join the broker-egress network`,
+    );
+  }
+}
+
 const base = composeConfig(baseFiles);
 composeWithoutTokenFails(baseFiles);
 assert.deepEqual(socketServices(base), []);
 assert.equal(base.services["sandbox-smoke"].runtime, "runsc");
 assert.equal(base.services["sandbox-smoke"].network_mode, "none");
 assert.equal(base.services["sandbox-package-broker"].read_only, true);
+assertNetworkTopology(base);
 
 const overlay = composeConfig(overlayFiles);
 assert.deepEqual(socketServices(overlay), ["sandbox-runner"]);
 for (const service of ["iris-os", "iris-worker", "memory-worker"]) {
   assert.equal(socketServices({ services: { [service]: overlay.services[service] } }).length, 0);
 }
+assertNetworkTopology(overlay);
 
 console.log("sandbox Compose security invariants passed");

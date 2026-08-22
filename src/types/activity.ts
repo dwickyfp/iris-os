@@ -16,6 +16,9 @@ const StatePayloadSchema = JsonPayloadSchema.extend({
   toStatus: z.string().max(80).optional(),
   errorCode: z.string().max(120).optional(),
   message: z.string().max(2_000).optional(),
+  startedAt: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+  durationMs: z.number().int().min(0).optional(),
 });
 const RunPayloadSchema = StatePayloadSchema.extend({
   targetType: z.enum(["workflow", "skill", "agent", "remote_agent"]).optional(),
@@ -46,6 +49,8 @@ const RoutingPayloadSchema = JsonPayloadSchema.extend({
   driver: z.string().max(120).optional(),
   provider: z.string().max(120).optional(),
   model: z.string().max(240).optional(),
+  descriptorIds: z.array(z.string().max(240)).optional(),
+  diagnostics: JsonPayloadSchema.optional(),
 });
 const ModelPayloadSchema = StatePayloadSchema.extend({
   stepNumber: z.number().int().min(0).optional(),
@@ -108,6 +113,7 @@ export const ActivityEventPayloadRegistry = {
   "automation.retried": RunPayloadSchema,
   "automation.completed": RunPayloadSchema,
   "automation.failed": RunPayloadSchema,
+  "automation.budget_exhausted": RunPayloadSchema,
   "automation.cancelled": RunPayloadSchema,
   "automation.missed": RunPayloadSchema,
   "delegation.requested": RunPayloadSchema,
@@ -139,6 +145,7 @@ export const ActivityEventPayloadRegistry = {
   "artifact.archived": StatePayloadSchema,
   "sandbox.session_created": StatePayloadSchema,
   "sandbox.session_reused": StatePayloadSchema,
+  "sandbox.execution_requested": StatePayloadSchema,
   "sandbox.execution_started": StatePayloadSchema,
   "sandbox.execution_completed": StatePayloadSchema,
   "sandbox.execution_failed": StatePayloadSchema,

@@ -225,6 +225,10 @@ export function isBudgetExhausted(
 ): error is BudgetExhaustedError {
   return (
     error instanceof BudgetExhaustedError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "BUDGET_EXHAUSTED") ||
     (error instanceof Error && error.message === "BUDGET_EXHAUSTED")
   );
 }

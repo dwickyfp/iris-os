@@ -12,6 +12,10 @@ import {
 } from "./runner";
 
 const createSessionSchema = z.object({
+  identity: z.object({
+    sessionId: z.string().uuid(),
+    rootRunId: z.string().uuid(),
+  }),
   profile: z.object({
     id: z.string().trim().min(1).max(128),
     network: z.enum(["none", "egress"]),
@@ -93,6 +97,11 @@ export function createSandboxRunnerServer(runner: SandboxRunner) {
       }
       if (!runner.readiness) throw new ReadinessError("runsc is unavailable");
 
+      if (request.method === "GET" && url.pathname === "/v1/inventory") {
+        json(response, 200, runner.inventory());
+        return;
+      }
+
       if (request.method === "POST" && url.pathname === "/v1/sessions") {
         const parsed = createSessionSchema.safeParse(
           await readJson(request, 64 * 1024),
@@ -103,6 +112,9 @@ export function createSandboxRunnerServer(runner: SandboxRunner) {
         const session = await runner.createSession(parsed.data);
         json(response, 201, {
           id: session.id,
+          controlPlaneSessionId: session.controlPlaneSessionId,
+          rootRunId: session.rootRunId,
+          status: "running",
           profile: session.profile,
           limits: session.limits,
           createdAt: new Date(session.createdAt).toISOString(),

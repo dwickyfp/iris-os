@@ -30,9 +30,8 @@ services:
       SANDBOX_RUNNER_IMAGE: ${SANDBOX_RUNNER_IMAGE:-iris-sandbox-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000}
       SANDBOX_RUNNER_RUNTIME: runsc
       SANDBOX_RUNNER_SOCKET: /var/run/docker.sock
-      SANDBOX_RUNNER_EGRESS_NETWORK: ${SANDBOX_CONTROL_NETWORK:-iris-sandbox-control}
+      SANDBOX_RUNNER_CHILD_BROKER_NETWORK: ${SANDBOX_CHILD_BROKER_NETWORK:-iris-sandbox-child-broker}
       SANDBOX_RUNNER_MAX_CONCURRENT_SESSIONS: ${SANDBOX_RUNNER_MAX_CONCURRENT_SESSIONS:-4}
-      SANDBOX_PACKAGE_BROKER_URL: http://sandbox-package-broker:8788
       SANDBOX_RUNTIME: runsc
       SANDBOX_RUNTIME_IMAGE: ${SANDBOX_RUNTIME_IMAGE:-iris-sandbox-runtime:local}
     expose:
@@ -40,9 +39,6 @@ services:
     networks:
       - iris-os-network
       - sandbox-control
-    depends_on:
-      sandbox-package-broker:
-        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp
@@ -67,8 +63,8 @@ services:
     expose:
       - "8788"
     networks:
-      - sandbox-control
-      - sandbox-egress
+      - sandbox-child-broker
+      - sandbox-broker-egress
     read_only: true
     tmpfs:
       - /tmp
@@ -97,8 +93,7 @@ services:
     runtime: runsc
     command:
       - python
-      - -c
-      - "import os,sys; assert os.getuid() == 10001; print(sys.version)"
+      - /usr/local/bin/runtime-smoke.py
     network_mode: none
     read_only: true
     tmpfs:
@@ -114,5 +109,8 @@ networks:
   sandbox-control:
     name: ${SANDBOX_CONTROL_NETWORK:-iris-sandbox-control}
     internal: true
-  sandbox-egress:
-    name: ${SANDBOX_EGRESS_NETWORK:-iris-sandbox-egress}
+  sandbox-child-broker:
+    name: ${SANDBOX_CHILD_BROKER_NETWORK:-iris-sandbox-child-broker}
+    internal: true
+  sandbox-broker-egress:
+    name: ${SANDBOX_BROKER_EGRESS_NETWORK:-iris-sandbox-broker-egress}

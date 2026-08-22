@@ -70,7 +70,7 @@ const schema = z.object({
     .int()
     .min(1)
     .default(4),
-  SANDBOX_RUNNER_EGRESS_NETWORK: z.string().trim().min(1).optional(),
+  SANDBOX_RUNNER_CHILD_BROKER_NETWORK: z.string().trim().min(1).optional(),
 });
 
 export type SandboxRunnerConfig = z.infer<typeof schema>;

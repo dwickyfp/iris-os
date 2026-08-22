@@ -76,6 +76,10 @@ pnpm sandbox:up
 # On macOS/OrbStack without runsc this must remain unavailable; never fallback to runc.
 pnpm sandbox:smoke
 
+# Run real Linux/gVisor runtime security assertions
+# Requires a Linux Docker Engine with runsc registered; there is no fallback.
+pnpm sandbox:security
+
 # Stop the sandbox control plane
 pnpm sandbox:down
 
@@ -97,3 +101,20 @@ curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/
 # SANDBOX_RUNTIME_IMAGE=<immutable sandbox runtime image>
 # SANDBOX_RUNNER_TOKEN=<32+ random characters>
 # The sandbox feature fails closed unless Docker reports the runsc runtime.
+# Sandbox is an optional platform service/capability, not an ExecutionDriver.
+# Package delivery is disabled; the package broker is a non-fetching policy
+# skeleton.
+
+# Runtime contract notes
+# Chat and headless Automation use the canonical serverRunPreparer.
+# Chat creates a durable root AgentRun even when delegation is disabled.
+# Automation starts from the same server-authorized capability registry as Chat;
+# target/skill allowlists only subtract capabilities and record the subtraction.
+# Root budgets are durable PostgreSQL aggregates shared by descendants and resume.
+# Remote agents is an outbound peer connection manager, not an agent builder.
+# Completion verification enforces the resolved requirement; it does not prove
+# semantic correctness or external interoperability.
+
+# CI source exists at .github/workflows/sandbox-gvisor.yml for a self-hosted
+# Linux + gvisor runner. The repository contains no retained successful run
+# evidence, so run and retain deployment-specific evidence before enablement.

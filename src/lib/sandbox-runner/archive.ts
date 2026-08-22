@@ -1,5 +1,6 @@
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import tar, { type Headers } from "tar-stream";
 
 export type ArchiveLimits = {
@@ -9,20 +10,34 @@ export type ArchiveLimits = {
   workspacePrefix?: boolean;
 };
 
-type ArchiveEntry = { header: Headers; body: Buffer };
+const MAX_PATH_BYTES = 4_096;
+const MAX_NAME_BYTES = 255;
+const MAX_HEADER_METADATA_BYTES = 8_192;
 
 function safeName(value: string): string {
   if (
     !value ||
+    Buffer.byteLength(value) > MAX_PATH_BYTES ||
     value.includes("\0") ||
     value.includes("\\") ||
     path.posix.isAbsolute(value)
   ) {
-    throw new Error("Archive contains an unsafe path");
+    throw new Error("Archive contains an unsafe or oversized path");
   }
   const normalized = path.posix.normalize(value).replace(/^\.\//, "");
-  if (!normalized || normalized === ".." || normalized.startsWith("../")) {
+  if (
+    !normalized ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  ) {
     throw new Error("Archive path escapes workspace");
+  }
+  if (
+    normalized
+      .split("/")
+      .some((part) => Buffer.byteLength(part) > MAX_NAME_BYTES)
+  ) {
+    throw new Error("Archive path name exceeded metadata limit");
   }
   return normalized;
 }
@@ -35,7 +50,25 @@ function archiveName(value: string, workspacePrefix: boolean): string {
   return value;
 }
 
+function metadataBytes(header: Headers): number {
+  let bytes = 0;
+  const visit = (value: unknown) => {
+    if (typeof value === "string") bytes += Buffer.byteLength(value);
+    else if (value && typeof value === "object" && !(value instanceof Date)) {
+      for (const [key, nested] of Object.entries(value)) {
+        bytes += Buffer.byteLength(key);
+        visit(nested);
+      }
+    }
+  };
+  visit(header);
+  return bytes;
+}
+
 function validateHeader(header: Headers, limits: ArchiveLimits): Headers {
+  if (metadataBytes(header) > MAX_HEADER_METADATA_BYTES) {
+    throw new Error("Archive header metadata exceeded limit");
+  }
   const name = safeName(
     archiveName(header.name, limits.workspacePrefix ?? false),
   );
@@ -45,6 +78,7 @@ function validateHeader(header: Headers, limits: ArchiveLimits): Headers {
   }
   const size = header.size ?? 0;
   if (
+    !Number.isSafeInteger(size) ||
     size < 0 ||
     size > limits.maxFileBytes ||
     (type === "directory" && size !== 0)
@@ -62,95 +96,99 @@ function validateHeader(header: Headers, limits: ArchiveLimits): Headers {
   };
 }
 
-async function parseArchive(
-  input: NodeJS.ReadableStream,
-  limits: ArchiveLimits,
-) {
-  const extract = tar.extract();
-  const entries: ArchiveEntry[] = [];
-  let total = 0;
-  await new Promise<void>((resolve, reject) => {
-    const fail = (error: unknown) => {
-      if ("destroy" in input && typeof input.destroy === "function")
-        input.destroy();
-      extract.destroy();
-      reject(error);
-    };
-    extract.on("entry", (rawHeader, stream, next) => {
-      try {
-        const header = validateHeader(rawHeader, limits);
-        if (++total > limits.maxFiles)
-          throw new Error("Archive has too many entries");
-        const chunks: Buffer[] = [];
-        let size = 0;
-        stream.on("data", (value) => {
-          size += value.length;
-          if (size > limits.maxFileBytes) {
-            stream.destroy();
-            fail(new Error("Archive entry exceeded size limit"));
-          } else chunks.push(Buffer.from(value));
-        });
-        stream.once("error", fail);
-        stream.once("end", () => {
-          if (size !== (header.size ?? 0)) {
-            fail(new Error("Archive entry size mismatch"));
-            return;
-          }
-          entries.push({ header, body: Buffer.concat(chunks) });
-          next();
-        });
-        stream.resume();
-      } catch (error) {
-        stream.resume();
-        fail(error);
-      }
-    });
-    extract.once("finish", resolve);
-    extract.once("error", reject);
-    input.once("error", fail);
-    input.pipe(extract);
-  });
-  const bytes = entries.reduce((sum, entry) => sum + entry.body.length, 0);
-  if (bytes > limits.maxTotalBytes)
-    throw new Error("Archive exceeded total size limit");
-  return entries;
-}
-
-async function packArchive(
-  entries: ArchiveEntry[],
-  limits: ArchiveLimits,
-): Promise<Buffer> {
-  const pack = tar.pack();
-  const output = new PassThrough();
-  const chunks: Buffer[] = [];
-  let size = 0;
-  output.on("data", (value) => {
-    size += value.length;
-    if (size > limits.maxTotalBytes)
-      output.destroy(new Error("Packed archive exceeded size limit"));
-    else chunks.push(Buffer.from(value));
-  });
-  pack.pipe(output);
-  const done = new Promise<void>((resolve, reject) => {
-    output.once("end", resolve);
-    output.once("error", reject);
-    pack.once("error", reject);
-  });
-  for (const entry of entries) {
-    await new Promise<void>((resolve, reject) => {
-      pack.entry(entry.header, entry.body, (error) =>
-        error ? reject(error) : resolve(),
-      );
-    });
-  }
-  pack.finalize();
-  await done;
-  return Buffer.concat(chunks);
-}
-
 export async function validateAndRepackArchive(
   input: NodeJS.ReadableStream,
   limits: ArchiveLimits,
 ): Promise<Buffer> {
-  return packArchive(await parseArchive(input, limits), limits);
+  const extract = tar.extract();
+  const pack = tar.pack();
+  const output = new PassThrough();
+  const chunks: Buffer[] = [];
+  let entries = 0;
+  let totalBytes = 0;
+  let packedBytes = 0;
+  let failed = false;
+
+  const fail = (error: unknown) => {
+    if (failed) return;
+    failed = true;
+    const cause = error instanceof Error ? error : new Error(String(error));
+    if ("destroy" in input && typeof input.destroy === "function") {
+      input.destroy();
+    }
+    extract.destroy();
+    pack.destroy();
+    output.destroy(cause);
+  };
+
+  output.on("data", (value) => {
+    packedBytes += value.length;
+    if (packedBytes > limits.maxTotalBytes) {
+      fail(new Error("Packed archive exceeded size limit"));
+      return;
+    }
+    chunks.push(Buffer.from(value));
+  });
+  pack.pipe(output);
+
+  extract.on("entry", (rawHeader, stream, next) => {
+    let header: Headers;
+    try {
+      header = validateHeader(rawHeader, limits);
+      entries += 1;
+      if (entries > limits.maxFiles) {
+        throw new Error("Archive has too many entries");
+      }
+    } catch (error) {
+      stream.resume();
+      fail(error);
+      return;
+    }
+
+    let entryBytes = 0;
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        entryBytes += chunk.length;
+        totalBytes += chunk.length;
+        if (entryBytes > limits.maxFileBytes) {
+          callback(new Error("Archive entry exceeded size limit"));
+        } else if (totalBytes > limits.maxTotalBytes) {
+          callback(new Error("Archive exceeded total size limit"));
+        } else {
+          callback(undefined, chunk);
+        }
+      },
+    });
+    const destination = pack.entry(header);
+    void pipeline(stream, limiter, destination)
+      .then(() => {
+        if (entryBytes !== header.size) {
+          throw new Error("Archive entry size mismatch");
+        }
+        next();
+      })
+      .catch(fail);
+  });
+
+  const extracted = new Promise<void>((resolve, reject) => {
+    extract.once("finish", resolve);
+    extract.once("error", reject);
+    input.once("error", reject);
+  });
+  const packed = new Promise<void>((resolve, reject) => {
+    output.once("end", resolve);
+    output.once("error", reject);
+    pack.once("error", reject);
+  });
+
+  input.pipe(extract);
+  try {
+    await Promise.race([extracted, packed]);
+    pack.finalize();
+    await packed;
+    return Buffer.concat(chunks);
+  } catch (error) {
+    fail(error);
+    throw error;
+  }
 }

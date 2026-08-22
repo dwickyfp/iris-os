@@ -17,7 +17,7 @@ export function sandboxCapabilityProvider<Context>(input: {
     async readiness() {
       const status = await input.provider.status();
       return {
-        ready: status.ready,
+        status: status.ready ? ("healthy" as const) : ("unavailable" as const),
         reason: status.reason,
         metadata: { checkedAt: status.checkedAt.toISOString() },
       };

@@ -32,6 +32,11 @@ async function serve(ready: boolean) {
       SANDBOX_RUNNER_IMAGE: `example/sandbox@sha256:${"b".repeat(64)}`,
     } as unknown as NodeJS.ProcessEnv),
     readiness: ready,
+    inventory: vi.fn(() => ({
+      bootId: "00000000-0000-4000-8000-000000000001",
+      capturedAt: "2026-08-22T10:00:00.000Z",
+      sessions: [],
+    })),
     createSession: vi.fn(async () => ({
       id: "x".repeat(32),
       profile: { id: "python", network: "none" },
@@ -79,6 +84,25 @@ describe("sandbox runner HTTP auth and readiness", () => {
         })
       ).status,
     ).toBe(200);
+  });
+
+  it("requires bearer auth for non-PII runner inventory", async () => {
+    const { base, token, runner } = await serve(true);
+    vi.mocked(runner.inventory).mockReturnValue({
+      bootId: "00000000-0000-4000-8000-000000000001",
+      capturedAt: "2026-08-22T10:00:00.000Z",
+      sessions: [],
+    });
+    expect((await fetch(`${base}/v1/inventory`)).status).toBe(401);
+    const response = await fetch(`${base}/v1/inventory`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      bootId: "00000000-0000-4000-8000-000000000001",
+      capturedAt: "2026-08-22T10:00:00.000Z",
+      sessions: [],
+    });
   });
 
   it("reports RUNSC_UNAVAILABLE and blocks session creation while unready", async () => {
@@ -153,8 +177,13 @@ describe("sandbox runner HTTP auth and readiness", () => {
 
     expect(await provider.status()).toMatchObject({ ready: true });
     const instance = await provider.create({
-      scope: { runId: "run-1", userId: "user-1" },
+      scope: {
+        runId: "00000000-0000-4000-8000-000000000001",
+        userId: "user-1",
+      },
       profile,
+      sessionId: "00000000-0000-4000-8000-000000000002",
+      rootRunId: "00000000-0000-4000-8000-000000000001",
     });
     expect(instance.id).toMatch(/^[A-Za-z0-9_-]{32}$/);
     await runner.stop();

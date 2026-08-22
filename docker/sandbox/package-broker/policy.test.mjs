@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authorizePackageRequest } from "./policy.mjs";
+import { authorizePackageRequest, packagePolicy } from "./policy.mjs";
+
+test("advertises authorization-only policy with disabled delivery", () => {
+  assert.deepEqual(
+    {
+      mode: packagePolicy.mode,
+      delivery: packagePolicy.delivery,
+      claims: packagePolicy.claims,
+    },
+    {
+      mode: "authorization-only",
+      delivery: "disabled",
+      claims: "unsupported",
+    },
+  );
+});
 
 test("accepts exact npm and PyPI registry versions", () => {
   assert.deepEqual(

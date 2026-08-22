@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm";
 import type { AgentRunRepository } from "lib/ai/runs/agent-run-repository";
 import type { RunOutcome } from "lib/ai/runs/types";
+import { rootBudgetValues } from "lib/ai/runtime/server-budget-resolver";
 import { pgDb as db } from "../db.pg";
 import {
   AgentRunCheckpointTable,
@@ -25,6 +26,8 @@ import {
   AgentRunResumeDispatchTable,
   AgentRunTable,
   DelegationRunTable,
+  RootRunBudgetReservationTable,
+  RootRunBudgetTable,
 } from "../schema.pg";
 
 function terminalValues(outcome: RunOutcome) {
@@ -43,6 +46,35 @@ async function observeTerminalChild(
   run: typeof AgentRunTable.$inferSelect,
 ) {
   if (!run.parentRunId) return;
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${run.rootRunId}`}, 0))`,
+  );
+  const settled = await tx
+    .update(RootRunBudgetReservationTable)
+    .set({
+      state: run.status === "cancelled" ? "released" : "committed",
+      committedAmount: run.status === "cancelled" ? null : 1,
+      settledAt: new Date(),
+    })
+    .where(
+      and(
+        eq(RootRunBudgetReservationTable.token, `child:${run.id}`),
+        eq(RootRunBudgetReservationTable.state, "reserved"),
+      ),
+    )
+    .returning({ amount: RootRunBudgetReservationTable.amount });
+  if (settled[0])
+    await tx
+      .update(RootRunBudgetTable)
+      .set({
+        reservedChildren: sql`${RootRunBudgetTable.reservedChildren} - ${settled[0].amount}`,
+        committedChildren:
+          run.status === "cancelled"
+            ? RootRunBudgetTable.committedChildren
+            : sql`${RootRunBudgetTable.committedChildren} + ${settled[0].amount}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(RootRunBudgetTable.rootRunId, run.rootRunId));
   await tx
     .update(AgentRunJoinTable)
     .set({
@@ -96,29 +128,38 @@ export const pgAgentRunRepository: AgentRunRepository = {
         .where(eq(AgentRunTable.id, input.parentRunId));
       parent = parents[0];
     }
-    const inserted = await db
-      .insert(AgentRunTable)
-      .values({
-        ...input,
-        agentId: input.agentId ?? null,
-        parentRunId: input.parentRunId ?? null,
-        rootRunId: parent?.rootRunId ?? input.id,
-        workspaceId: input.workspaceId ?? null,
-        taskId: input.taskId ?? null,
-        status: "running",
-        context: input.context ?? {},
-        allowedTools: input.allowedTools ?? [],
-        startedAt: now,
-        lastHeartbeatAt: now,
-        leaseToken,
-        leaseExpiresAt: new Date(now.getTime() + 30_000),
-        absoluteDeadlineAt: new Date(
-          now.getTime() + (input.timeoutMs ?? 300_000),
-        ),
-        attempt: 1,
-      })
-      .onConflictDoNothing()
-      .returning();
+    const inserted = await db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(AgentRunTable)
+        .values({
+          ...input,
+          agentId: input.agentId ?? null,
+          parentRunId: input.parentRunId ?? null,
+          rootRunId: parent?.rootRunId ?? input.id,
+          workspaceId: input.workspaceId ?? null,
+          taskId: input.taskId ?? null,
+          status: "running",
+          context: input.context ?? {},
+          allowedTools: input.allowedTools ?? [],
+          startedAt: now,
+          lastHeartbeatAt: now,
+          leaseToken,
+          leaseExpiresAt: new Date(now.getTime() + 30_000),
+          absoluteDeadlineAt: new Date(
+            now.getTime() + (input.timeoutMs ?? 300_000),
+          ),
+          attempt: 1,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (rows[0] && !input.parentRunId) {
+        await tx.insert(RootRunBudgetTable).values({
+          rootRunId: input.id,
+          ...rootBudgetValues(input.budget ?? {}),
+        });
+      }
+      return rows;
+    });
     const created = Array.isArray(inserted) ? inserted[0] : undefined;
     if (created) return created;
     const existing = await this.selectById(input.id, input.userId);
@@ -167,6 +208,57 @@ export const pgAgentRunRepository: AgentRunRepository = {
         parent.absoluteDeadlineAt < requestedDeadline
           ? parent.absoluteDeadlineAt
           : requestedDeadline;
+      const [parentRoot] = await tx
+        .select({ rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(eq(AgentRunTable.id, input.parentRunId));
+      if (!parentRoot) throw new Error("ROOT_RUN_BUDGET_RUN_NOT_FOUND");
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${parentRoot.rootRunId}`}, 0))`,
+      );
+      const [rootBudget] = await tx
+        .select()
+        .from(RootRunBudgetTable)
+        .where(eq(RootRunBudgetTable.rootRunId, parentRoot.rootRunId))
+        .for("update");
+      if (!rootBudget) throw new Error("ROOT_RUN_BUDGET_NOT_FOUND");
+      if (input.depth > rootBudget.maxDelegationDepth)
+        throw new Error("BUDGET_EXHAUSTED");
+      if (
+        rootBudget.committedDelegations + rootBudget.reservedDelegations + 1 >
+          rootBudget.maxDelegations ||
+        rootBudget.reservedChildren + 1 > rootBudget.maxParallelChildren
+      )
+        throw new Error("BUDGET_EXHAUSTED");
+      await tx
+        .update(RootRunBudgetTable)
+        .set({
+          committedDelegations: sql`${RootRunBudgetTable.committedDelegations} + 1`,
+          reservedChildren: sql`${RootRunBudgetTable.reservedChildren} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(RootRunBudgetTable.rootRunId, parentRoot.rootRunId));
+      await tx.insert(RootRunBudgetReservationTable).values([
+        {
+          token: `delegation:${input.id}`,
+          rootRunId: parentRoot.rootRunId,
+          runId: input.parentRunId,
+          kind: "delegations",
+          amount: 1,
+          state: "committed",
+          committedAmount: 1,
+          expiresAt: absoluteDeadlineAt,
+          settledAt: now,
+        },
+        {
+          token: `child:${input.id}`,
+          rootRunId: parentRoot.rootRunId,
+          runId: input.parentRunId,
+          kind: "children",
+          amount: 1,
+          expiresAt: absoluteDeadlineAt,
+        },
+      ]);
       const inserted = await tx
         .insert(AgentRunTable)
         .values({
@@ -183,12 +275,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
           depth: input.depth,
           tokenBudget: input.tokenBudget,
           absoluteDeadlineAt,
-          rootRunId:
-            (await tx
-              .select({ rootRunId: AgentRunTable.rootRunId })
-              .from(AgentRunTable)
-              .where(eq(AgentRunTable.id, input.parentRunId)))[0]?.rootRunId ??
-            input.parentRunId,
+          rootRunId: parentRoot.rootRunId,
         })
         .returning();
       const run = Array.isArray(inserted) ? inserted[0] : undefined;
@@ -446,7 +533,11 @@ export const pgAgentRunRepository: AgentRunRepository = {
       )
         return null;
       const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
-        ? { status: "cancelled", error: "Run was cancelled", errorCode: "CANCELLED" }
+        ? {
+            status: "cancelled",
+            error: "Run was cancelled",
+            errorCode: "CANCELLED",
+          }
         : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
           ? {
               status: "timed_out",
@@ -689,7 +780,9 @@ export const pgAgentRunRepository: AgentRunRepository = {
   async selectTransientCredential(id, leaseToken) {
     const now = new Date();
     const [row] = await db
-      .select({ encryptedCredential: AgentRunContinuationTable.encryptedCredential })
+      .select({
+        encryptedCredential: AgentRunContinuationTable.encryptedCredential,
+      })
       .from(AgentRunContinuationTable)
       .innerJoin(
         AgentRunTable,
@@ -941,6 +1034,9 @@ export const pgAgentRunRepository: AgentRunRepository = {
         ].includes(owned.status)
       )
         return null;
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`root-budget:${owned.rootRunId}`}, 0))`,
+      );
       await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
           SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
@@ -988,6 +1084,33 @@ export const pgAgentRunRepository: AgentRunRepository = {
               THEN 'Run was cancelled' ELSE error END
         WHERE id IN (SELECT id FROM run_tree)
           AND status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_external')
+      `);
+      await tx.execute(sql`
+        WITH RECURSIVE run_tree AS (
+          SELECT id FROM agent_run WHERE id = ${id} AND user_id = ${userId}
+          UNION ALL
+          SELECT child.id FROM agent_run child
+          JOIN run_tree parent ON child.parent_run_id = parent.id
+          WHERE child.user_id = ${userId}
+        ), settled AS (
+          UPDATE root_run_budget_reservation reservation
+          SET state = 'released', committed_amount = NULL,
+              settled_at = CURRENT_TIMESTAMP
+          FROM agent_run child
+          WHERE child.id IN (SELECT id FROM run_tree)
+            AND child.status = 'cancelled'
+            AND reservation.token = 'child:' || child.id::text
+            AND reservation.root_run_id = ${owned.rootRunId}
+            AND reservation.kind = 'children'
+            AND reservation.state = 'reserved'
+          RETURNING reservation.amount
+        )
+        UPDATE root_run_budget
+        SET reserved_children = reserved_children -
+              COALESCE((SELECT SUM(amount) FROM settled), 0),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE root_run_id = ${owned.rootRunId}
+          AND EXISTS (SELECT 1 FROM settled)
       `);
       await tx.execute(sql`
         WITH RECURSIVE run_tree AS (
@@ -1093,7 +1216,10 @@ export const pgAgentRunRepository: AgentRunRepository = {
         encryptedCredential: AgentRunContinuationTable.encryptedCredential,
       })
       .from(AgentRunRemoteCancelTable)
-      .innerJoin(AgentRunTable, eq(AgentRunTable.id, AgentRunRemoteCancelTable.runId))
+      .innerJoin(
+        AgentRunTable,
+        eq(AgentRunTable.id, AgentRunRemoteCancelTable.runId),
+      )
       .innerJoin(
         DelegationRunTable,
         eq(DelegationRunTable.childRunId, AgentRunRemoteCancelTable.runId),
@@ -1124,8 +1250,11 @@ export const pgAgentRunRepository: AgentRunRepository = {
   async recordRemoteCancellation(id, outcome) {
     return db.transaction(async (tx) => {
       const now = new Date();
-      const terminal = outcome.ok &&
-        ["cancelled", "completed", "failed", "rejected"].includes(outcome.task.state);
+      const terminal =
+        outcome.ok &&
+        ["cancelled", "completed", "failed", "rejected"].includes(
+          outcome.task.state,
+        );
       await tx
         .update(AgentRunRemoteCancelTable)
         .set({
@@ -1376,7 +1505,9 @@ export const pgAgentRunRepository: AgentRunRepository = {
         return run;
       }
       const generation = (currentCheckpoint?.generation ?? 0) + 1;
-      const requestedToolCallIds = [...new Set(checkpoint.delegationToolCallIds)];
+      const requestedToolCallIds = [
+        ...new Set(checkpoint.delegationToolCallIds),
+      ];
       if (!requestedToolCallIds.length) return null;
       const joins = await tx
         .select({ toolCallId: AgentRunJoinTable.toolCallId })
@@ -1586,10 +1717,7 @@ export const pgAgentRunRepository: AgentRunRepository = {
           ),
         )
         .for("update");
-      if (
-        !checkpoint?.claimExpiresAt ||
-        checkpoint.claimExpiresAt <= now
-      )
+      if (!checkpoint?.claimExpiresAt || checkpoint.claimExpiresAt <= now)
         return null;
       const [leased] = await tx
         .select({

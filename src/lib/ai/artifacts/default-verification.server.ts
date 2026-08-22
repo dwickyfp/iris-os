@@ -1,18 +1,20 @@
 import { artifactRepository } from "lib/db/repository";
 import { serverFileStorage } from "lib/file-storage";
 import {
-  ArtifactVerificationRequirement,
-  GoalAwareVerificationRequirement,
+  ArtifactRequirement,
+  CapabilityRequirement,
+  OutcomeRequirement,
 } from "../runtime/artifact-verification-requirement";
 import type { NormalizedGoalRequirement } from "../runtime/goal-requirement-resolver";
 import {
   capabilityResultVerifier,
+  AllRequirements,
   VerificationEngine,
 } from "../runtime/verification";
 import { createArtifactVerifier } from "./verifier";
 
 export function createDefaultArtifactVerificationRequirement() {
-  return new ArtifactVerificationRequirement(
+  return new ArtifactRequirement(
     new VerificationEngine([
       createArtifactVerifier(serverFileStorage, artifactRepository),
       capabilityResultVerifier,
@@ -23,11 +25,17 @@ export function createDefaultArtifactVerificationRequirement() {
 export function createGoalVerificationRequirement(
   spec: NormalizedGoalRequirement,
 ) {
-  return new GoalAwareVerificationRequirement(
-    new VerificationEngine([
-      createArtifactVerifier(serverFileStorage, artifactRepository),
-      capabilityResultVerifier,
-    ]),
-    spec,
-  );
+  const engine = new VerificationEngine([
+    createArtifactVerifier(serverFileStorage, artifactRepository),
+    capabilityResultVerifier,
+  ]);
+  return new AllRequirements([
+    new OutcomeRequirement(),
+    ...(spec.requiredCapabilities.length
+      ? [new CapabilityRequirement(engine, spec.requiredCapabilities)]
+      : []),
+    ...(spec.level === "artifact"
+      ? [new ArtifactRequirement(engine, spec)]
+      : []),
+  ]);
 }

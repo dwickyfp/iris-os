@@ -20,6 +20,7 @@ describe("remoteAgentCapabilityRef", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       hasCredential: true,
+      health: { status: "healthy" },
     });
 
     expect(ref).toEqual({

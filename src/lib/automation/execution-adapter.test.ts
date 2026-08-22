@@ -1,16 +1,53 @@
 import { customModelProvider } from "lib/ai/models";
+import { BudgetExhaustedError } from "lib/ai/runtime/budget";
 import { describe, expect, test, vi } from "vitest";
 import {
   type AutomationExecutionDependencies,
   type AutomationExecutionRequest,
+  classifyWorkflowFailure,
   createAutomationExecutionAdapter,
+  finishWorkflowAgentRun,
   mapWorkflowOutput,
+  projectAutomationExecutionResult,
   runHeadlessAgent,
 } from "./execution-adapter";
 
 vi.mock("server-only", () => ({}));
 vi.mock("lib/ai/models", () => ({
   customModelProvider: { getEngineModel: vi.fn() },
+}));
+vi.mock("lib/ai/skill/scoped-learned", () => ({
+  selectScopedLearnedSkillSummaries: vi.fn(async () => []),
+}));
+vi.mock("lib/db/repository", () => ({
+  agentRepository: {
+    selectAgentsByUserId: vi.fn(async () => []),
+  },
+  agentRunRepository: {},
+  artifactRepository: {},
+  remoteAgentRepository: {
+    listByUserId: vi.fn(async () => []),
+  },
+  workflowRepository: {
+    selectExecuteAbility: vi.fn(async () => []),
+  },
+  skillRepository: {
+    selectSkillSummariesByAgentId: vi.fn(async () => []),
+  },
+}));
+vi.mock("lib/ai/mcp/mcp-manager", () => ({
+  mcpClientsManager: { tools: () => ({}) },
+}));
+vi.mock("lib/sandbox/server", () => ({
+  sandboxCapability: {
+    provider: {
+      name: "test",
+      status: async () => ({ ready: false, checkedAt: new Date(0) }),
+    },
+    pythonCompute: {},
+  },
+  sandboxManager: { cancelByRun: vi.fn(async () => undefined) },
+  workflowSandboxServices: () => ({}),
 }));
 
 function request(
@@ -113,6 +150,7 @@ describe("automation execution adapter", () => {
       instructions: "Execute delegated work",
       allowedTools: [],
       harness: { generate },
+      resolveBudget: async () => ({ maxTokens: 5_000 }),
     });
 
     expect(generate).toHaveBeenCalledWith(
@@ -133,7 +171,9 @@ describe("automation execution adapter", () => {
       text: "complete",
       usage: { totalTokens: 1 },
     }));
-    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue({} as never);
+    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue(
+      {} as never,
+    );
 
     await runHeadlessAgent({
       request: input,
@@ -148,7 +188,7 @@ describe("automation execution adapter", () => {
       level: "artifact",
       requiredMediaTypes: ["application/pdf"],
       requiredPeriod: "Q2",
-      requiredCapabilities: ["analysis", "generate_report"],
+      requiredCapabilities: ["generate_report"],
     });
     expect(orchestration.completionRequirement).toBeDefined();
   });
@@ -203,6 +243,77 @@ describe("automation execution adapter", () => {
       status: "failed",
       errorCode: "EXECUTION_ERROR",
       retryable: true,
+    });
+  });
+
+  test("projects budget exhaustion to both automation terminal records", () => {
+    expect(
+      projectAutomationExecutionResult({
+        status: "budget_exhausted",
+        message: "Run budget exhausted: maxTokens",
+      }),
+    ).toEqual({
+      status: "budget_exhausted",
+      attemptStatus: "budget_exhausted",
+      retryable: false,
+      error: "Run budget exhausted: maxTokens",
+      errorCode: "BUDGET_EXHAUSTED",
+      output: null,
+    });
+  });
+
+  test("classifies workflow-created AgentRun budget exhaustion", async () => {
+    const manager = {
+      succeed: vi.fn(),
+      fail: vi.fn(),
+      exhaustBudget: vi.fn(),
+    };
+    const error = new BudgetExhaustedError("maxTokens", {
+      steps: 1,
+      tokens: 11,
+      toolCalls: 0,
+      delegations: 0,
+      depth: 0,
+      parallel: 0,
+      cost: 0,
+      durationMs: 1,
+      computeMs: 0,
+    });
+
+    await finishWorkflowAgentRun(
+      "workflow-run",
+      { isOk: false, error },
+      manager,
+    );
+
+    expect(manager.exhaustBudget).toHaveBeenCalledWith(
+      "workflow-run",
+      "Run budget exhausted: maxTokens",
+    );
+    expect(manager.fail).not.toHaveBeenCalled();
+    expect(classifyWorkflowFailure(error)).toEqual({
+      status: "budget_exhausted",
+      message: "Run budget exhausted: maxTokens",
+    });
+  });
+
+  test("classifies exact coded failures without fragile message matching", async () => {
+    const failing = vi.fn(async () => {
+      throw Object.assign(new Error("limit reached"), {
+        code: "BUDGET_EXHAUSTED",
+      });
+    });
+    const dependencies = {
+      workflow: failing,
+      skill: failing,
+      agent: failing,
+    } satisfies AutomationExecutionDependencies;
+
+    await expect(
+      createAutomationExecutionAdapter(dependencies)(request("agent")),
+    ).resolves.toEqual({
+      status: "budget_exhausted",
+      message: "limit reached",
     });
   });
 

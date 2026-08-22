@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Transform } from "node:stream";
 import type {
   SandboxRunnerSessionCreateRequest,
@@ -12,11 +12,17 @@ import { decodeDockerMultiplexedStream } from "./exec";
 const OWNER_LABEL = "com.iris-os.sandbox-runner";
 const SESSION_LABEL = "com.iris-os.sandbox-session";
 const CREATED_LABEL = "com.iris-os.sandbox-created-ms";
+const CONTROL_SESSION_LABEL = "com.iris-os.control-session";
+const ROOT_RUN_LABEL = "com.iris-os.root-run";
+const BOOT_LABEL = "com.iris-os.runner-boot";
+const PROFILE_LABEL = "com.iris-os.sandbox-profile";
+const NETWORK_LABEL = "com.iris-os.sandbox-network";
+const LIMIT_LABEL = "com.iris-os.sandbox-limits";
 
 type DockerContainer = {
   Id: string;
   Labels?: Record<string, string>;
-  State?: { Running?: boolean; Status?: string };
+  State?: string | { Running?: boolean; Status?: string };
 };
 
 type Session = {
@@ -26,6 +32,10 @@ type Session = {
   limits: SandboxRunnerSessionLimits;
   createdAt: number;
   lastUsedAt: number;
+  quarantined: boolean;
+  controlPlaneSessionId: string;
+  rootRunId: string;
+  bootId: string;
 };
 
 export class ReadinessError extends Error {
@@ -45,6 +55,7 @@ export class SandboxRunner {
   private ready = false;
   private reaper?: NodeJS.Timeout;
   private creatingSessions = 0;
+  readonly bootId = randomUUID();
 
   constructor(
     readonly config: SandboxRunnerConfig,
@@ -67,15 +78,25 @@ export class SandboxRunner {
 
   private createConfig(
     sessionId: string,
+    identity: SandboxRunnerSessionCreateRequest["identity"] = {
+      sessionId: randomUUID(),
+      rootRunId: randomUUID(),
+    },
     limits: SandboxRunnerSessionLimits = this.maximumLimits(),
     network: "none" | "egress" = "none",
     command = ["sleep", "infinity"],
+    profileId = "canary",
   ) {
-    if (network === "egress" && !this.config.SANDBOX_RUNNER_EGRESS_NETWORK) {
-      throw new ValidationError("Egress profile is not configured");
+    if (
+      network === "egress" &&
+      !this.config.SANDBOX_RUNNER_CHILD_BROKER_NETWORK
+    ) {
+      throw new ValidationError("Child-broker network is not configured");
     }
     const networkMode =
-      network === "egress" ? this.config.SANDBOX_RUNNER_EGRESS_NETWORK : "none";
+      network === "egress"
+        ? this.config.SANDBOX_RUNNER_CHILD_BROKER_NETWORK
+        : "none";
     return {
       Image: this.config.SANDBOX_RUNNER_IMAGE,
       Cmd: command,
@@ -92,6 +113,12 @@ export class SandboxRunner {
         [OWNER_LABEL]: "true",
         [SESSION_LABEL]: sessionId,
         [CREATED_LABEL]: String(Date.now()),
+        [CONTROL_SESSION_LABEL]: identity.sessionId,
+        [ROOT_RUN_LABEL]: identity.rootRunId,
+        [BOOT_LABEL]: this.bootId,
+        [PROFILE_LABEL]: profileId,
+        [NETWORK_LABEL]: network,
+        [LIMIT_LABEL]: JSON.stringify(limits),
       },
       HostConfig: {
         Runtime: "runsc",
@@ -181,7 +208,7 @@ export class SandboxRunner {
       if (!imageMatches) {
         throw new Error("Configured image digest is not present locally");
       }
-      await this.cleanupOwnedContainers();
+      await this.loadOwnedContainers();
       await this.runCanary();
       this.ready = true;
       this.reaper = setInterval(
@@ -203,9 +230,8 @@ export class SandboxRunner {
     this.ready = false;
     if (this.reaper) clearInterval(this.reaper);
     this.reaper = undefined;
-    await Promise.allSettled(
-      [...this.sessions.values()].map((session) => this.remove(session)),
-    );
+    this.activeExecSessions.clear();
+    this.sessions.clear();
   }
 
   private async runCanary() {
@@ -213,7 +239,7 @@ export class SandboxRunner {
     const created = await this.docker.request<{ Id: string }>(
       "POST",
       `/containers/create?name=${dockerPath(`iris-sandbox-${id}`)}`,
-      this.createConfig(id, this.maximumLimits(), "none", [
+      this.createConfig(id, undefined, this.maximumLimits(), "none", [
         "sh",
         "-c",
         'test "$(id -u)" = 10001 && test -w /workspace && test ! -w /',
@@ -232,7 +258,7 @@ export class SandboxRunner {
     }
   }
 
-  private async cleanupOwnedContainers() {
+  private async loadOwnedContainers() {
     const filters = encodeURIComponent(
       JSON.stringify({ label: [`${OWNER_LABEL}=true`] }),
     );
@@ -240,9 +266,43 @@ export class SandboxRunner {
       "GET",
       `/containers/json?all=true&filters=${filters}`,
     );
-    await Promise.all(
-      containers.map((container) => this.forceRemove(container.Id)),
-    );
+    for (const container of containers) {
+      const labels = container.Labels ?? {};
+      const id = labels[SESSION_LABEL];
+      const controlPlaneSessionId = labels[CONTROL_SESSION_LABEL];
+      const rootRunId = labels[ROOT_RUN_LABEL];
+      const createdAt = Number(labels[CREATED_LABEL]);
+      const limits = parseLimits(labels[LIMIT_LABEL]);
+      const network = labels[NETWORK_LABEL];
+      const profileId = labels[PROFILE_LABEL];
+      if (
+        !id ||
+        !controlPlaneSessionId ||
+        !rootRunId ||
+        !Number.isFinite(createdAt) ||
+        !limits ||
+        (network !== "none" && network !== "egress") ||
+        !profileId
+      ) {
+        await this.forceRemove(container.Id);
+        continue;
+      }
+      this.sessions.set(id, {
+        id,
+        containerId: container.Id,
+        profile: { id: profileId, network },
+        limits,
+        createdAt,
+        lastUsedAt: createdAt,
+        quarantined:
+          typeof container.State === "string"
+            ? container.State !== "running"
+            : container.State?.Running === false,
+        controlPlaneSessionId,
+        rootRunId,
+        bootId: labels[BOOT_LABEL] ?? "unknown",
+      });
+    }
   }
 
   async createSession(
@@ -264,7 +324,14 @@ export class SandboxRunner {
       const created = await this.docker.request<{ Id: string }>(
         "POST",
         `/containers/create?name=${dockerPath(`iris-sandbox-${id}`)}`,
-        this.createConfig(id, limits, input.profile.network),
+        this.createConfig(
+          id,
+          input.identity,
+          limits,
+          input.profile.network,
+          undefined,
+          input.profile.id,
+        ),
       );
       containerId = created.Id;
       await this.docker.request("POST", `/containers/${created.Id}/start`);
@@ -275,6 +342,10 @@ export class SandboxRunner {
         limits,
         createdAt,
         lastUsedAt: createdAt,
+        quarantined: false,
+        controlPlaneSessionId: input.identity.sessionId,
+        rootRunId: input.identity.rootRunId,
+        bootId: this.bootId,
       };
       this.sessions.set(id, session);
       return session;
@@ -296,17 +367,41 @@ export class SandboxRunner {
       );
       return {
         id: session.id,
+        controlPlaneSessionId: session.controlPlaneSessionId,
+        rootRunId: session.rootRunId,
         profile: session.profile,
         limits: session.limits,
         createdAt: new Date(session.createdAt).toISOString(),
         expiresAt: new Date(this.expiresAt(session)).toISOString(),
-        status: container.State?.Status ?? "unknown",
+        status:
+          typeof container.State === "string"
+            ? container.State
+            : (container.State?.Status ?? "unknown"),
       };
     } catch (error) {
       if (error instanceof DockerApiError && error.statusCode === 404)
         this.sessions.delete(id);
       throw error;
     }
+  }
+
+  inventory() {
+    const capturedAt = new Date().toISOString();
+    return {
+      bootId: this.bootId,
+      capturedAt,
+      sessions: [...this.sessions.values()].map((session) => ({
+        id: session.id,
+        controlPlaneSessionId: session.controlPlaneSessionId,
+        rootRunId: session.rootRunId,
+        bootId: session.bootId,
+        state: session.quarantined ? "quarantined" : "live",
+        profile: session.profile,
+        limits: session.limits,
+        createdAt: new Date(session.createdAt).toISOString(),
+        expiresAt: new Date(this.expiresAt(session)).toISOString(),
+      })),
+    } as const;
   }
 
   async deleteSession(id: string): Promise<void> {
@@ -378,9 +473,12 @@ export class SandboxRunner {
       throw new ValidationError("cmd must be a non-empty bounded string array");
     }
     if (this.activeExecSessions.has(id))
-      throw new ValidationError("Sandbox session already has an active execution");
+      throw new ValidationError(
+        "Sandbox session already has an active execution",
+      );
     this.activeExecSessions.add(id);
     const controller = new AbortController();
+    let execMayHaveStarted = false;
     let timedOut = false;
     const timeoutMs = Math.min(
       Math.max(requestedTimeoutMs ?? session.limits.executionTimeoutMs, 100),
@@ -409,6 +507,7 @@ export class SandboxRunner {
         },
         controller.signal,
       );
+      execMayHaveStarted = true;
       const response = await this.docker.stream(
         "POST",
         `/exec/${created.Id}/start`,
@@ -425,6 +524,12 @@ export class SandboxRunner {
         ExitCode: number;
         Running: boolean;
       }>("GET", `/exec/${created.Id}/json`, undefined, controller.signal);
+      if (
+        typeof inspected.Running !== "boolean" ||
+        !Number.isInteger(inspected.ExitCode)
+      ) {
+        throw new Error("Invalid Docker exec inspection response");
+      }
       if (inspected.Running)
         throw new Error("Exec stream ended while process was running");
       return {
@@ -434,8 +539,10 @@ export class SandboxRunner {
         durationMs: Math.max(0, Date.now() - startedAt),
       };
     } catch (error) {
-      if (controller.signal.aborted || signal?.aborted) {
+      if (execMayHaveStarted) {
         await this.remove(session).catch(() => undefined);
+      }
+      if (controller.signal.aborted || signal?.aborted) {
         if (timedOut) throw new ExecTimeoutError("Sandbox execution timed out");
         throw new ValidationError(
           "Exec aborted or timed out; session destroyed",
@@ -452,7 +559,7 @@ export class SandboxRunner {
 
   async reap(now = Date.now()): Promise<void> {
     const expired = [...this.sessions.values()].filter(
-      (session) => now >= this.expiresAt(session),
+      (session) => session.quarantined || now >= this.expiresAt(session),
     );
     await Promise.all(expired.map((session) => this.remove(session)));
   }
@@ -461,13 +568,15 @@ export class SandboxRunner {
     if (!/^[A-Za-z0-9_-]{32}$/.test(id))
       throw new NotFoundError("Session not found");
     const session = this.sessions.get(id);
-    if (!session) throw new NotFoundError("Session not found");
+    if (!session || session.quarantined)
+      throw new NotFoundError("Session not found");
     return session;
   }
 
   private async remove(session: Session) {
-    this.sessions.delete(session.id);
+    session.quarantined = true;
     await this.forceRemove(session.containerId);
+    this.sessions.delete(session.id);
   }
 
   private touch(session: Session, now = Date.now()) {
@@ -491,6 +600,22 @@ export class SandboxRunner {
       if (!(error instanceof DockerApiError && error.statusCode === 404))
         throw error;
     }
+  }
+}
+
+function parseLimits(
+  value: string | undefined,
+): SandboxRunnerSessionLimits | undefined {
+  try {
+    const limits = JSON.parse(value ?? "") as SandboxRunnerSessionLimits;
+    return Object.values(limits).every(
+      (limit) =>
+        typeof limit === "number" && Number.isFinite(limit) && limit > 0,
+    )
+      ? limits
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

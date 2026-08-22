@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { applyMigrations, recreatePublicSchema } from "./migration-harness";
 
 const connectionString = process.env.TEST_POSTGRES_URL;
 if (!connectionString) throw new Error("TEST_POSTGRES_URL is required");
+process.env.POSTGRES_URL = connectionString;
+vi.mock("server-only", () => ({}));
 
 const client = new Client({ connectionString });
 
@@ -15,6 +17,205 @@ afterAll(async () => {
 });
 
 describe("IRIS V2 PostgreSQL migrations", () => {
+  test("upgrades pre-0061 unsettled sandbox reservations into the root ledger", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, {
+      through: "0058_orphan_artifact_cleanup.sql",
+    });
+    const userId = randomUUID();
+    const rootRunId = randomUUID();
+    const childRunId = randomUUID();
+    const rootSessionId = randomUUID();
+    const childSessionId = randomUUID();
+    const runningId = randomUUID();
+    const terminalId = randomUUID();
+    const stale = new Date("2000-01-01T00:00:00.000Z");
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Upgrade Owner', $2, 'hash')`,
+      [userId, `upgrade-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO agent_run
+         (id, user_id, parent_run_id, root_run_id, depth, status, lease_token,
+          lease_expires_at, absolute_deadline_at, attempt)
+       VALUES ($1, $3, NULL, $1, 0, 'running', gen_random_uuid(),
+               NOW() + interval '30 seconds', NOW() + interval '5 minutes', 1),
+              ($2, $3, $1, $1, 1, 'running', gen_random_uuid(),
+               NOW() + interval '30 seconds', NOW() + interval '5 minutes', 1)`,
+      [rootRunId, childRunId, userId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_session
+         (id, run_id, user_id, provider, provider_instance_id, profile, status,
+          last_used_at, expires_at, created_at)
+        VALUES ($1, $3, $4, 'iris-runner', 'upgrade-root', $5::json,
+                'active', NOW(), NOW() + interval '5 minutes', NOW()),
+               ($2, $6, $4, 'iris-runner', 'upgrade-child', $5::json,
+                'active', NOW(), NOW() + interval '5 minutes', NOW())`,
+      [
+        rootSessionId,
+        childSessionId,
+        rootRunId,
+        userId,
+        JSON.stringify({
+          id: "python",
+          cpuMillis: 1000,
+          memoryMb: 512,
+          diskMb: 1024,
+          executionTimeoutMs: 1000,
+          idleTimeoutMs: 60000,
+          network: "none",
+        }),
+        childRunId,
+      ],
+    );
+    await client.query(
+      `INSERT INTO sandbox_execution
+         (id, session_id, run_id, status, reserved_compute_ms, started_at,
+          completed_at)
+        VALUES ($5, $1, $3, 'running', 300, $4, NULL),
+               ($6, $2, $7, 'failed', 400, $4, $4)`,
+      [
+        rootSessionId,
+        childSessionId,
+        rootRunId,
+        stale,
+        runningId,
+        terminalId,
+        childRunId,
+      ],
+    );
+    await applyMigrations(client, {
+      after: "0058_orphan_artifact_cleanup.sql",
+      through: "0060_automation_budget_exhausted.sql",
+    });
+    const preUpgrade = await client.query(
+      `SELECT run_id, reserved_compute_ms, committed_compute_ms
+       FROM sandbox_run_compute_budget WHERE run_id = ANY($1::uuid[])
+       ORDER BY run_id`,
+      [[rootRunId, childRunId]],
+    );
+    expect(preUpgrade.rows).toEqual(
+      expect.arrayContaining([
+        {
+          run_id: rootRunId,
+          reserved_compute_ms: 300,
+          committed_compute_ms: 0,
+        },
+        {
+          run_id: childRunId,
+          reserved_compute_ms: 0,
+          committed_compute_ms: 0,
+        },
+      ]),
+    );
+
+    await applyMigrations(client, {
+      after: "0060_automation_budget_exhausted.sql",
+      through: "0061_root_run_budget.sql",
+    });
+
+    const upgraded = await client.query(
+      `SELECT b.reserved_sandbox_compute_ms,
+              COALESCE(SUM(r.amount) FILTER (WHERE r.state = 'reserved'), 0)::int
+                AS ledger_reserved,
+              count(r.token)::int AS reservations
+       FROM root_run_budget b
+       LEFT JOIN root_run_budget_reservation r
+         ON r.root_run_id = b.root_run_id
+       WHERE b.root_run_id = $1
+       GROUP BY b.root_run_id`,
+      [rootRunId],
+    );
+    expect(upgraded.rows[0]).toEqual({
+      reserved_sandbox_compute_ms: 700,
+      ledger_reserved: 700,
+      reservations: 2,
+    });
+
+    const perRunUpgraded = await client.query(
+      `SELECT run_id, reserved_compute_ms, committed_compute_ms
+       FROM sandbox_run_compute_budget WHERE run_id = ANY($1::uuid[])`,
+      [[rootRunId, childRunId]],
+    );
+    expect(perRunUpgraded.rows).toEqual(
+      expect.arrayContaining([
+        {
+          run_id: rootRunId,
+          reserved_compute_ms: 300,
+          committed_compute_ms: 0,
+        },
+        {
+          run_id: childRunId,
+          reserved_compute_ms: 400,
+          committed_compute_ms: 0,
+        },
+      ]),
+    );
+
+    const tokens = await client.query(
+      `SELECT id, reservation_token FROM sandbox_execution
+       WHERE run_id = ANY($1::uuid[])`,
+      [[rootRunId, childRunId]],
+    );
+    const runningToken = tokens.rows.find((row) => row.id === runningId)
+      .reservation_token;
+
+    const repository = (
+      await import("lib/db/pg/repositories/sandbox-repository.pg")
+    ).pgSandboxRepository;
+    await expect(
+      repository.settleExecution(runningId, runningToken, 125, 150, new Date()),
+    ).resolves.toBe(true);
+    await expect(
+      repository.settleExecution(runningId, runningToken, 125, 150, new Date()),
+    ).resolves.toBe(false);
+    await expect(
+      repository.reconcileStaleExecutions(new Date(), 10),
+    ).resolves.toBe(1);
+    await expect(
+      repository.reconcileStaleExecutions(new Date(), 10),
+    ).resolves.toBe(0);
+    const settled = await client.query(
+      `SELECT b.reserved_compute_ms, b.committed_compute_ms,
+              root.reserved_sandbox_compute_ms,
+              root.committed_sandbox_compute_ms,
+              count(*) FILTER (WHERE ledger.state = 'committed')::int
+                AS committed,
+              count(*) FILTER (WHERE ledger.state = 'released')::int
+                AS released
+       FROM sandbox_run_compute_budget b
+       JOIN agent_run run ON run.id = b.run_id
+       JOIN root_run_budget root ON root.root_run_id = run.root_run_id
+       JOIN root_run_budget_reservation ledger ON ledger.run_id = b.run_id
+       WHERE b.run_id = ANY($1::uuid[])
+       GROUP BY b.run_id, root.root_run_id
+       ORDER BY b.run_id`,
+      [[rootRunId, childRunId]],
+    );
+    expect(settled.rows).toEqual(
+      expect.arrayContaining([
+        {
+          reserved_compute_ms: 0,
+          committed_compute_ms: 125,
+          reserved_sandbox_compute_ms: 0,
+          committed_sandbox_compute_ms: 525,
+          committed: 1,
+          released: 0,
+        },
+        {
+          reserved_compute_ms: 0,
+          committed_compute_ms: 400,
+          reserved_sandbox_compute_ms: 0,
+          committed_sandbox_compute_ms: 525,
+          committed: 1,
+          released: 0,
+        },
+      ]),
+    );
+  });
+
   test("persists bounded sandbox sessions and executions", async () => {
     await recreatePublicSchema(client);
     await applyMigrations(client);
@@ -41,7 +242,7 @@ describe("IRIS V2 PostgreSQL migrations", () => {
       [sessionId, runId, userId, JSON.stringify({ id: "data_compute" })],
     );
     await client.query(
-       `INSERT INTO sandbox_execution
+      `INSERT INTO sandbox_execution
           (id, session_id, run_id, status, reservation_token,
            reserved_compute_ms, reservation_expires_at, settlement_deadline_at,
            started_at)
@@ -95,11 +296,60 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     expect(applied).toContain("0057_sandbox_accounting_artifact_cleanup.sql");
     expect(applied).toContain("0058_orphan_artifact_cleanup.sql");
     expect(applied).toContain("0059_sandbox_durable_compute_budget.sql");
+    expect(applied).toContain("0060_automation_budget_exhausted.sql");
+    expect(applied).toContain("0061_root_run_budget.sql");
     expect(applied).toContain("0056_sandbox_creation_fencing.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );
     expect(result.rows[0].count).toBeGreaterThan(20);
+  });
+
+  test("persists budget exhaustion for automation runs and attempts", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client);
+    const userId = randomUUID();
+    const automationId = randomUUID();
+    const runId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Automation Owner', $2, 'hash')`,
+      [userId, `automation-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO automation
+         (id, user_id, name, trigger_type, target_type, target_id,
+          approval_policy)
+       VALUES ($1, $2, 'Budget test', 'manual', 'agent', $3, 'never')`,
+      [automationId, userId, randomUUID()],
+    );
+    await client.query(
+      `INSERT INTO automation_run
+         (id, automation_id, user_id, idempotency_key, status, scheduled_for,
+          error_code, completed_at)
+       VALUES ($1, $2, $3, 'budget-test', 'budget_exhausted', NOW(),
+               'BUDGET_EXHAUSTED', NOW())`,
+      [runId, automationId, userId],
+    );
+    await client.query(
+      `INSERT INTO automation_run_attempt
+         (run_id, attempt, status, error_code, completed_at)
+       VALUES ($1, 1, 'budget_exhausted', 'BUDGET_EXHAUSTED', NOW())`,
+      [runId],
+    );
+    const persisted = await client.query(
+      `SELECT r.status AS run_status, a.status AS attempt_status
+       FROM automation_run r
+       JOIN automation_run_attempt a ON a.run_id = r.id
+       WHERE r.id = $1`,
+      [runId],
+    );
+    expect(persisted.rows).toEqual([
+      {
+        run_status: "budget_exhausted",
+        attempt_status: "budget_exhausted",
+      },
+    ]);
   });
 
   test("creates full-text search indexes for memory keyword recall", async () => {

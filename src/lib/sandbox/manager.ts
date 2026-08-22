@@ -25,6 +25,7 @@ export type SandboxManagerDependencies = {
 
 const RESERVATION_LEASE_MS = 60_000;
 const SETTLEMENT_GRACE_MS = 60_000;
+const SESSION_REAP_RETRY_MS = 30_000;
 
 export class SandboxManager {
   private readonly instances = new Map<string, SandboxInstance>();
@@ -41,6 +42,127 @@ export class SandboxManager {
     this.generateId = dependencies.generateId ?? randomUUID;
   }
 
+  async reconcile(options?: { signal?: AbortSignal }) {
+    // Use the control-plane clock for the destructive DB fence. Runner
+    // capturedAt describes the inventory snapshot but may be clock-skewed.
+    const reconciliationStartedAt = this.now();
+    const inventory = await this.dependencies.provider.inventory(options);
+    if (!Number.isFinite(new Date(inventory.capturedAt).getTime()))
+      throw new Error("SANDBOX_INVENTORY_CAPTURE_TIME_INVALID");
+    const byInstance = new Map(
+      inventory.sessions.map((session) => [session.id, session]),
+    );
+    const sessions =
+      await this.dependencies.repository.listSessionsForReconciliation(
+        this.dependencies.provider.name,
+        [...byInstance.keys()],
+      );
+    const byControlSession = new Map(
+      sessions.map((session) => [session.id, session]),
+    );
+    let retained = 0;
+    let destroyed = 0;
+    let lost = 0;
+    const retainedActiveInstances = new Set<string>();
+
+    for (const runnerSession of inventory.sessions) {
+      const session = byControlSession.get(runnerSession.controlPlaneSessionId);
+      if (session && runnerSession.state === "live") {
+        const decision = await this.dependencies.repository.reconcileSession({
+          id: runnerSession.controlPlaneSessionId,
+          rootRunId: runnerSession.rootRunId,
+          provider: this.dependencies.provider.name,
+          providerInstanceId: runnerSession.id,
+          profile: profileFromInventory(runnerSession),
+          expiresAt: new Date(runnerSession.expiresAt),
+          creatorMayBeLive: runnerSession.bootId === inventory.bootId,
+          reconciledAt: this.now(),
+        });
+        if (decision !== "rejected") {
+          retained += 1;
+          if (decision === "active")
+            retainedActiveInstances.add(runnerSession.id);
+          continue;
+        }
+      }
+      await this.dependencies.provider
+        .connect(runnerSession.id, profileFromInventory(runnerSession))
+        .then((instance) => instance.destroy())
+        .catch((error) => {
+          if (
+            !(
+              error instanceof Error && error.message === "IRIS_RUNNER_HTTP_404"
+            )
+          )
+            throw error;
+        });
+      destroyed += 1;
+    }
+
+    for (const session of sessions) {
+      if (
+        session.status !== "active" ||
+        !session.providerInstanceId ||
+        retainedActiveInstances.has(session.providerInstanceId)
+      )
+        continue;
+      try {
+        const instance = await this.dependencies.provider.connect(
+          session.providerInstanceId,
+          session.profile,
+          {
+            ...options,
+            identity: {
+              controlPlaneSessionId: session.id,
+              rootRunId: session.rootRunId,
+            },
+          },
+        );
+        const retainedAfterLookup =
+          await this.dependencies.repository.retainSessionAfterLookup({
+            id: session.id,
+            rootRunId: session.rootRunId,
+            provider: this.dependencies.provider.name,
+            providerInstanceId: session.providerInstanceId,
+            profile: instance.profile,
+          });
+        if (!retainedAfterLookup) {
+          await instance.destroy().catch(() => undefined);
+          this.instances.delete(session.id);
+          destroyed += 1;
+          continue;
+        }
+        this.instances.set(session.id, instance);
+        retained += 1;
+        continue;
+      } catch (error) {
+        if (
+          !(error instanceof Error && error.message === "IRIS_RUNNER_HTTP_404")
+        )
+          continue;
+      }
+      if (
+        await this.dependencies.repository.markSessionLost(
+          session.id,
+          session.providerInstanceId,
+          reconciliationStartedAt,
+          this.now(),
+        )
+      )
+        lost += 1;
+    }
+    return { retained, destroyed, lost, bootId: inventory.bootId };
+  }
+
+  async reconcileStaleExecutions(
+    input: { before?: Date; limit?: number } = {},
+  ) {
+    return this.dependencies.repository.reconcileStaleExecutions(
+      input.before ?? this.now(),
+      Math.min(Math.max(input.limit ?? 100, 1), 500),
+    );
+  }
+
   executePython(input: {
     scope: SandboxScope;
     profile: SandboxProfile;
@@ -48,6 +170,9 @@ export class SandboxManager {
     maxComputeMs?: number;
     signal?: AbortSignal;
   }): Promise<PythonComputeResult & { artifacts: unknown[] }> {
+    if (input.request.packages !== undefined) {
+      return Promise.reject(new Error("SANDBOX_DYNAMIC_PACKAGES_DISABLED"));
+    }
     return this.serialized(input.scope.runId, () => this.performPython(input));
   }
 
@@ -82,6 +207,7 @@ export class SandboxManager {
         input.profile,
         input.signal,
       ));
+      await this.touch(session, input.profile);
       const reservedAt = this.now();
       const reserved = await this.dependencies.repository.reserveExecution(
         {
@@ -100,10 +226,11 @@ export class SandboxManager {
       if (!reserved) throw new Error("RUN_CANCELLED");
       executionReserved = true;
       await this.emit(
-        "sandbox.execution_started",
+        "sandbox.execution_requested",
         input.scope,
         session.id,
         executionId,
+        { requestedAt: reservedAt.toISOString() },
       );
       const candidateStartedAt = this.now();
       const started = await this.dependencies.repository.startExecution(
@@ -117,16 +244,34 @@ export class SandboxManager {
       if (!started) throw new Error("RUN_CANCELLED");
       startedAt = candidateStartedAt;
       executionStarted = true;
+      await this.emit(
+        "sandbox.execution_started",
+        input.scope,
+        session.id,
+        executionId,
+        { startedAt: startedAt.toISOString() },
+      );
     } catch (error) {
       if (executionReserved && !executionStarted) {
+        const completedAt = this.now();
         const released = await this.dependencies.repository
           .releaseExecution(executionId, reservationToken, {
             status: "failed",
             errorCode: "SANDBOX_PRE_EXECUTION_FAILED",
-            completedAt: this.now(),
+            completedAt,
           })
           .catch(() => true);
         if (!released) throw new Error("RUN_CANCELLED");
+        await this.emit(
+          "sandbox.execution_failed",
+          input.scope,
+          session!.id,
+          executionId,
+          {
+            completedAt: completedAt.toISOString(),
+            errorCode: "SANDBOX_PRE_EXECUTION_FAILED",
+          },
+        );
       }
       throw error;
     }
@@ -157,6 +302,7 @@ export class SandboxManager {
         cancelled ||
         timedOut ||
         (error instanceof Error && error.message === "IRIS_RUNNER_HTTP_404");
+      const completedAt = this.now();
       const finalized = await this.dependencies.repository.finishExecution(
         executionId,
         {
@@ -168,7 +314,7 @@ export class SandboxManager {
             : timedOut
               ? "SANDBOX_TIMED_OUT"
               : "SANDBOX_EXECUTION_FAILED",
-          completedAt: this.now(),
+          completedAt,
         },
       );
       if (!finalized) throw new Error("RUN_CANCELLED");
@@ -177,7 +323,12 @@ export class SandboxManager {
         input.scope,
         session.id,
         executionId,
-        { durationMs, observedWallDurationMs },
+        {
+          startedAt: startedAt.toISOString(),
+          completedAt: completedAt.toISOString(),
+          durationMs,
+          observedWallDurationMs,
+        },
       );
       if (sessionGone) {
         this.instances.delete(session.id);
@@ -215,6 +366,7 @@ export class SandboxManager {
           })
         : [];
     } catch (error) {
+      const completedAt = this.now();
       const finalized = await this.dependencies.repository
         .finishExecution(executionId, {
           status: "failed",
@@ -222,7 +374,7 @@ export class SandboxManager {
           observedWallDurationMs,
           exitCode: result.exitCode,
           errorCode: "SANDBOX_ARTIFACT_CAPTURE_FAILED",
-          completedAt: this.now(),
+          completedAt,
         })
         .catch(() => true);
       if (!finalized) throw new Error("RUN_CANCELLED");
@@ -231,12 +383,19 @@ export class SandboxManager {
         input.scope,
         session.id,
         executionId,
-        { durationMs, observedWallDurationMs, exitCode: result.exitCode },
+        {
+          startedAt: startedAt.toISOString(),
+          completedAt: completedAt.toISOString(),
+          durationMs,
+          observedWallDurationMs,
+          exitCode: result.exitCode,
+        },
       ).catch(() => undefined);
       throw error;
     }
 
     const status = result.exitCode === 0 ? "succeeded" : "failed";
+    const completedAt = this.now();
     try {
       const finalized = await this.dependencies.repository.finishExecution(
         executionId,
@@ -246,7 +405,7 @@ export class SandboxManager {
           observedWallDurationMs,
           exitCode: result.exitCode,
           errorCode: result.exitCode === 0 ? undefined : "PYTHON_EXIT_NONZERO",
-          completedAt: this.now(),
+          completedAt,
         },
       );
       if (!finalized) {
@@ -264,7 +423,13 @@ export class SandboxManager {
       input.scope,
       session.id,
       executionId,
-      { durationMs, observedWallDurationMs, exitCode: result.exitCode },
+      {
+        startedAt: startedAt.toISOString(),
+        completedAt: completedAt.toISOString(),
+        durationMs,
+        observedWallDurationMs,
+        exitCode: result.exitCode,
+      },
     );
     return { ...result, executionId, artifacts };
   }
@@ -367,26 +532,41 @@ export class SandboxManager {
   async reap(input: { before?: Date; limit?: number } = {}) {
     const before = input.before ?? this.now();
     const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-    const cleanedArtifacts = await this.reapArtifactCleanup({ before, limit });
-    const sessions = await this.dependencies.repository.listExpiredSessions(
+    const reconciledExecutions = await this.reconcileStaleExecutions({
       before,
       limit,
+    });
+    const cleanedArtifacts = await this.reapArtifactCleanup({ before, limit });
+    const sessions = await this.dependencies.repository.claimExpiredSessions(
+      before,
+      limit,
+      new Date(this.now().getTime() + SESSION_REAP_RETRY_MS),
     );
+    let reapedSessions = 0;
     for (const session of sessions) {
       await this.dependencies.policy.authorize({
         action: "sandbox.reap",
         scope: session,
         profile: session.profile,
       });
-      const instance =
-        this.instances.get(session.id) ??
-        (session.providerInstanceId
-          ? await this.dependencies.provider.connect(
-              session.providerInstanceId,
-              session.profile,
-            )
-          : undefined);
-      await instance?.destroy().catch(() => undefined);
+      let instance: SandboxInstance | undefined;
+      try {
+        instance =
+          this.instances.get(session.id) ??
+          (session.providerInstanceId
+            ? await this.dependencies.provider.connect(
+                session.providerInstanceId,
+                session.profile,
+              )
+            : undefined);
+        await instance?.destroy();
+      } catch (error) {
+        // The destroying lease makes this session eligible for a later retry.
+        if (
+          !(error instanceof Error && error.message === "IRIS_RUNNER_HTTP_404")
+        )
+          continue;
+      }
       this.instances.delete(session.id);
       await this.dependencies.repository.finishSession(
         session.id,
@@ -401,8 +581,9 @@ export class SandboxManager {
         this.now(),
       );
       await this.emit("sandbox.session_reaped", session, session.id);
+      reapedSessions += 1;
     }
-    return sessions.length + cleanedArtifacts;
+    return reapedSessions + cleanedArtifacts + reconciledExecutions;
   }
 
   async reapArtifactCleanup(input: { before?: Date; limit?: number } = {}) {
@@ -506,7 +687,12 @@ export class SandboxManager {
           providerStatus.reason ?? "SANDBOX_PROVIDER_UNAVAILABLE",
         );
       instance = await this.dependencies.provider.create(
-        { scope, profile },
+        {
+          scope,
+          profile,
+          sessionId: session.id,
+          rootRunId: claim.rootRunId,
+        },
         { signal },
       );
       session.profile = instance.profile;
@@ -516,6 +702,7 @@ export class SandboxManager {
         creatorToken,
         instance.id,
         session.expiresAt,
+        this.now(),
         instance.profile,
       );
       if (!activated) {
@@ -592,7 +779,9 @@ export class SandboxManager {
       session.id,
       session.lastUsedAt,
       session.expiresAt,
-    );
+    ).then((touched) => {
+      if (!touched) throw new Error("SANDBOX_SESSION_DESTROYING");
+    });
   }
 
   private serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -624,4 +813,22 @@ export class SandboxManager {
       }) ?? Promise.resolve()
     );
   }
+}
+
+function profileFromInventory(
+  session: Awaited<
+    ReturnType<SandboxProvider["inventory"]>
+  >["sessions"][number],
+): SandboxProfile {
+  return {
+    id: session.profile.id,
+    network: session.profile.network,
+    cpuMillis: Math.max(1, Math.floor(session.limits.nanoCpus / 1_000_000)),
+    memoryMb: Math.max(1, Math.floor(session.limits.memoryBytes / 1_048_576)),
+    diskMb: Math.max(1, Math.floor(session.limits.tmpfsBytes / 1_048_576)),
+    pidsLimit: session.limits.pidsLimit,
+    executionTimeoutMs: session.limits.executionTimeoutMs,
+    idleTimeoutMs: session.limits.idleTimeoutMs,
+    absoluteTimeoutMs: session.limits.absoluteTimeoutMs,
+  };
 }

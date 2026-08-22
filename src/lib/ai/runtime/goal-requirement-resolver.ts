@@ -1,4 +1,8 @@
-import type { GoalVerificationSpec, VerificationLevel } from "./verification";
+import type {
+  GoalVerificationSpec,
+  PersistedVerificationLevel,
+  VerificationLevel,
+} from "./verification";
 
 export type GoalCapability =
   | string
@@ -17,6 +21,13 @@ export type NormalizedGoalRequirement = GoalVerificationSpec & {
   requiredSections: string[];
   requiredCapabilities: string[];
   analysisOnlyAllowed: boolean;
+};
+
+export type PersistedGoalRequirement = Omit<
+  NormalizedGoalRequirement,
+  "level"
+> & {
+  level: PersistedVerificationLevel;
 };
 
 const MEDIA_TYPES: Array<[RegExp, string]> = [
@@ -86,6 +97,13 @@ function mentionedCapabilities(goal: string, capabilities: GoalCapability[]) {
 
 /** Cheap intent parsing only. Semantic/LLM resolution must be explicitly added. */
 export class GoalRequirementResolver {
+  restore(requirement: PersistedGoalRequirement): NormalizedGoalRequirement {
+    return {
+      ...requirement,
+      level: requirement.level === "execution" ? "outcome" : requirement.level,
+    };
+  }
+
   resolve(input: {
     goal?: string;
     selectedCapabilities?: GoalCapability[];
@@ -94,7 +112,7 @@ export class GoalRequirementResolver {
     if (!goal || (!ARTIFACT_GOAL.test(goal) && !OUTCOME_GOAL.test(goal))) {
       return {
         goal,
-        level: "execution",
+        level: "outcome",
         requiredArtifactKinds: [],
         requiredMediaTypes: [],
         requiredSections: [],
@@ -110,7 +128,7 @@ export class GoalRequirementResolver {
         requiredArtifactKinds: [],
         requiredMediaTypes: [],
         requiredSections: [],
-        requiredCapabilities: ["analysis"],
+        requiredCapabilities: [],
         analysisOnlyAllowed: true,
       };
     }
@@ -124,7 +142,7 @@ export class GoalRequirementResolver {
       goal,
       input.selectedCapabilities ?? [],
     );
-    if (isReport) requiredCapabilities.push("analysis", "generate_report");
+    if (isReport) requiredCapabilities.push("generate_report");
     if (isImage) requiredCapabilities.push("image-manager");
 
     return {

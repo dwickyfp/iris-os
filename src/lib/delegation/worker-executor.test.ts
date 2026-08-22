@@ -462,6 +462,50 @@ class DurableRunFixture {
 }
 
 describe("durable delegation worker with fake A2A", () => {
+  it("finalizes a claimed local run exactly once in the worker", async () => {
+    const fixture = new DurableRunFixture();
+    fixture.runs.set(
+      "child-1",
+      run({
+        agentId: "agent-1",
+        workspaceId: "workspace-1",
+        taskId: "task-1",
+      }),
+    );
+    const dependencies: DelegationWorkerExecutorDependencies =
+      fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
+    dependencies.selectDelegation = async () => ({
+      targetKind: "local_agent",
+      remoteAgentId: null,
+    });
+    dependencies.executeLocal = vi.fn(async () => ({
+      status: "budget_exhausted" as const,
+      message: "Run budget exhausted: maxTokens",
+    }));
+    const finish = vi.spyOn(dependencies.runs, "exhaustBudgetWithLease");
+
+    await createDelegationWorkerExecutor(dependencies)("child-1");
+    await createDelegationWorkerExecutor(dependencies)("child-1");
+
+    expect(dependencies.executeLocal).toHaveBeenCalledOnce();
+    expect(dependencies.executeLocal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        taskId: "task-1",
+      }),
+    );
+    expect(finish).toHaveBeenCalledOnce();
+    expect(fixture.runs.get("child-1")).toMatchObject({
+      status: "budget_exhausted",
+      errorCode: "BUDGET_EXHAUSTED",
+    });
+    expect(
+      fixture.events
+        .filter((event) => event.kind === "terminal")
+        .every((event) => event.child.status === "budget_exhausted"),
+    ).toBe(true);
+  });
+
   it("covers the H10 worker crash/recovery matrix", async () => {
     const rows: H10MatrixRow[] = [];
 

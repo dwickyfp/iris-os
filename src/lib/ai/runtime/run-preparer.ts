@@ -1,15 +1,16 @@
 import type { UIMessage } from "ai";
 import type { AgentRuntimeContext } from "../agent/runtime-context";
 import type { RunBudget } from "./budget";
-import type { ResolvedPolicySnapshot } from "./contracts";
 import type { ContextEngine, ResolvedContext } from "./context-engine";
-import type { PolicyAuthority } from "./policy-engine";
-import type { CompletionRequirement } from "./verification";
+import type { ResolvedPolicySnapshot } from "./contracts";
 import {
   type GoalCapability,
   type NormalizedGoalRequirement,
+  type PersistedGoalRequirement,
   goalRequirementResolver,
 } from "./goal-requirement-resolver";
+import type { PolicyAuthority } from "./policy-engine";
+import type { CompletionRequirement } from "./verification";
 
 export type RunPreparationSnapshot = {
   context?: Pick<
@@ -29,7 +30,10 @@ export type RunPreparationSnapshot = {
   sandbox?: unknown;
 };
 
-export type RunPreparationDependencies<Capabilities = unknown, Model = unknown> = {
+export type RunPreparationDependencies<
+  Capabilities = unknown,
+  Model = unknown,
+> = {
   resolveCapabilities?(input: RunPreparationInput): Promise<{
     value: Capabilities;
     snapshot: unknown;
@@ -60,9 +64,10 @@ export type RunPreparationDependencies<Capabilities = unknown, Model = unknown> 
 };
 
 export type RunPreparationInput = {
-  surface?: "chat" | "automation" | "resume";
+  surface?: "chat" | "automation" | "delegation" | "resume";
   userId?: string;
   workspaceId?: string;
+  taskId?: string;
   agentId?: string;
   request?: string;
   instructions?: string;
@@ -73,6 +78,8 @@ export type RunPreparationInput = {
   goal?: string;
   authority?: PolicyAuthority;
   restore?: RunPreparationSnapshot;
+  runId?: string;
+  requestedBudget?: RunBudget;
   selectedCapabilities?: GoalCapability[];
 };
 
@@ -101,7 +108,9 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
     > = {},
   ) {}
 
-  async prepare(input: RunPreparationInput): Promise<PreparedRun<Capabilities, Model>> {
+  async prepare(
+    input: RunPreparationInput,
+  ): Promise<PreparedRun<Capabilities, Model>> {
     const [context, capabilities, budget, completion, model, driver, sandbox] =
       await Promise.all([
         this.contextEngine.resolve({
@@ -113,9 +122,9 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
           sources: input.sources,
         }),
         this.dependencies.resolveCapabilities?.(input),
-        input.restore?.budget !== undefined
-          ? input.restore.budget
-          : this.dependencies.resolveBudget?.(input),
+        this.dependencies.resolveBudget
+          ? this.dependencies.resolveBudget(input)
+          : input.restore?.budget,
         this.dependencies.resolveCompletion?.(input),
         this.dependencies.resolveModel?.(input),
         this.dependencies.resolveDriver?.(input),
@@ -131,12 +140,14 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
       capabilities: capabilities?.value,
     });
     const restoredRequirement = input.restore?.completion as
-      | Partial<NormalizedGoalRequirement>
+      | Partial<PersistedGoalRequirement>
       | undefined;
     const goalRequirement =
       restoredRequirement?.level &&
       Array.isArray(restoredRequirement.requiredCapabilities)
-        ? (restoredRequirement as NormalizedGoalRequirement)
+        ? goalRequirementResolver.restore(
+            restoredRequirement as PersistedGoalRequirement,
+          )
         : goalRequirementResolver.resolve({
             goal: input.goal ?? input.request,
             selectedCapabilities: input.selectedCapabilities,

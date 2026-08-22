@@ -7,6 +7,7 @@ import type {
   SandboxProfile,
   SandboxProvider,
   SandboxProviderStatus,
+  SandboxRunnerInventory,
   SandboxRunnerSessionCreateRequest,
   SandboxRunnerSessionResponse,
   SandboxScope,
@@ -232,12 +233,21 @@ export class IrisRunnerProvider implements SandboxProvider {
   }
 
   async create(
-    input: { scope: SandboxScope; profile: SandboxProfile },
+    input: {
+      scope: SandboxScope;
+      profile: SandboxProfile;
+      sessionId: string;
+      rootRunId: string;
+    },
     options?: { signal?: AbortSignal },
   ) {
     const absoluteTimeoutMs =
       input.profile.absoluteTimeoutMs ?? input.profile.idleTimeoutMs * 3;
     const body: SandboxRunnerSessionCreateRequest = {
+      identity: {
+        sessionId: input.sessionId,
+        rootRunId: input.rootRunId,
+      },
       profile: {
         id: input.profile.id,
         network: input.profile.network,
@@ -267,17 +277,44 @@ export class IrisRunnerProvider implements SandboxProvider {
     );
   }
 
-  async connect(instanceId: string, _profile: SandboxProfile) {
+  async connect(
+    instanceId: string,
+    profile: SandboxProfile,
+    options?: {
+      signal?: AbortSignal;
+      identity?: { controlPlaneSessionId: string; rootRunId: string };
+    },
+  ) {
     const current = await this.client.request<SandboxRunnerSessionResponse>({
       method: "GET",
       path: `/v1/sessions/${encodeURIComponent(instanceId)}`,
+      signal: options?.signal,
     });
+    if (
+      current.id !== instanceId ||
+      current.status !== "running" ||
+      current.profile.id !== profile.id ||
+      current.profile.network !== profile.network ||
+      (options?.identity &&
+        (current.controlPlaneSessionId !==
+          options.identity.controlPlaneSessionId ||
+          current.rootRunId !== options.identity.rootRunId))
+    )
+      throw new Error("IRIS_RUNNER_SESSION_MISMATCH");
     return new IrisRunnerInstance(
       instanceId,
       profileFromRunner(current),
       this.client,
       new Date(current.expiresAt),
     );
+  }
+
+  inventory(options?: { signal?: AbortSignal }) {
+    return this.client.request<SandboxRunnerInventory>({
+      method: "GET",
+      path: "/v1/inventory",
+      signal: options?.signal,
+    });
   }
 }
 

@@ -10,7 +10,6 @@ import {
 import { customModelProvider } from "lib/ai/models";
 
 import {
-  CapabilityRef,
   ChatMention,
   ChatMetadata,
   chatApiSchemaRequestBodySchema,
@@ -25,7 +24,6 @@ import {
   agentRepository,
   agentRunRepository,
   chatRepository,
-  skillRepository,
   taskRepository,
   workspaceRepository,
 } from "lib/db/repository";
@@ -43,21 +41,20 @@ import {
   createBaseAgentRuntimeContext,
 } from "lib/ai/agent/runtime-context";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
-import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
-import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
-import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-resolver";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import type { HarnessStreamResult } from "lib/ai/runtime";
-import { resolveServerCapabilities } from "lib/ai/runtime/capabilities/server";
-import { policyEngine } from "lib/ai/runtime/policy-engine";
-import { irisHarness } from "lib/ai/runtime/server";
+import { isBudgetExhausted } from "lib/ai/runtime/budget";
 import {
-  type AssignedSkillsRepository,
-  buildSkillManifestPrompt,
-  createSkillsRuntime,
-} from "lib/ai/skill";
-import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
+  buildServerCapabilityResolutionInput,
+  resolveServerCapabilities,
+} from "lib/ai/runtime/capabilities/server";
+import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-resolver";
+import { policyEngine } from "lib/ai/runtime/policy-engine";
+import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
+import { irisHarness } from "lib/ai/runtime/server";
+import { serverRunPreparer } from "lib/ai/runtime/server-run-preparer";
+import { buildSkillManifestPrompt } from "lib/ai/skill";
 import { ImageToolName } from "lib/ai/tools";
 import {
   MANAGE_AUTOMATION_TOOL_NAME,
@@ -67,16 +64,11 @@ import {
   MANAGE_LEARNING_TOOL_NAME,
   createManageLearningTool,
 } from "lib/ai/tools/background/manage-learning";
-import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import {
-  sandboxCapability,
-  sandboxManager,
-  workflowSandboxServices,
-} from "lib/sandbox/server";
 import { serverFileStorage } from "lib/file-storage";
 import { isChatCorrection } from "lib/learning/policy";
+import { sandboxManager } from "lib/sandbox/server";
 import { buildTaskContextPrompt } from "lib/task/context";
 import { generateUUID } from "lib/utils";
 import {
@@ -96,7 +88,6 @@ import {
   handleError,
   manualToolExecuteByLastMessage,
   mergeSystemPrompt,
-  workflowToVercelAITool,
 } from "./shared.chat";
 
 const logger = globalLogger.withDefaults({
@@ -299,15 +290,6 @@ export async function POST(request: Request) {
 
     const agent = await rememberAgentAction(agentId, session.user.id);
 
-    const agentAllowedCapabilities: CapabilityRef[] | undefined = agent
-      ? [
-          ...(agent.instructions.mentions ?? []),
-          ...(agent.instructions.capabilities ?? []),
-        ].filter(
-          (mention): mention is CapabilityRef => mention.type !== "agent",
-        )
-      : undefined;
-
     const useImageTool =
       supportToolCall && Boolean(imageTool?.model) && toolChoice !== "none";
 
@@ -348,6 +330,7 @@ export async function POST(request: Request) {
     let checkpointModelMessages: unknown[] = [];
     let checkpointPreparationSnapshot: RunPreparationSnapshot = {};
     let checkpointGoalRequirement: NormalizedGoalRequirement | undefined;
+    let streamError: unknown;
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
         const userText = message.parts
@@ -372,42 +355,20 @@ export async function POST(request: Request) {
               }
             : {}),
         };
-        const scopedLearnedSkills =
-          isToolCallAllowed && isV2FeatureEnabled("learning")
-            ? await selectScopedLearnedSkillSummaries({
-                userId: session.user.id,
-                query: userText,
-                workspaceId: workspace?.id,
-                taskId: task?.id,
-                agentId: agent?.id,
-              })
-            : [];
-        const skillsRuntime = isToolCallAllowed
-          ? await createSkillsRuntime({
-              repository: skillRepository as AssignedSkillsRepository,
-              agentId: agent?.id,
-              userId: session.user.id,
-              additionalSkills: scopedLearnedSkills,
-            })
-          : {
-              manifest: [],
-              tools: {},
-              select() {
-                return this;
-              },
-            };
-        const capabilities = await resolveServerCapabilities({
-          query: userText,
-          context: {
-            userId: session.user.id,
-            primaryAgentId: agent?.id,
-            allowedMcpServers,
-            allowedAppDefaultToolkit,
-            toolsEnabled: isToolCallAllowed,
-            workflowsEnabled: isToolCallAllowed,
-            delegationEnabled:
-              isToolCallAllowed && isV2FeatureEnabled("delegation"),
-            remoteAgentsEnabled: isV2FeatureEnabled("remoteAgents"),
+        const capabilityInput = await buildServerCapabilityResolutionInput({
+          userId: session.user.id,
+          workspaceId: workspace?.id,
+          taskId: task?.id,
+          runId,
+          goal: userText,
+          agent,
+          permissions: { allowedMcpServers, allowedAppDefaultToolkit },
+          featureState: {
+            tools: isToolCallAllowed,
+            workflows: isToolCallAllowed,
+            delegation: isToolCallAllowed && isV2FeatureEnabled("delegation"),
+            remoteAgents: isV2FeatureEnabled("remoteAgents"),
+            learning: isV2FeatureEnabled("learning"),
           },
           hints: {
             mode: useImageTool ? "only" : capabilityHints.mode,
@@ -426,20 +387,6 @@ export async function POST(request: Request) {
                     mention.type !== "agent",
                 ),
           },
-          allowedCapabilities: agentAllowedCapabilities,
-          skillsRuntime,
-          workflowTool: (workflow) =>
-            workflowToVercelAITool({
-              ...workflow,
-              dataStream,
-              executionContext: {
-                runId,
-                userId: session.user.id,
-                workspaceId: workspace?.id,
-                taskId: task?.id,
-                services: workflowSandboxServices(runId),
-              },
-            } as any),
           additionalTools: {
             ...(isToolCallAllowed ? BACKGROUND_CONTROL_TOOLS : {}),
             ...(useImageTool
@@ -451,14 +398,9 @@ export async function POST(request: Request) {
                 }
               : {}),
           },
-          createDelegationTool: (targets) =>
-            createDelegateWorkTool({
-              parentRunId: runId,
-              userId: session.user.id,
-              targets,
-            }),
-          sandbox: sandboxCapability,
+          workflowBinding: { dataStream },
         });
+        const capabilities = await resolveServerCapabilities(capabilityInput);
         const MCP_TOOLS = Object.fromEntries(
           capabilities.ordered
             .filter(({ kind }) => kind === "mcp")
@@ -606,9 +548,9 @@ export async function POST(request: Request) {
               contextWindow: modelConfig.contextWindow,
             },
           }),
-          resolveDriver: async () => ({ descriptor: { id: "ai-sdk" } }),
         }).prepare({
           surface: "chat",
+          requestedBudget: { maxTokens: 50_000 },
           userId: session.user.id,
           workspaceId: workspace?.id,
           agentId: agent?.id,
@@ -733,18 +675,21 @@ export async function POST(request: Request) {
                   goalRequirement: preparedRun.goalRequirement,
                 },
                 allowedTools: Object.keys(vercelAITooles),
+                budget: preparedRun.budget,
               },
             },
             context: preparedContext,
             policy: resolvedPolicy,
             budget: preparedRun.budget,
+            routing: {
+              descriptorIds: capabilities.ordered.map(({ id }) => id),
+              diagnostics: capabilities.routing,
+              model: preparedRun.snapshot.model as Record<string, unknown>,
+              driver: { driver: "ai-sdk" },
+            },
             completionRequirement:
               preparedRun.completionRequirement ??
-              (preparedRun.goalRequirement.level === "execution"
-                ? undefined
-                : createGoalVerificationRequirement(
-                    preparedRun.goalRequirement,
-                  )),
+              createGoalVerificationRequirement(preparedRun.goalRequirement),
           },
         });
         const result = harnessStream.native;
@@ -915,8 +860,10 @@ export async function POST(request: Request) {
           });
         else if (finishReason === "error")
           await harnessStream?.fail({
-            error: "Chat stream finished with an error",
-            errorCode: "STREAM_ERROR",
+            error: streamError ?? "Chat stream finished with an error",
+            errorCode: isBudgetExhausted(streamError)
+              ? "BUDGET_EXHAUSTED"
+              : "STREAM_ERROR",
           });
         else
           await harnessStream?.finalize(responseMessage, {
@@ -926,7 +873,11 @@ export async function POST(request: Request) {
           await sandboxManager.cancelByRun(runId).catch(() => undefined);
       },
       onError: (error) => {
+        streamError = error;
         const errorMessage = handleError(error);
+        const errorCode = isBudgetExhausted(error)
+          ? "BUDGET_EXHAUSTED"
+          : "STREAM_ERROR";
         void sandboxManager.cancelByRun(runId).catch(() => undefined);
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
@@ -944,7 +895,7 @@ export async function POST(request: Request) {
           subjectId: thread!.id,
           payload: {
             userMessageId: message.id,
-            errorCode: "STREAM_ERROR",
+            errorCode,
             message: errorMessage,
           },
           requestId,
@@ -957,8 +908,8 @@ export async function POST(request: Request) {
           logger.warn("Unable to record activity", activityError),
         );
         void harnessStream?.fail({
-          error: errorMessage,
-          errorCode: "STREAM_ERROR",
+          error,
+          errorCode,
         });
         return errorMessage;
       },

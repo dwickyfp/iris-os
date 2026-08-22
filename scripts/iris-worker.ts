@@ -1,17 +1,18 @@
 import "load-env";
 import { hostname } from "node:os";
-import packageJson from "../package.json" with { type: "json" };
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import { serverBudgetAuthority } from "lib/ai/runtime/server-budget-authority";
+import { parseOperationsConfig } from "lib/operations/config";
+import { startWorkerHeartbeat } from "lib/operations/heartbeat";
+import { sandboxServerConfig } from "lib/sandbox/config.server";
+import { sandboxManager } from "lib/sandbox/server";
 import PgBoss from "pg-boss";
+import packageJson from "../package.json" with { type: "json" };
 import { registerActivityWorkers } from "./workers/activity-worker";
 import { registerAutomationWorkers } from "./workers/automation-worker";
 import { registerDelegationWorkers } from "./workers/delegation-worker";
 import { registerLearningWorkers } from "./workers/learning-worker";
 import { registerParentResumeWorkers } from "./workers/parent-resume-worker";
-import { isV2FeatureEnabled } from "lib/feature-flags";
-import { parseOperationsConfig } from "lib/operations/config";
-import { startWorkerHeartbeat } from "lib/operations/heartbeat";
-import { sandboxServerConfig } from "lib/sandbox/config.server";
-import { sandboxManager } from "lib/sandbox/server";
 
 const config = parseOperationsConfig(process.env);
 const workerId =
@@ -20,6 +21,10 @@ const workerId =
 
 const boss = new PgBoss({ connectionString: config.POSTGRES_URL });
 await boss.start();
+const sandboxConfig = sandboxServerConfig();
+await serverBudgetAuthority.reconcileExpiredReservations();
+await sandboxManager.reconcileStaleExecutions();
+if (sandboxConfig.enabled) await sandboxManager.reconcile();
 if (isV2FeatureEnabled("learning")) {
   await registerActivityWorkers(boss);
   await registerLearningWorkers(boss);
@@ -29,17 +34,26 @@ if (isV2FeatureEnabled("delegation")) {
   await registerDelegationWorkers(boss);
   await registerParentResumeWorkers(boss);
 }
-const sandboxConfig = sandboxServerConfig();
-const sandboxReaper = setInterval(
+const sandboxReaper = setInterval(() => {
+  const maintenance = sandboxConfig.enabled
+    ? sandboxManager.reap()
+    : Promise.all([
+        sandboxManager.reconcileStaleExecutions(),
+        sandboxManager.reapArtifactCleanup(),
+      ]);
+  void maintenance.catch((error) =>
+    console.error("sandbox reaper failed", error),
+  );
+}, 30_000);
+sandboxReaper?.unref();
+const rootBudgetReaper = setInterval(
   () =>
-    void (
-      sandboxConfig.enabled
-        ? sandboxManager.reap()
-        : sandboxManager.reapArtifactCleanup()
-    ).catch((error) => console.error("sandbox reaper failed", error)),
+    void serverBudgetAuthority
+      .reconcileExpiredReservations()
+      .catch((error) => console.error("root budget reaper failed", error)),
   30_000,
 );
-sandboxReaper?.unref();
+rootBudgetReaper.unref();
 
 let shuttingDown = false;
 const heartbeat = startWorkerHeartbeat(
@@ -68,6 +82,7 @@ async function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (sandboxReaper) clearInterval(sandboxReaper);
+  clearInterval(rootBudgetReaper);
   const forcedExit = setTimeout(() => {
     console.error("iris-worker graceful shutdown timed out");
     process.exit(1);

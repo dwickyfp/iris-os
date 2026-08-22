@@ -45,4 +45,21 @@ describe("AiSdkExecutionDriver", () => {
     expect(createToolLoopAgent).toHaveBeenCalledWith(agent);
     expect(stream).toHaveBeenCalledWith(execution);
   });
+
+  test("fails closed when a budget has no durable authority", () => {
+    const agent = { instructions: "Handle the goal" } as never;
+    const execution = { prompt: "Do the work" } as never;
+    const orchestration = {
+      budget: { maxTokens: 10 },
+      identity: { runId: "run-1", requestId: "request-1" },
+    } as never;
+
+    expect(() =>
+      new AiSdkExecutionDriver().generate({
+        agent,
+        execution,
+        orchestration,
+      }),
+    ).toThrow("DURABLE_BUDGET_AUTHORITY_REQUIRED");
+  });
 });

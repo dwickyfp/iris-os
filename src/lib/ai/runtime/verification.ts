@@ -14,11 +14,14 @@ export type VerificationTarget =
       executed?: boolean;
     };
 
-export type VerificationLevel = "execution" | "artifact" | "outcome";
+export type VerificationLevel = "artifact" | "outcome";
+
+/** Read compatibility for completion snapshots persisted before Phase 3. */
+export type PersistedVerificationLevel = VerificationLevel | "execution";
 
 export type GoalVerificationSpec = {
   goal?: string;
-  level?: VerificationLevel;
+  level?: PersistedVerificationLevel;
   requiredArtifactKinds?: string[];
   requiredMediaTypes?: string[];
   requiredTitle?: string;
@@ -31,12 +34,12 @@ export type GoalVerificationSpec = {
 export type VerificationResult =
   | {
       verified: true;
-      verificationKind?: "capability" | "outcome";
+      verificationKind?: "capability" | "outcome" | "artifact";
       details?: Record<string, unknown>;
     }
   | {
       verified: false;
-      verificationKind?: "capability" | "outcome";
+      verificationKind?: "capability" | "outcome" | "artifact";
       reason: string;
     };
 
@@ -60,12 +63,6 @@ export const capabilityResultVerifier: Verifier = {
         verificationKind: "capability",
         reason: "CAPABILITY_NOT_EXECUTED",
       };
-    if (!nonEmptyStructuredOutput(target.value))
-      return {
-        verified: false,
-        verificationKind: "capability",
-        reason: "CAPABILITY_RESULT_EMPTY",
-      };
     return {
       verified: true,
       verificationKind: "capability",
@@ -75,6 +72,7 @@ export const capabilityResultVerifier: Verifier = {
 };
 
 export interface CompletionRequirement {
+  readonly kind?: "capability" | "outcome" | "artifact" | "all";
   verifyCompletion(
     value: unknown,
     expected: { userId: string; runId: string },
@@ -90,7 +88,34 @@ export type CapabilityVerification = {
 export function nonEmptyStructuredOutput(value: unknown): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (!value || typeof value !== "object") return false;
-  return Object.keys(value).length > 0;
+  if (Array.isArray(value)) return value.some(nonEmptyStructuredOutput);
+  const record = value as Record<string, unknown>;
+  if (record.type === "text") return nonEmptyStructuredOutput(record.text);
+  if (record.type === "tool-result")
+    return nonEmptyStructuredOutput(record.output);
+  if (
+    typeof record.type === "string" &&
+    record.type.startsWith("tool-") &&
+    record.state === "output-available"
+  )
+    return nonEmptyStructuredOutput(record.output);
+  if (Array.isArray(record.parts))
+    return record.parts.some(nonEmptyStructuredOutput);
+  return Object.entries(record).some(
+    ([key, item]) =>
+      ![
+        "id",
+        "role",
+        "type",
+        "state",
+        "toolName",
+        "toolCallId",
+        "input",
+        "usage",
+        "finishReason",
+      ].includes(key) &&
+      nonEmptyStructuredOutput(item),
+  );
 }
 
 export class VerificationEngine {
@@ -102,5 +127,24 @@ export class VerificationEngine {
     );
     if (!verifier) return { verified: false, reason: "NO_VERIFIER" };
     return verifier.verify(target);
+  }
+}
+
+export class AllRequirements implements CompletionRequirement {
+  readonly kind = "all" as const;
+
+  constructor(private readonly requirements: readonly CompletionRequirement[]) {}
+
+  async verifyCompletion(
+    value: unknown,
+    expected: { userId: string; runId: string },
+  ): Promise<VerificationResult> {
+    const checks: VerificationResult[] = [];
+    for (const requirement of this.requirements) {
+      const result = await requirement.verifyCompletion(value, expected);
+      checks.push(result);
+      if (!result.verified) return result;
+    }
+    return { verified: true, details: { checks } };
   }
 }

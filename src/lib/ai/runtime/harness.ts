@@ -74,11 +74,8 @@ export class IrisHarness {
     this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
     try {
+      await this.recordRouting(input.orchestration);
       lease = await this.start(input.orchestration);
-      if (this.recorder)
-        await this.record(input.orchestration, "routing.resolved", {
-          driver: this.driver.id,
-        });
       const native = await this.driver.stream(
         this.withEventRecording(input, input.orchestration),
       );
@@ -101,11 +98,8 @@ export class IrisHarness {
     this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
     try {
+      await this.recordRouting(input.orchestration);
       lease = await this.start(input.orchestration);
-      if (this.recorder)
-        await this.record(input.orchestration, "routing.resolved", {
-          driver: this.driver.id,
-        });
       const native = await this.driver.generate(
         this.withEventRecording(input, input.orchestration),
       );
@@ -139,10 +133,7 @@ export class IrisHarness {
     );
     let native;
     try {
-      if (this.recorder)
-        await this.record(orchestration, "routing.resolved", {
-          driver: this.driver.id,
-        });
+      await this.recordRouting(orchestration);
       native = await this.driver.generate({
         ...this.withEventRecording(input, orchestration),
         execution: {
@@ -725,6 +716,16 @@ export class IrisHarness {
       threadId: identity.threadId,
       taskId: identity.taskId,
       agentId: identity.agentId,
+    });
+  }
+
+  private recordRouting(orchestration: HarnessOrchestration) {
+    const routing = orchestration.routing;
+    return this.record(orchestration, "routing.resolved", {
+      descriptorIds: routing?.descriptorIds ?? [],
+      diagnostics: routing?.diagnostics ?? {},
+      ...(routing?.model ?? {}),
+      ...(routing?.driver ?? { driver: this.driver.id }),
     });
   }
 

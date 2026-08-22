@@ -29,19 +29,19 @@ future design.
 
 | Area | Implemented behavior | Availability |
 | --- | --- | --- |
-| **Harness runtime** | `IrisHarness` wraps native generation and streaming with context diagnostics, policy snapshots, lifecycle events, cancellation, terminal state, and completion verification | Core path; durable foreground `agent_run` creation is enabled with delegation |
+| **Harness runtime** | `IrisHarness` wraps native generation and streaming with context diagnostics, policy snapshots, lifecycle events, cancellation, terminal state, and applicable completion verification | Core path; production execution declares either creation or claimed ownership of a durable `AgentRun` |
 | **Execution driver** | AI SDK `ToolLoopAgent` generation and streaming; duplicate-safe extensible driver registry | AI SDK native default and only shipped driver |
 | **Chat** | Multi-model streaming, attachments, CSV ingestion previews, temporary chats, exports, voice, persisted incoming messages, and asynchronous memory review | Available |
 | **Smart capability routing** | Server-authoritative registry for built-in tools, MCP, workflows, skills, local peers, and remote peers; requested capabilities support `prefer` and `only` routing | Available; peer delegation depends on flags |
-| **Relevance routing** | Threshold-based deterministic lexical router prunes large eligible capability sets, pins explicit hints, and falls back safely | Configured with `CAPABILITY_ROUTER_THRESHOLD`, `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, `CAPABILITY_ROUTER_TIMEOUT_MS`, and `CAPABILITY_ROUTER_FALLBACK_HARD_CAP` |
+| **Relevance routing** | Deterministic lexical routing runs only above the candidate threshold after authorization; explicit `prefer` hints stay pinned, `only` is strict, and degraded fallback is bounded | Configured with `CAPABILITY_ROUTER_THRESHOLD`, `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, `CAPABILITY_ROUTER_TIMEOUT_MS`, and `CAPABILITY_ROUTER_FALLBACK_HARD_CAP` |
 | **Agents** | Reusable primary agents with instructions, model selection, assigned skills, and scoped capabilities | Available |
 | **Local delegation** | Parent/child runs, permission intersection, depth/child/parallel limits, timeout, token budget, leases, heartbeat, cancellation propagation, and structured results | `IRIS_DELEGATION_V2` |
-| **Runtime budgets** | Step, token, duration, tool-call, delegation, depth, parallel, cost, and child aggregate guards with explicit `run.budget_exhausted` events | Available; bounded by deployment policy |
+| **Runtime budgets** | Server-resolved run limits plus PostgreSQL-backed root aggregates for steps, tokens, tool calls, delegations, child allocation, sandbox compute, and elapsed root duration; reservations and settlements are fenced and idempotent | Available; one persisted root authority is shared by descendants and resume execution |
 | **Remote agents / A2A** | Agent Card discovery, authenticated JSON-RPC A2A task send/get/cancel, durable polling, input/auth waiting, resume, cancellation, and artifact ingestion | `IRIS_DELEGATION_V2` + `IRIS_REMOTE_AGENTS_A2A` |
 | **Run operations** | Queued/running/waiting/terminal states, run tree, timeline, retry-safe dispatch, stale-run sweep, and cancel tree | `IRIS_DELEGATION_V2`; requires `worker:iris` |
 | **Canonical artifacts** | Storage-backed artifact records bound to user and run, SHA-256 metadata, verification history, and Markdown report generation | Available where artifact-producing tools run |
 | **Verification** | Artifact reference, owner/run binding, storage existence, metadata, size, media type, and content hash checks; remote artifacts are canonicalized before success | Available |
-| **Goal-aware verification** | Execution, artifact, and outcome levels with required title, period, media type, sections, capability output, and analysis-only rules | Available when a completion requirement is supplied |
+| **Goal-aware verification** | The server derives execution, artifact, or outcome requirements from the goal; configured requirements can check capability execution/output and canonical artifact constraints such as kind, media type, title, period, and sections | Artifact/outcome requirements gate success; execution level adds no goal-specific verifier, while artifact claims still trigger canonical artifact checks |
 | **MCP** | User-configured MCP servers, OAuth support, tool discovery, server/tool instructions, mentions, presets, and manual execution flow | Available; server creation can be disabled |
 | **Built-in tools** | Exa search/content, HTTP, JavaScript/Python execution, charts, interactive tables, image generation/editing, and verified Markdown reports | Available when configured and permitted |
 | **Workflows** | Visual model/tool graph builder, execution, publishing, and use as chat tools | Available |
@@ -49,11 +49,11 @@ future design.
 | **Memory** | Claims, topics, entities, edges, evidence, embeddings, provenance, conflict/correction lineage, exact global/workspace/task/agent scopes, recall, and 3D graph UI | Available; agentic writes default to shadow mode |
 | **Workspaces and tasks** | Owner-scoped workspaces, instructions, thread/task association, task ledger, checkpoints, resources, Continue Work, archive, and explicit purge | `IRIS_WORKSPACES_V2` |
 | **Learning** | Sanitized activity events, observations, candidates, evidence, review, suppression, and memory/skill/automation promotion paths | `IRIS_LEARNING_V2`; requires `worker:iris` |
-| **Automation** | Workflow/skill/agent targets, schedules, approvals, idempotency, attempts, retries, timeout, cancellation, and run history; headless agents resolve authorized built-in, MCP, workflow, skill, local-peer, remote-peer, and code/sandbox-backed tool capabilities under exact worker authority | `IRIS_AUTOMATION_V2`; requires `worker:iris` |
+| **Automation** | Workflow/skill/agent targets, schedules, approvals, idempotency, attempts, retries, timeout, cancellation, and run history; headless agent/skill execution uses the same production capability discovery as Chat, then explicitly subtracts capabilities excluded by the automation or skill tool allowlist and records those reasons | `IRIS_AUTOMATION_V2`; requires `worker:iris` |
 | **Authentication and storage** | Better Auth, password and OAuth sign-in, PostgreSQL/pgvector, Vercel Blob or S3-compatible file storage | Available |
 | **Operations UI** | Task operations, automation history, delegation tree/timeline, waiting/resume controls, remote-agent connections, and admin diagnostics | Corresponding V2 flags |
 | **Runtime trajectory** | Sequence-backed repeated runtime events, routing/model/tool/delegation/verification milestones, and replayable run timeline | Available |
-| **Trusted Sandbox** | Optional server-side `python_compute` through a dedicated runner, runsc/gVisor enforcement, non-root/read-only/no-network containers, artifact bridge, budgets, cancellation, and cleanup | Disabled by default; Linux Docker host with registered `runsc` required |
+| **Trusted Sandbox** | Optional server-side sandbox platform service exposed as `python_compute` and workflow compute, with a dedicated runner, runsc/gVisor enforcement, non-root/read-only/no-network containers, artifact bridge, budgets, cancellation, and cleanup | Disabled by default; Linux Docker host with registered `runsc` required; it is not an `ExecutionDriver` |
 
 Supported model providers include OpenAI, Anthropic, Google, xAI, OpenRouter,
 Ollama, Groq, and OpenAI-compatible endpoints. Foreground model selection and
@@ -68,7 +68,7 @@ Iris keeps these concepts separate:
 | **Tool** | One model-callable operation with an input schema, such as web search, HTTP, code execution, report generation, or a tool exposed by MCP. A tool may read, mutate, or create an artifact. |
 | **Workflow** | A user-authored visual graph of model and tool nodes. A published workflow can itself be exposed to chat as a tool. |
 | **Agent** | A reusable specialist profile: instructions, model choice, skills, and allowed capabilities. An agent runs inside the harness; it is not the harness. |
-| **Harness** | The control layer around execution. `IrisHarness` records identity, prepares context metadata, snapshots policy, manages run lifecycle, emits events, delegates work, and verifies completion before success. |
+| **Harness** | The control layer around execution. `IrisHarness` records identity, consumes server-prepared context/policy/budget/routing state, manages run lifecycle, emits events, delegates work, and applies the relevant completion requirement before success. |
 | **MCP** | Model Context Protocol integration for discovering and invoking tools from external MCP servers. MCP expands an agent’s tool surface; it does not represent another autonomous agent. |
 | **A2A** | Agent-to-Agent JSON-RPC integration for delegating a bounded objective to a remote agent, following its task lifecycle, handling requests for input/auth, and receiving results or artifacts. |
 
@@ -100,6 +100,20 @@ set from authenticated ownership, configured allowlists, feature flags, and the
 primary agent. Peer target IDs and tool permissions supplied by a client are not
 authoritative.
 
+Chat and headless agent/skill Automation both use the production capability
+registry. Automation does not gain a parallel capability builder: after normal
+server authorization and routing, its configured tool allowlist can only remove
+capabilities. Those removals are retained in the routing snapshot with an
+`automation_tool_allowlist` reason.
+
+The router preserves all authorized candidates at or below
+`CAPABILITY_ROUTER_THRESHOLD` (20 by default). Above that gate, it scores a
+bounded lexical set, keeps explicit `prefer` hints pinned, and respects strict
+`only` selection. Empty/low-signal queries, timeout, or scoring failure preserve
+all candidates only through `CAPABILITY_ROUTER_FALLBACK_HARD_CAP` (100 by
+default); above that cap fallback returns pinned candidates and marks that
+clarification is required rather than silently exposing the full set.
+
 ## Root Run Flow
 
 The following is the fully implemented path for a root chat run that delegates
@@ -118,9 +132,10 @@ generation are conditional model actions, not mandatory steps for every chat.
    filtering; `prefer` hints remain pinned and `only` remains strict.
 4. The policy engine classifies tools as read-only, explicitly low-risk,
    high-risk, or unclassified and records the effective approval policy.
-5. `IrisHarness.stream()` starts trajectory events and, when delegation is
-   enabled, a durable root `agent_run`. The native AI SDK driver starts the
-   `ToolLoopAgent` stream.
+5. `IrisHarness.stream()` records routing, creates a durable root `AgentRun`,
+   acquires its execution lease, and then starts the native AI SDK
+   `ToolLoopAgent` stream. Root-run creation is independent of whether delegation
+   is enabled or used.
 6. If the primary agent calls `delegate_agent`, Iris validates that the peer was
    in the root run’s eligible target snapshot. It creates an idempotent child
    run with bounded depth, timeout, token budget, and the intersection of parent,
@@ -147,9 +162,11 @@ generation are conditional model actions, not mandatory steps for every chat.
     canonical Markdown artifact and verifies its database record, owner/run,
     storage key, filename, media type, size, storage metadata, existence, and
     SHA-256 content hash.
-12. The harness inspects final output for artifact claims and runs completion
-    verification before marking the trajectory successful. Failed verification
-    produces `verification.failed`; it never silently becomes a successful run.
+12. The harness applies the server-derived artifact or outcome completion
+    requirement when one exists. Execution-level goals add no goal-specific
+    requirement, but artifact claims still trigger canonical artifact
+    verification. A failed applicable requirement produces
+    `verification.failed`; it does not become a successful run.
 13. The complete resumed assistant response, including tool calls, tool results,
     and artifact references, is persisted with a deterministic message ID.
     Activity and trajectory events remain
@@ -198,6 +215,22 @@ components are harness concerns around the driver. Delegation is shown on a
 separate axis because local/A2A child work has its own bounded lifecycle while
 still returning observable results to the parent run.
 
+`serverRunPreparer` is the canonical server composition for Chat, Automation,
+delegation, and resume. It resolves context, server budget authority,
+goal/completion state, the AI SDK driver descriptor, and each surface's supplied
+capability, policy, runtime-context, and model bindings. Production Harness calls
+must declare durable run ownership: root Chat and headless execution create a
+run, while worker-owned delegated and resumed execution supplies a claim token.
+Workflow automation also creates a durable run around workflow execution.
+
+Runtime events describe boundaries, not retrospective summaries. Routing is
+recorded before execution starts; model request/completion/failure events bracket
+the provider call; tool request, policy/approval, start, and terminal events
+follow the tool lifecycle; and sandbox requested/started events occur around
+durable reservation and runner start. Ordered occurrence identity and recorded
+timestamps make repeated events distinguishable without exposing
+chain-of-thought.
+
 ## Durable Lifecycle
 
 Agent runs use these persisted states:
@@ -221,6 +254,10 @@ queued -> running -> waiting_external -> running -> succeeded
 - Parent checkpoints and join records reconnect asynchronous child completion to
   the original root reasoning trajectory without holding the foreground HTTP
   request open.
+- Root limits are immutable once created. Descendants and resumed work resolve
+  the persisted root budget rather than trusting a client or checkpoint copy;
+  atomic committed/reserved accounting prevents concurrent branches from each
+  spending the same remaining allocation.
 - The sweeper redispatches pending jobs and reclaims bounded stale work.
 - Cancellation applies to a run tree, is checked during heartbeat, propagates to
   local execution, and attempts A2A `tasks/cancel` for active remote tasks.
@@ -285,19 +322,26 @@ tool has the same policy.
 Artifact verification proves identity, ownership, persistence, metadata, and
 byte integrity. It does **not** prove that a report’s conclusions are factually
 correct, that arbitrary tool output is safe, or that a remote agent is honest.
+Likewise, capability verification proves that a required capability executed and
+returned non-empty structured output; outcome verification currently checks the
+configured structural requirement, not semantic truth or goal quality.
 
 ## Remote-Agent API and UX
 
 Remote agents are disabled by default. Enable both delegation and A2A, run the
 Iris worker, then use **Remote agents** in the sidebar.
 
-The connections page supports:
+The remote-peer connection manager supports:
 
 - create, edit, enable/disable, and delete a connection;
 - HTTPS endpoint and optional bearer or custom-header API-key credentials;
 - initial Agent Card discovery on create and explicit rediscovery;
 - credential replacement without returning the stored secret to the browser;
 - active/disabled and discovery status.
+
+This surface manages outbound peer connection records and Agent Card discovery.
+It is not an agent-authoring builder and does not create or configure the remote
+agent itself.
 
 Authenticated API routes:
 
@@ -443,8 +487,10 @@ REMOTE_AGENT_ENCRYPTION_KEY=
 ### Trusted Sandbox
 
 Sandbox is a compute plane, not an `ExecutionDriver` or a second agent loop.
-The main Harness remains the control plane; `python_compute` is a capability that
-uses `SandboxManager` and the dedicated `sandbox-runner` service.
+More precisely, it is an optional platform service used by capability and
+workflow execution. The main Harness remains the agent control plane;
+`SandboxManager`, its provider, and the dedicated `sandbox-runner` manage compute
+sessions rather than model execution drivers.
 
 ```bash
 # Validate package policy and Compose security invariants
@@ -476,12 +522,14 @@ Required behavior:
   ingested through `ArtifactService` and verified before completion.
 - On macOS Docker Desktop/OrbStack without registered gVisor, readiness is
   intentionally unavailable. Do not enable unsafe host or runc execution.
+- The package broker is a non-fetching authorization skeleton. Dynamic package
+  delivery, installation, and egress are explicitly disabled.
 
 See [Trusted Sandbox operations](docs/operations/trusted-sandbox.md) for Linux
 gVisor setup, runner authentication, Docker topology, package policy, cleanup,
 and production deployment guidance.
 
-The latest checked-in migration is `0059_sandbox_durable_compute_budget.sql`. Application
+The latest checked-in migration is `0061_root_run_budget.sql`. Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -499,8 +547,10 @@ trajectory sequence allocation added by `0048`, runtime budget states added by
 added by `0054`, the sandbox control plane added by `0055`, distributed creation
 fencing added by `0056`, bounded accounting and artifact cleanup added by
 `0057`, pre-upload orphan cleanup added by `0058`, and distributed durable
-compute accounting added by `0059`. Treat the complete checked-in migration
-set, not an older numeric range, as the release unit.
+compute accounting added by `0059`, Automation budget-exhausted state added by
+`0060`, and durable root-run aggregate authority added by `0061`. Treat the
+complete checked-in migration set, not an older numeric range, as the release
+unit.
 
 For general database integration verification, use only a disposable database:
 
@@ -659,6 +709,11 @@ for audit-only checks.
 - Migration operations use separately confirmed targets and write sealed
   evidence to `artifacts/migration-operations/`. These commands are safe-target
   gates, not permission to point tests or drills at production.
+- `.github/workflows/sandbox-gvisor.yml` defines a real Linux Docker/gVisor job
+  for a self-hosted runner labeled `Linux` and `gvisor`. It checks registered
+  `runsc`, builds the images, runs the smoke profile, and executes runtime
+  security assertions. No retained successful run evidence is present in this
+  repository, so the workflow's existence is not a validation result.
 
 The current workstream verification records passing local A2A 0.3 and 1.0
 conformance profiles, a disposable A2A lifecycle benchmark, and the isolated
@@ -690,10 +745,12 @@ docker/           Application image and local/full-stack Compose services
 
 The current hardening implementation also includes:
 
-- a common `RunPreparer` foundation and ContextEngine provenance/trust records;
+- canonical `serverRunPreparer` composition for Chat, Automation, delegation,
+  and resume, backed by ContextEngine provenance/trust records;
 - threshold-based deterministic lexical relevance routing with explicit-hint pinning;
 - action/resource/destination-aware PolicyEngine decisions with authority reduction;
-- ordered runtime trajectory events with occurrence identity and replayable timelines;
+- ordered runtime trajectory events emitted at routing, model, tool, and sandbox
+  lifecycle boundaries, with occurrence identity and replayable timelines;
 - goal-aware execution, artifact, and outcome verification;
 - a real disposable PostgreSQL north-star integration test covering fake A2A
   working/completion, parent rejoin, report generation, artifact verification,
@@ -718,15 +775,18 @@ not a future-feature list:
 - The operations resume UI supports requested text, bearer credentials, and
   custom-header API-key credentials. External authentication protocols beyond
   those credential forms require provider-specific integration.
-- Artifact verification checks durable byte identity and ownership, not semantic
-  correctness. The verification engine has a `tool_result` target type, but no
-  general tool-result verifier is registered by default.
+- Completion verification enforces only the resolved requirement. Artifact
+  verification checks durable byte identity and ownership; capability checks
+  require execution and non-empty structured output; neither establishes
+  semantic correctness. Execution-level goals have no goal-specific verifier,
+  and no general `tool_result` verifier is registered by default.
 - `prefer` and `only` route among capabilities already authorized by the server;
   they are not a semantic planner guarantee that the model will invoke a
   particular tool or peer.
-- Foreground chat remains a high-coupling streaming path. Durable run creation in
-  that path is currently tied to delegation enablement, while harness trajectory
-  events and stream finalization also operate during incremental migration.
+- Foreground Chat remains a high-coupling streaming path, but it creates a
+  durable root `AgentRun` independently of delegation. Headless Automation,
+  delegated execution, workflow execution, and parent resume also declare
+  durable create/claim ownership at their production boundaries.
 - A web-only Vercel deployment does not execute the memory or Iris worker loops.
 - Local A2A conformance covers deterministic JSON-RPC 0.3 and 1.0 peers. No
   retained external-endpoint conformance evidence is included in the repository.
@@ -740,6 +800,9 @@ not a future-feature list:
 - Repository tests and local evidence cannot establish production capacity,
   external-provider reliability, secret configuration, disaster recovery,
   network policy, or the security posture of an operator’s MCP/A2A peers.
+- The checked-in Linux/gVisor workflow has no retained successful run evidence in
+  the repository. Do not infer gVisor host validation from source or static
+  Compose checks.
 
 ### Production gates
 

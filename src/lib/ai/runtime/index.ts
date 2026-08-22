@@ -27,16 +27,19 @@ export type {
   CompletionRequirement,
   GoalVerificationSpec,
   VerificationLevel,
+  PersistedVerificationLevel,
   CapabilityVerification,
 } from "./verification";
 export {
   VerificationEngine,
+  AllRequirements,
   capabilityResultVerifier,
   nonEmptyStructuredOutput,
 } from "./verification";
 export {
-  ArtifactVerificationRequirement,
-  GoalAwareVerificationRequirement,
+  ArtifactRequirement,
+  CapabilityRequirement,
+  OutcomeRequirement,
 } from "./artifact-verification-requirement";
 export { ContextEngine, estimateMessageTokens } from "./context-engine";
 export type {
@@ -64,6 +67,7 @@ export {
 export type {
   GoalCapability,
   NormalizedGoalRequirement,
+  PersistedGoalRequirement,
 } from "./goal-requirement-resolver";
 export { PolicyEngine, policyEngine } from "./policy-engine";
 export type { PolicyDecision } from "./policy-engine";

@@ -52,7 +52,12 @@ const server = createServer((request, response) => {
       const authorization = authorizePackageRequest(
         JSON.parse(Buffer.concat(chunks).toString("utf8")),
       );
-      send(response, 200, { authorized: true, ...authorization });
+      send(response, 200, {
+        authorization: "approved",
+        delivery: "disabled",
+        claims: "unsupported",
+        ...authorization,
+      });
     } catch {
       send(response, 400, { error: "package request denied" });
     }

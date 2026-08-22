@@ -5,7 +5,10 @@ vi.mock("server-only", () => ({}));
 
 describe("sandbox server configuration", () => {
   it("is disabled without runner credentials", () => {
-    expect(sandboxServerConfig({} as NodeJS.ProcessEnv).enabled).toBe(false);
+    expect(sandboxServerConfig({} as NodeJS.ProcessEnv)).toMatchObject({
+      enabled: false,
+      profile: { network: "none" },
+    });
   });
 
   it("fails closed when enabled without URL or strong token", () => {

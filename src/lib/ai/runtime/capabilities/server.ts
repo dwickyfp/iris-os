@@ -1,20 +1,33 @@
 import "server-only";
 
 import type { Tool } from "ai";
+import type { Agent } from "app-types/agent";
 import type { CapabilityHints, CapabilityRef } from "app-types/chat";
 import type { VercelAIMcpTool } from "app-types/mcp";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
-import type { SkillsRuntime } from "lib/ai/skill";
+import {
+  type AssignedSkillsRepository,
+  type SkillsRuntime,
+  createSkillsRuntime,
+} from "lib/ai/skill";
+import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
+import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
 import {
   agentRepository,
   remoteAgentRepository,
+  skillRepository,
   workflowRepository,
 } from "lib/db/repository";
 import {
   type DelegationTarget,
   delegationTargetId,
 } from "lib/delegation/targets";
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import type { SandboxProvider } from "lib/sandbox";
+import { sandboxCapabilityProvider } from "lib/sandbox";
+import { sandboxCapability, workflowSandboxServices } from "lib/sandbox/server";
+import { workflowToVercelAITool } from "../../../../app/api/chat/shared.chat";
 import {
   builtinCapabilities,
   localPeerCapabilities,
@@ -27,10 +40,8 @@ import {
   type CapabilityProvider,
   CapabilityRegistry,
 } from "./registry";
-import type { SandboxProvider } from "lib/sandbox";
-import { sandboxCapabilityProvider } from "lib/sandbox";
 
-type ServerCapabilityContext = {
+export type ServerCapabilityContext = {
   userId: string;
   primaryAgentId?: string;
   allowedMcpServers?: Record<string, { tools: string[] }>;
@@ -40,6 +51,160 @@ type ServerCapabilityContext = {
   delegationEnabled: boolean;
   remoteAgentsEnabled: boolean;
 };
+
+export type ServerCapabilityResolutionInput = Parameters<
+  typeof resolveServerCapabilities
+>[0];
+
+export type ServerCapabilityBuildInput = {
+  userId: string;
+  workspaceId?: string;
+  taskId?: string;
+  runId: string;
+  goal: string;
+  agent?: Agent;
+  hints?: CapabilityHints;
+  permissions?: {
+    allowedMcpServers?: Record<string, { tools: string[] }>;
+    allowedAppDefaultToolkit?: string[];
+  };
+  featureState?: {
+    tools: boolean;
+    workflows: boolean;
+    delegation: boolean;
+    remoteAgents: boolean;
+    learning: boolean;
+  };
+  additionalTools?: Record<string, Tool>;
+  workflowBinding?: {
+    dataStream?: { write(value: unknown): void };
+    signal?: AbortSignal;
+  };
+  dependencies?: {
+    skillsRepository?: AssignedSkillsRepository;
+    selectScopedSkills?: typeof selectScopedLearnedSkillSummaries;
+  };
+};
+
+export type CapabilitySubtraction = {
+  id: string;
+  key: string;
+  reason: "automation_tool_allowlist";
+};
+
+export function subtractAutomationCapabilities<
+  Descriptor extends { id: string; key: string },
+>(descriptors: readonly Descriptor[], allowedTools?: readonly string[]) {
+  if (allowedTools === undefined)
+    return { descriptors: [...descriptors], subtractions: [] };
+  const allowed = new Set(allowedTools);
+  return {
+    descriptors: descriptors.filter(({ key }) => allowed.has(key)),
+    subtractions: descriptors
+      .filter(({ key }) => !allowed.has(key))
+      .map(
+        ({ id, key }): CapabilitySubtraction => ({
+          id,
+          key,
+          reason: "automation_tool_allowlist",
+        }),
+      ),
+  };
+}
+
+function agentCapabilityAuthority(agent?: Agent): CapabilityRef[] | undefined {
+  if (!agent) return undefined;
+  return [
+    ...(agent.instructions.mentions ?? []),
+    ...(agent.instructions.capabilities ?? []),
+  ].filter(
+    (capability): capability is CapabilityRef => capability.type !== "agent",
+  );
+}
+
+/** Builds the production registry input shared by foreground and headless runs. */
+export async function buildServerCapabilityResolutionInput(
+  input: ServerCapabilityBuildInput,
+): Promise<ServerCapabilityResolutionInput> {
+  const features = input.featureState ?? {
+    tools: true,
+    workflows: true,
+    delegation: isV2FeatureEnabled("delegation"),
+    remoteAgents: isV2FeatureEnabled("remoteAgents"),
+    learning: isV2FeatureEnabled("learning"),
+  };
+  const scopedSkills =
+    features.tools && features.learning
+      ? await (
+          input.dependencies?.selectScopedSkills ??
+          selectScopedLearnedSkillSummaries
+        )({
+          userId: input.userId,
+          query: input.goal,
+          workspaceId: input.workspaceId,
+          taskId: input.taskId,
+          agentId: input.agent?.id,
+        })
+      : [];
+  const skillsRuntime = features.tools
+    ? await createSkillsRuntime({
+        repository:
+          input.dependencies?.skillsRepository ??
+          (skillRepository as AssignedSkillsRepository),
+        agentId: input.agent?.id,
+        userId: input.userId,
+        additionalSkills: scopedSkills,
+      })
+    : emptySkillsRuntime();
+
+  return {
+    query: input.goal,
+    context: {
+      userId: input.userId,
+      primaryAgentId: input.agent?.id,
+      allowedMcpServers: input.permissions?.allowedMcpServers,
+      allowedAppDefaultToolkit: input.permissions?.allowedAppDefaultToolkit,
+      toolsEnabled: features.tools,
+      workflowsEnabled: features.tools && features.workflows,
+      delegationEnabled: features.tools && features.delegation,
+      remoteAgentsEnabled: features.remoteAgents,
+    },
+    hints: input.hints ?? { mode: "prefer", requested: [] },
+    allowedCapabilities: agentCapabilityAuthority(input.agent),
+    skillsRuntime,
+    workflowTool: (workflow) =>
+      workflowToVercelAITool({
+        ...workflow,
+        dataStream: input.workflowBinding?.dataStream ?? { write() {} },
+        executionContext: {
+          runId: input.runId,
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          taskId: input.taskId,
+          signal: input.workflowBinding?.signal,
+          services: workflowSandboxServices(input.runId),
+        },
+      } as any),
+    additionalTools: input.additionalTools,
+    createDelegationTool: (targets) =>
+      createDelegateWorkTool({
+        parentRunId: input.runId,
+        userId: input.userId,
+        targets,
+      }),
+    sandbox: sandboxCapability,
+  };
+}
+
+function emptySkillsRuntime(): SkillsRuntime {
+  return {
+    manifest: [],
+    tools: {},
+    select() {
+      return this;
+    },
+  };
+}
 
 function capabilityRouterConfig() {
   return {
@@ -164,11 +329,7 @@ export async function resolveServerCapabilities(input: {
       }),
     }),
     skillRuntimeProvider(routedSkillsRuntime),
-    ...(input.sandbox
-      ? [
-          sandboxCapabilityProvider(input.sandbox),
-        ]
-      : []),
+    ...(input.sandbox ? [sandboxCapabilityProvider(input.sandbox)] : []),
   ];
   const resolved = await new CapabilityRegistry(providers).resolve(
     context,

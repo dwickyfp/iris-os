@@ -377,7 +377,7 @@ describe("CapabilityRegistry", () => {
         name: "sandbox",
         metadata: { domain: "compute" },
         readiness: vi.fn(async () => ({
-          ready: false,
+          status: "unavailable" as const,
           reason: "disabled",
           metadata: { provider: "iris-runner" },
         })),
@@ -392,6 +392,7 @@ describe("CapabilityRegistry", () => {
     expect(result.providers).toEqual([
       {
         name: "sandbox",
+        status: "unavailable",
         ready: false,
         reason: "disabled",
         metadata: {
@@ -400,5 +401,97 @@ describe("CapabilityRegistry", () => {
         },
       },
     ]);
+  });
+
+  it("keeps degraded capabilities eligible and exposes health diagnostics", async () => {
+    const registry = new CapabilityRegistry([
+      provider("remote", [
+        {
+          ...capability("remote-peer:stale", "Stale remote"),
+          kind: "remotePeer",
+          health: {
+            status: "degraded",
+            reason: "agent_card_stale",
+            checkedAt: "2026-08-20T00:00:00.000Z",
+          },
+        },
+      ]),
+    ]);
+
+    const result = await registry.resolve({ userId: "user-1" });
+
+    expect(result.ordered).toHaveLength(1);
+    expect(result.ordered[0].health?.status).toBe("degraded");
+    expect(result.health).toEqual([
+      {
+        id: "remote-peer:stale",
+        provider: "remote",
+        status: "degraded",
+        reason: "agent_card_stale",
+        checkedAt: "2026-08-20T00:00:00.000Z",
+        eligible: true,
+      },
+    ]);
+  });
+
+  it("pins an explicit auth-required hint but excludes unavailable hints", async () => {
+    const registry = new CapabilityRegistry([
+      provider("remote", [
+        {
+          ...capability("remote-peer:auth", "Auth remote"),
+          kind: "remotePeer",
+          health: { status: "auth_required", reason: "credential_required" },
+        },
+        {
+          ...capability("remote-peer:down", "Down remote"),
+          kind: "remotePeer",
+          health: { status: "unavailable", reason: "agent_card_unavailable" },
+        },
+        capability("builtin:other", "Other"),
+      ]),
+    ]);
+
+    const result = await registry.resolve(
+      { userId: "user-1" },
+      hints([
+        { type: "remoteAgent", agentId: "auth", name: "Auth remote" },
+        { type: "remoteAgent", agentId: "down", name: "Down remote" },
+      ]),
+      undefined,
+      { query: "unrelated query" },
+    );
+
+    expect(result.ordered.map(({ id }) => id)).toEqual([
+      "remote-peer:auth",
+      "builtin:other",
+    ]);
+    expect(result.routing.pinnedIds).toEqual(["remote-peer:auth"]);
+    expect(result.health).toContainEqual({
+      id: "remote-peer:down",
+      provider: "remote",
+      status: "unavailable",
+      reason: "agent_card_unavailable",
+      eligible: false,
+    });
+  });
+
+  it("does not let an explicit hint override policy denial", async () => {
+    const auth = {
+      ...capability("remote-peer:auth", "Auth remote"),
+      kind: "remotePeer" as const,
+      health: {
+        status: "auth_required" as const,
+        reason: "credential_required",
+      },
+    };
+    const registry = new CapabilityRegistry([provider("remote", [auth])]);
+
+    const result = await registry.resolve(
+      { userId: "user-1" },
+      hints([{ type: "remoteAgent", agentId: "auth", name: "Auth remote" }]),
+      [],
+    );
+
+    expect(result.ordered).toEqual([]);
   });
 });

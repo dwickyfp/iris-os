@@ -1,5 +1,6 @@
 "use client";
 
+import { useRemoteAgents } from "@/hooks/queries/use-remote-agents";
 import type {
   PublicRemoteAgent,
   RemoteAgentCredential,
@@ -41,7 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "ui/select";
-import { useRemoteAgents } from "@/hooks/queries/use-remote-agents";
 
 type FormState = {
   name: string;
@@ -209,6 +209,7 @@ export function RemoteAgentConnections() {
                   >
                     {t(agent.status)}
                   </Badge>
+                  <Badge variant="outline">{t(agent.health.status)}</Badge>
                 </div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">
                   {agent.endpointUrl}
@@ -235,6 +236,9 @@ export function RemoteAgentConnections() {
             </div>
             <div className="mt-5 flex items-center justify-between border-t pt-4">
               <div className="text-xs text-muted-foreground">
+                {agent.health.reason && (
+                  <p className="mb-1">{t(agent.health.reason)}</p>
+                )}
                 {agent.agentCard ? (
                   <span className="flex items-center gap-1.5 text-foreground">
                     <CheckCircle2 className="size-3.5 text-emerald-500" />

@@ -1,3 +1,7 @@
+import type {
+  CapabilityHealth,
+  CapabilityHealthStatus,
+} from "app-types/capability-health";
 import type { CapabilityHints, CapabilityRef, ChatModel } from "app-types/chat";
 import type { PolicyRisk } from "../policy-engine";
 import {
@@ -39,13 +43,15 @@ export type CapabilityDescriptor<T = unknown> = {
   /** Trusted, additive governance classification. Request hints never alter it. */
   risks?: readonly PolicyRisk[];
   metadata?: Record<string, unknown>;
+  health?: CapabilityHealth;
 };
 
 export type CapabilityProvider<Context = unknown> = {
   name: string;
   metadata?: Record<string, unknown>;
   readiness?(context: Context): Promise<{
-    ready: boolean;
+    status?: CapabilityHealthStatus;
+    ready?: boolean;
     reason?: string;
     metadata?: Record<string, unknown>;
   }>;
@@ -54,9 +60,16 @@ export type CapabilityProvider<Context = unknown> = {
 
 export type CapabilityProviderResolution = {
   name: string;
+  status: CapabilityHealthStatus;
   ready: boolean;
   reason?: string;
   metadata?: Record<string, unknown>;
+};
+
+export type CapabilityHealthDiagnostic = CapabilityHealth & {
+  id: string;
+  provider: string;
+  eligible: boolean;
 };
 
 export type CapabilityCollision = {
@@ -73,6 +86,7 @@ export type ResolvedCapabilities = {
   collisions: CapabilityCollision[];
   routing: CapabilityRoutingDiagnostics;
   providers: CapabilityProviderResolution[];
+  health: CapabilityHealthDiagnostic[];
 };
 
 export type CapabilityRoutingRequest = {
@@ -131,22 +145,35 @@ export class CapabilityRegistry<Context = unknown> {
     const batches = await Promise.all(
       this.providers.map(async (provider) => {
         const readiness = (await provider.readiness?.(context)) ?? {
-          ready: true,
+          status: "healthy" as const,
         };
+        const status =
+          readiness.status ?? (readiness.ready ? "healthy" : "unavailable");
+        const ready = statusEligible(status);
         return {
           provider: provider.name,
           providerResolution: {
             name: provider.name,
-            ready: readiness.ready,
+            status,
+            ready,
             reason: readiness.reason,
             metadata: { ...provider.metadata, ...readiness.metadata },
           },
-          descriptors: readiness.ready ? await provider.eligible(context) : [],
+          descriptors: ready ? await provider.eligible(context) : [],
         };
       }),
     );
-    const candidates = batches.flatMap(({ provider, descriptors }) =>
-      descriptors.map((descriptor) => ({ descriptor, provider })),
+    const observed = batches.flatMap(({ provider, descriptors }) =>
+      descriptors.map((descriptor) => ({
+        descriptor: {
+          ...descriptor,
+          health: descriptor.health ?? { status: "healthy" as const },
+        },
+        provider,
+      })),
+    );
+    const candidates = observed.filter(({ descriptor }) =>
+      statusEligible(descriptor.health.status),
     );
 
     const byKey = new Map<string, typeof candidates>();
@@ -253,8 +280,18 @@ export class CapabilityRegistry<Context = unknown> {
       collisions,
       routing: routingDiagnostics,
       providers: batches.map(({ providerResolution }) => providerResolution),
+      health: observed.map(({ descriptor, provider }) => ({
+        id: descriptor.id,
+        provider,
+        ...descriptor.health,
+        eligible: statusEligible(descriptor.health.status),
+      })),
     };
   }
+}
+
+function statusEligible(status: CapabilityHealthStatus) {
+  return status !== "unavailable" && status !== "disabled";
 }
 
 export function modelCapabilityDescriptor<T>(input: {

@@ -10,15 +10,17 @@ process.env.POSTGRES_URL = connectionString;
 vi.mock("server-only", () => ({}));
 
 const client = new Client({ connectionString });
-let repository: typeof import("lib/db/pg/repositories/agent-run-repository.pg").pgAgentRunRepository;
+const loadRepositoryModule = () =>
+  import("lib/db/pg/repositories/agent-run-repository.pg");
+type RepositoryModule = Awaited<ReturnType<typeof loadRepositoryModule>>;
+let repository: RepositoryModule["pgAgentRunRepository"];
 
 beforeAll(async () => {
   await client.connect();
   await recreatePublicSchema(client);
   await applyMigrations(client);
-  repository = (
-    await import("lib/db/pg/repositories/agent-run-repository.pg")
-  ).pgAgentRunRepository;
+  repository = (await import("lib/db/pg/repositories/agent-run-repository.pg"))
+    .pgAgentRunRepository;
 });
 
 afterAll(async () => {
@@ -111,8 +113,8 @@ describe("agent run durable external lifecycle", () => {
     expect(childLease).not.toBeNull();
     await expect(
       repository.finishRunning(childRunId, childLease!.token, {
-      status: "succeeded",
-      result: { facts: ["joined"] },
+        status: "succeeded",
+        result: { facts: ["joined"] },
       }),
     ).resolves.toMatchObject({ status: "succeeded" });
 
@@ -184,10 +186,9 @@ describe("agent run durable external lifecycle", () => {
        WHERE run.id = $1`,
       [parentRunId],
     );
-    expect(
-      heartbeatState,
-      JSON.stringify(afterHeartbeat.rows[0]),
-    ).toBe("active");
+    expect(heartbeatState, JSON.stringify(afterHeartbeat.rows[0])).toBe(
+      "active",
+    );
     expect(afterHeartbeat.rows[0].aligned).toBe(true);
     expect(afterHeartbeat.rows[0].lease_expires_at.getTime()).toBeGreaterThan(
       beforeHeartbeat.rows[0].lease_expires_at.getTime(),
@@ -411,6 +412,14 @@ describe("agent run durable external lifecycle", () => {
        VALUES ($1, $2, $1, 'queued', NOW() + interval '10 minutes')`,
       [parentRunId, userId],
     );
+    await client.query(
+      `INSERT INTO root_run_budget
+         (root_run_id, max_steps, max_tokens, max_duration_ms, max_tool_calls,
+          max_delegations, max_delegation_depth, max_parallel_children,
+          max_sandbox_compute_ms)
+       VALUES ($1, 10, 50000, 600000, 32, 8, 3, 8, 300000)`,
+      [parentRunId],
+    );
     await repository.createDelegated({
       id: childRunId,
       delegationId: randomUUID(),
@@ -508,5 +517,89 @@ describe("agent run durable external lifecycle", () => {
       remote_outcome: { id: "remote-task-1", state: "cancelled" },
       completed_at: expect.any(Date),
     });
+  });
+
+  test("releases nested queued and waiting child capacity on tree cancellation", async () => {
+    const userId = randomUUID();
+    const rootRunId = randomUUID();
+    const childRunId = randomUUID();
+    const grandchildRunId = randomUUID();
+    const agentId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Cancellation Budget Owner', $2, 'hash')`,
+      [userId, `cancel-budget-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO agent (id, user_id, name) VALUES ($1, $2, 'Child')`,
+      [agentId, userId],
+    );
+    await repository.createRunning({
+      id: rootRunId,
+      userId,
+      timeoutMs: 600_000,
+      budget: { maxParallel: 2 },
+    });
+    const delegate = async (runId: string, parentRunId: string, call: string) =>
+      repository.createDelegated({
+        id: runId,
+        delegationId: randomUUID(),
+        userId,
+        agentId,
+        target: { kind: "local", agentId },
+        parentRunId,
+        objective: call,
+        context: {},
+        allowedTools: [],
+        timeoutMs: 60_000,
+        depth: parentRunId === rootRunId ? 1 : 2,
+        tokenBudget: 1_000,
+        idempotencyKey: `${parentRunId}:${call}`,
+        toolCallId: call,
+      });
+    await delegate(childRunId, rootRunId, "child");
+    await delegate(grandchildRunId, childRunId, "grandchild");
+    await client.query(
+      `UPDATE agent_run SET status = 'waiting_input' WHERE id = $1`,
+      [childRunId],
+    );
+    await client.query(
+      `UPDATE delegation_run SET status = 'waiting_input'
+       WHERE child_run_id = $1`,
+      [childRunId],
+    );
+
+    await expect(
+      repository.requestCancellationTree(childRunId, userId),
+    ).resolves.toMatchObject({ status: "cancelled" });
+    await expect(
+      repository.requestCancellationTree(childRunId, userId),
+    ).resolves.toBeNull();
+
+    const budget = await client.query(
+      `SELECT reserved_children, committed_children
+       FROM root_run_budget WHERE root_run_id = $1`,
+      [rootRunId],
+    );
+    expect(budget.rows[0]).toEqual({
+      reserved_children: 0,
+      committed_children: 0,
+    });
+    const reservations = await client.query(
+      `SELECT state, committed_amount FROM root_run_budget_reservation
+       WHERE token IN ($1, $2) ORDER BY token`,
+      [`child:${childRunId}`, `child:${grandchildRunId}`],
+    );
+    expect(reservations.rows).toEqual([
+      { state: "released", committed_amount: null },
+      { state: "released", committed_amount: null },
+    ]);
+
+    await expect(
+      delegate(randomUUID(), rootRunId, "replacement-a"),
+    ).resolves.toMatchObject({ status: "queued" });
+    await expect(
+      delegate(randomUUID(), rootRunId, "replacement-b"),
+    ).resolves.toMatchObject({ status: "queued" });
   });
 });

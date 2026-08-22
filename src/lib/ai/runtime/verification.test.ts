@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
-import { capabilityResultVerifier, VerificationEngine } from "./verification";
+import {
+  capabilityResultVerifier,
+  nonEmptyStructuredOutput,
+  VerificationEngine,
+} from "./verification";
 
 describe("VerificationEngine", () => {
   test("does not accept a filename without a storage-backed verifier", async () => {
@@ -50,5 +54,16 @@ describe("VerificationEngine", () => {
       verified: true,
       verificationKind: "capability",
     });
+  });
+
+  test("does not treat an empty runtime event as a nonempty outcome", () => {
+    expect(
+      nonEmptyStructuredOutput({
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "search",
+        output: undefined,
+      }),
+    ).toBe(false);
   });
 });

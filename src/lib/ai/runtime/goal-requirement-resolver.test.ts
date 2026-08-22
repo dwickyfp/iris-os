@@ -4,10 +4,10 @@ import { GoalRequirementResolver } from "./goal-requirement-resolver";
 describe("GoalRequirementResolver", () => {
   const resolver = new GoalRequirementResolver();
 
-  test("defaults ordinary chat to cheap execution verification", () => {
+  test("defaults ordinary chat to fail-closed outcome verification", () => {
     expect(resolver.resolve({ goal: "How are you today?" })).toEqual({
       goal: "How are you today?",
-      level: "execution",
+      level: "outcome",
       requiredArtifactKinds: [],
       requiredMediaTypes: [],
       requiredSections: [],
@@ -29,7 +29,7 @@ describe("GoalRequirementResolver", () => {
       requiredMediaTypes: ["application/pdf"],
       requiredPeriod: "Q2",
       requiredSections: [],
-      requiredCapabilities: ["analysis", "generate_report"],
+      requiredCapabilities: ["generate_report"],
       analysisOnlyAllowed: false,
     });
   });
@@ -41,9 +41,24 @@ describe("GoalRequirementResolver", () => {
       requiredArtifactKinds: [],
       requiredMediaTypes: [],
       requiredSections: [],
-      requiredCapabilities: ["analysis"],
+      requiredTitle: undefined,
+      requiredCapabilities: [],
       analysisOnlyAllowed: true,
     });
+  });
+
+  test("restores legacy execution snapshots as outcome requirements", () => {
+    expect(
+      resolver.restore({
+        goal: "persisted ordinary goal",
+        level: "execution",
+        requiredArtifactKinds: [],
+        requiredMediaTypes: [],
+        requiredSections: [],
+        requiredCapabilities: [],
+        analysisOnlyAllowed: false,
+      }),
+    ).toMatchObject({ level: "outcome" });
   });
 
   test("extracts only explicit title and sections", () => {

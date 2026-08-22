@@ -53,7 +53,10 @@ describe("RunPreparer", () => {
     const capabilities = { tools: ["search"] };
     const policy = { approvalPolicy: "never" as const, tools: {} };
     const runtimeContext = { runId: "run-1" } as any;
-    const completionRequirement = { verifyCompletion: vi.fn() };
+    const completionRequirement = {
+      kind: "outcome" as const,
+      verifyCompletion: vi.fn(),
+    };
     const preparer = new RunPreparer(
       { resolve: vi.fn(async () => context) },
       {
@@ -103,8 +106,10 @@ describe("RunPreparer", () => {
     });
   });
 
-  test("restores durable snapshots instead of recomputing them", async () => {
-    const resolveBudget = vi.fn(async () => ({ maxTokens: 99 }));
+  test("restores snapshots but authoritatively re-resolves their budget", async () => {
+    const resolveBudget = vi.fn(async (input) => ({
+      maxTokens: Math.min(99, input.restore?.budget?.maxTokens ?? 99),
+    }));
     const preparer = new RunPreparer(
       {
         resolve: vi.fn(async () => ({
@@ -146,7 +151,11 @@ describe("RunPreparer", () => {
       },
     });
 
-    expect(resolveBudget).not.toHaveBeenCalled();
+    expect(resolveBudget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restore: expect.objectContaining({ budget: { maxTokens: 7 } }),
+      }),
+    );
     expect(prepared.snapshot).toMatchObject({
       routing: { selectedIds: ["persisted"] },
       budget: { maxTokens: 7 },
@@ -188,6 +197,39 @@ describe("RunPreparer", () => {
     expect(automation.goalRequirement).toEqual(chat.goalRequirement);
     expect(resume.goalRequirement).toEqual(chat.goalRequirement);
     expect(chat.snapshot.completion).toEqual(chat.goalRequirement);
+  });
+
+  test("upgrades a persisted execution-level goal to outcome semantics", async () => {
+    const preparer = new RunPreparer({
+      resolve: vi.fn(async () => ({
+        trustedInstructions: "trusted",
+        dataPlaneObservations: "",
+        instructions: "trusted",
+        messages: [],
+        sourceRecords: [],
+        estimatedTokens: 0,
+        truncatedSources: [],
+        trustBoundaries: [],
+        provenance: [],
+        diagnostics: {} as any,
+      })),
+    });
+
+    const prepared = await preparer.prepare({
+      restore: {
+        completion: {
+          goal: "legacy",
+          level: "execution",
+          requiredArtifactKinds: [],
+          requiredMediaTypes: [],
+          requiredSections: [],
+          requiredCapabilities: [],
+          analysisOnlyAllowed: false,
+        },
+      },
+    });
+
+    expect(prepared.goalRequirement.level).toBe("outcome");
   });
 
   test("gives chat and automation equivalent capabilities for the same scope and goal", async () => {

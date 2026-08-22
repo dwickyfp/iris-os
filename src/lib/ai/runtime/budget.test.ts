@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { BudgetExhaustedError, BudgetGuard } from "./budget";
+import {
+  BudgetExhaustedError,
+  BudgetGuard,
+  isBudgetExhausted,
+} from "./budget";
 
 describe("BudgetGuard", () => {
   test("enforces steps and tokens", () => {
@@ -71,5 +75,29 @@ describe("BudgetGuard", () => {
     expect(() => parent.reserveCompute(301)).toThrow(BudgetExhaustedError);
     child.releaseCompute(reservation);
     expect(parent.remaining("maxComputeMs")).toBe(1_000);
+  });
+});
+
+describe("isBudgetExhausted", () => {
+  test("recognizes the concrete error and exact structured code", () => {
+    expect(
+      isBudgetExhausted(
+        new BudgetExhaustedError("maxSteps", {
+          steps: 1,
+          tokens: 0,
+          toolCalls: 0,
+          delegations: 0,
+          depth: 0,
+          parallel: 0,
+          cost: 0,
+          durationMs: 0,
+          computeMs: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(isBudgetExhausted({ code: "BUDGET_EXHAUSTED" })).toBe(true);
+    expect(isBudgetExhausted(new Error("provider budget exhausted"))).toBe(
+      false,
+    );
   });
 });

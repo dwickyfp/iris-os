@@ -11,6 +11,10 @@ export type SandboxProfile = {
 };
 
 export type SandboxRunnerSessionCreateRequest = {
+  identity: {
+    sessionId: string;
+    rootRunId: string;
+  };
   profile: {
     id: string;
     network: "none" | "egress";
@@ -38,10 +42,31 @@ export type SandboxRunnerSessionLimits = {
 
 export type SandboxRunnerSessionResponse = {
   id: string;
+  controlPlaneSessionId: string;
+  rootRunId: string;
+  status: string;
   profile: { id: string; network: "none" | "egress" };
   limits: SandboxRunnerSessionLimits;
   createdAt: string;
   expiresAt: string;
+};
+
+export type SandboxRunnerInventorySession = {
+  id: string;
+  controlPlaneSessionId: string;
+  rootRunId: string;
+  bootId: string;
+  state: "live" | "quarantined";
+  profile: { id: string; network: "none" | "egress" };
+  limits: SandboxRunnerSessionLimits;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type SandboxRunnerInventory = {
+  bootId: string;
+  capturedAt: string;
+  sessions: SandboxRunnerInventorySession[];
 };
 
 export type SandboxProviderStatus = {
@@ -53,6 +78,7 @@ export type SandboxProviderStatus = {
 
 export type SandboxScope = {
   runId: string;
+  rootRunId?: string;
   userId: string;
   workspaceId?: string;
   taskId?: string;
@@ -76,6 +102,7 @@ export type PythonComputeRequest = {
   files?: SandboxFileInput[];
   outputPaths?: string[];
   timeoutMs?: number;
+  packages?: string[];
 };
 
 export type PythonComputeResult = {
@@ -104,14 +131,25 @@ export interface SandboxProvider {
   readonly name: string;
   status(options?: { signal?: AbortSignal }): Promise<SandboxProviderStatus>;
   create(
-    input: { scope: SandboxScope; profile: SandboxProfile },
+    input: {
+      scope: SandboxScope;
+      profile: SandboxProfile;
+      sessionId: string;
+      rootRunId: string;
+    },
     options?: { signal?: AbortSignal },
   ): Promise<SandboxInstance>;
   connect(
     instanceId: string,
     profile: SandboxProfile,
-    options?: { signal?: AbortSignal },
+    options?: {
+      signal?: AbortSignal;
+      identity?: { controlPlaneSessionId: string; rootRunId: string };
+    },
   ): Promise<SandboxInstance>;
+  inventory(options?: {
+    signal?: AbortSignal;
+  }): Promise<SandboxRunnerInventory>;
 }
 
 export type SandboxSessionStatus =
@@ -165,12 +203,17 @@ export interface SandboxRepository {
   claimSession(
     record: SandboxSessionRecord,
     creatorToken: string,
-  ): Promise<{ session: SandboxSessionRecord; claimed: boolean }>;
+  ): Promise<{
+    session: SandboxSessionRecord;
+    claimed: boolean;
+    rootRunId: string;
+  }>;
   activateSession(
     id: string,
     creatorToken: string,
     providerInstanceId: string,
     expiresAt: Date,
+    activatedAt: Date,
     profile?: SandboxProfile,
   ): Promise<boolean>;
   failSessionCreation(
@@ -188,16 +231,45 @@ export interface SandboxRepository {
     provider: string,
     completedAt: Date,
   ): Promise<SandboxSessionRecord[]>;
-  touchSession(id: string, lastUsedAt: Date, expiresAt: Date): Promise<void>;
+  touchSession(id: string, lastUsedAt: Date, expiresAt: Date): Promise<boolean>;
   finishSession(
     id: string,
     status: "destroyed" | "failed",
     input?: { errorCode?: string; destroyedAt?: Date },
   ): Promise<void>;
-  listExpiredSessions(
+  claimExpiredSessions(
     before: Date,
     limit: number,
+    retryAt: Date,
   ): Promise<SandboxSessionRecord[]>;
+  listSessionsForReconciliation(
+    provider: string,
+    providerInstanceIds: string[],
+  ): Promise<Array<SandboxSessionRecord & { rootRunId: string }>>;
+  reconcileSession(input: {
+    id: string;
+    rootRunId: string;
+    provider: string;
+    providerInstanceId: string;
+    profile: SandboxProfile;
+    expiresAt: Date;
+    creatorMayBeLive: boolean;
+    reconciledAt: Date;
+  }): Promise<"active" | "creator_owned" | "rejected">;
+  retainSessionAfterLookup(input: {
+    id: string;
+    rootRunId: string;
+    provider: string;
+    providerInstanceId: string;
+    profile: SandboxProfile;
+  }): Promise<boolean>;
+  markSessionLost(
+    id: string,
+    providerInstanceId: string,
+    reconciliationStartedAt: Date,
+    completedAt: Date,
+  ): Promise<boolean>;
+  reconcileStaleExecutions(before: Date, limit: number): Promise<number>;
   reserveExecution(
     record: SandboxExecutionRecord,
     maxComputeMs: number,
@@ -211,10 +283,7 @@ export interface SandboxRepository {
   releaseExecution(
     id: string,
     reservationToken: string,
-    input: Pick<
-      SandboxExecutionRecord,
-      "status" | "errorCode" | "completedAt"
-    >,
+    input: Pick<SandboxExecutionRecord, "status" | "errorCode" | "completedAt">,
   ): Promise<boolean>;
   settleExecution(
     id: string,
@@ -262,6 +331,7 @@ export interface SandboxEventSink {
     type:
       | "sandbox.session_created"
       | "sandbox.session_reused"
+      | "sandbox.execution_requested"
       | "sandbox.execution_started"
       | "sandbox.execution_completed"
       | "sandbox.execution_failed"

@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
-import { GoalAwareVerificationRequirement } from "./artifact-verification-requirement";
+import {
+  ArtifactRequirement,
+  CapabilityRequirement,
+  OutcomeRequirement,
+} from "./artifact-verification-requirement";
 import { VerificationEngine } from "./verification";
 
 const reference = {
@@ -14,120 +18,117 @@ const reference = {
     .digest("hex"),
 };
 
-function makeRequirement(
-  spec: ConstructorParameters<typeof GoalAwareVerificationRequirement>[1],
-  value = reference,
-) {
-  const verifier = {
-    supports: () => true,
-    verify: vi.fn(async () => ({
+const expected = { userId: "u", runId: "r" };
+
+describe("completion requirements", () => {
+  test("rejects a fake capability claim without a runtime execution event", async () => {
+    const requirement = new CapabilityRequirement(
+      new VerificationEngine([]),
+      ["generate_report"],
+    );
+
+    await expect(
+      requirement.verifyCompletion(
+        {
+          text: "I ran generate_report",
+          capabilityResults: [
+            {
+              capability: "generate_report",
+              executed: true,
+              result: { artifactId: "fake" },
+            },
+          ],
+        },
+        expected,
+      ),
+    ).resolves.toEqual({
+      verified: false,
+      reason: "REQUIRED_CAPABILITY_NOT_EXECUTED",
+    });
+  });
+
+  test("accepts an actual runtime capability result even with an empty result", async () => {
+    const verifier = {
+      supports: (target: { kind: string }) =>
+        target.kind === "capability_result",
+      verify: vi.fn(async () => ({
+        verified: true as const,
+        verificationKind: "capability" as const,
+      })),
+    };
+    const requirement = new CapabilityRequirement(
+      new VerificationEngine([verifier]),
+      ["generate_report"],
+    );
+
+    await expect(
+      requirement.verifyCompletion(
+        {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "generate_report",
+          output: undefined,
+        },
+        expected,
+      ),
+    ).resolves.toMatchObject({
+      verified: true,
+      verificationKind: "capability",
+    });
+  });
+
+  test("accepts nonempty outcome output and rejects empty output", async () => {
+    const requirement = new OutcomeRequirement();
+
+    await expect(
+      requirement.verifyCompletion({ parts: [{ type: "text", text: "Answer" }] }, expected),
+    ).resolves.toEqual({ verified: true, verificationKind: "outcome" });
+    await expect(
+      requirement.verifyCompletion({ parts: [], role: "assistant" }, expected),
+    ).resolves.toEqual({
+      verified: false,
+      verificationKind: "outcome",
+      reason: "OUTCOME_EMPTY",
+    });
+  });
+
+  test("requires a canonical artifact and validates it through the engine", async () => {
+    const verify = vi.fn(async () => ({
       verified: true as const,
       details: {
         content: {
           text: "# Q1 Report\n\n## Summary\n\nQ1 2026",
           title: "Q1 Report",
           sections: ["Summary"],
-          nonEmpty: true,
-          structured: true,
         },
       },
-    })),
-  };
-  return {
-    requirement: new GoalAwareVerificationRequirement(
-      new VerificationEngine([verifier]),
-      spec,
-    ),
-    value: { artifact: value },
-    verify: verifier.verify,
-  };
-}
+    }));
+    const requirement = new ArtifactRequirement(
+      new VerificationEngine([{ supports: () => true, verify }]),
+      {
+        requiredArtifactKinds: ["report"],
+        requiredMediaTypes: ["text/markdown"],
+        requiredTitle: "Q1 Report",
+        requiredPeriod: "Q1 2026",
+        requiredSections: ["Summary"],
+      },
+    );
 
-describe("goal-aware verification", () => {
-  test("does not accept model-said-done without a required report", async () => {
-    const { requirement } = makeRequirement({
-      goal: "Produce a report",
-      level: "artifact",
-      requiredArtifactKinds: ["report"],
-    });
     await expect(
-      requirement.verifyCompletion(
-        { text: "Done" },
-        { userId: "u", runId: "r" },
-      ),
-    ).resolves.toEqual({
-      verified: false,
-      reason: "REQUIRED_ARTIFACT_MISSING",
-    });
-  });
-
-  test("blocks a requested goal when its output is missing", async () => {
-    const { requirement } = makeRequirement({
-      goal: "create Q2 revenue PDF report",
-      level: "artifact",
-      requiredArtifactKinds: ["report"],
-      requiredMediaTypes: ["application/pdf"],
-      requiredPeriod: "Q2",
-      requiredCapabilities: ["analysis", "generate_report"],
-    });
-    await expect(
-      requirement.verifyCompletion(
-        { text: "I analyzed the revenue and finished the report." },
-        { userId: "u", runId: "r" },
-      ),
-    ).resolves.toEqual({
-      verified: false,
-      reason: "REQUIRED_ARTIFACT_MISSING",
-    });
-  });
-
-  test("checks report title, period, and sections without an LLM", async () => {
-    const { requirement, verify } = makeRequirement({
-      goal: "Produce Q1 report",
-      level: "outcome",
-      requiredArtifactKinds: ["report"],
-      requiredMediaTypes: ["text/markdown"],
-      requiredTitle: "Q1 Report",
-      requiredPeriod: "Q1 2026",
-      requiredSections: ["Summary"],
-    });
-    await expect(
-      requirement.verifyCompletion(
-        { artifact: reference },
-        { userId: "u", runId: "r" },
-      ),
+      requirement.verifyCompletion({ artifact: reference }, expected),
     ).resolves.toMatchObject({ verified: true });
-    expect(verify).toHaveBeenCalledOnce();
-  });
-
-  test("rejects malformed artifact claims", async () => {
-    const { requirement } = makeRequirement({
-      level: "artifact",
-      requiredArtifactKinds: ["report"],
+    expect(verify).toHaveBeenCalledWith({
+      kind: "artifact",
+      value: reference,
+      mediaType: "text/markdown",
+      expectedUserId: "u",
+      expectedRunId: "r",
     });
     await expect(
-      requirement.verifyCompletion(
-        { artifact: "q1.md" },
-        { userId: "u", runId: "r" },
-      ),
+      requirement.verifyCompletion({ artifact: "q1.md" }, expected),
     ).resolves.toEqual({
       verified: false,
       reason: "ARTIFACT_REFERENCE_INVALID",
     });
-  });
-
-  test("allows explicitly permitted analysis-only outcomes", async () => {
-    const { requirement } = makeRequirement({
-      goal: "Analyze trends",
-      level: "outcome",
-      requiredArtifactKinds: ["report"],
-      analysisOnlyAllowed: true,
-    });
-    await expect(
-      requirement.verifyCompletion(
-        { text: "Analysis complete" },
-        { userId: "u", runId: "r" },
-      ),
-    ).resolves.toEqual({ verified: true });
   });
 });
