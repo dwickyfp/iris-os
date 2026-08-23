@@ -32,14 +32,6 @@ describe("Prometheus rendering", () => {
         total: 8,
       },
       capabilityHealth: { healthy: 4, degraded: 1 },
-      sandbox: {
-        sessions: { active: 1 },
-        executions: { timed_out: 2 },
-        forcedDestroy: 3,
-        sessionReaped: 7,
-        timeouts: 2,
-        artifactRejections: 1,
-      },
       a2a: { agents: { active: 1 }, delegations: { running: 1 } },
       parentJoins: { pending: 1, completed: 2 },
       workers: { active: 1, stale: 0, oldestHeartbeatAgeSeconds: 2 },
@@ -58,14 +50,10 @@ describe("Prometheus rendering", () => {
     expect(output).toContain("iris_delegations 8");
     expect(output).toContain("iris_delegation_depth_1 3");
     expect(output).toContain("iris_capability_health_degraded 1");
-    expect(output).toContain("iris_sandbox_executions_timed_out 2");
-    expect(output).toContain("iris_sandbox_artifact_rejections 1");
-    expect(output).toContain("iris_sandbox_sessions_forced_destroy 3");
-    expect(output).toContain("iris_sandbox_sessions_reaped 7");
     expect(output).toContain("iris_workers_oldest_heartbeat_age_seconds 2");
     expect(output).not.toContain("# TYPE iris_delegations counter");
     expect(output).not.toMatch(
-      /iris_(?:delegations|budget_exhausted|budget_expired|sandbox_sessions_(?:reaped|forced_destroy))_total/,
+      /iris_(?:delegations|budget_exhausted|budget_expired)_total/,
     );
     expect(output).not.toContain("{");
   });
@@ -94,14 +82,6 @@ describe("Prometheus rendering", () => {
       },
       delegations: { statuses: {}, depths: {}, activeChildren: 0, total: 0 },
       capabilityHealth: {},
-      sandbox: {
-        sessions: {},
-        executions: {},
-        forcedDestroy: 0,
-        sessionReaped: 0,
-        timeouts: 0,
-        artifactRejections: 0,
-      },
       a2a: { agents: {}, delegations: {} },
       parentJoins: { pending: 0, completed: 0 },
       workers: { active: 0, stale: 0, oldestHeartbeatAgeSeconds: null },

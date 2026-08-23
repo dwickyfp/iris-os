@@ -22,7 +22,6 @@ export enum NodeKind {
   Http = "http", // HTTP request node
   Template = "template", // Template processing node
   Code = "code", // Code execution node (future implementation)
-  Compute = "compute", // Deterministic server-side Python compute
   Output = "output", // Exit point of workflow - produces final result
 }
 
@@ -189,25 +188,6 @@ export type TemplateNodeData = BaseWorkflowNodeDataData<{
   };
 };
 
-export type ComputeInputBinding = {
-  name: string;
-  source: OutputSchemaSourceKey;
-  schema: JSONSchema7;
-};
-
-/**
- * Compute node: Executes Python in the managed server-side sandbox.
- * Python receives a JSON-compatible `inputs` dictionary and must assign its
- * JSON-compatible result to `output`.
- */
-export type ComputeNodeData = BaseWorkflowNodeDataData<{
-  kind: NodeKind.Compute;
-  language: "python";
-  code: string;
-  inputBindings: ComputeInputBinding[];
-  timeoutMs: number;
-}>;
-
 /**
  * Union type of all possible node data types.
  * When adding a new node type, include it in this union.
@@ -220,8 +200,7 @@ export type WorkflowNodeData =
   | ToolNodeData
   | ConditionNodeData
   | HttpNodeData
-  | TemplateNodeData
-  | ComputeNodeData;
+  | TemplateNodeData;
 
 /**
  * Runtime fields added during workflow execution

@@ -19,12 +19,6 @@ export type ArtifactRecord = ArtifactReference & {
   updatedAt: Date;
 };
 
-export type ArtifactOutputProvenance = {
-  executionId: string;
-  relativePath: string;
-  sha256: string;
-};
-
 export type ArtifactVerificationRecord = {
   id: string;
   artifactId: string;

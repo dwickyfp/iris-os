@@ -36,7 +36,7 @@ future design.
 | **Relevance routing** | Deterministic lexical routing runs only above the candidate threshold after authorization; explicit `prefer` hints stay pinned, `only` is strict, and degraded fallback is bounded | Configured with `CAPABILITY_ROUTER_THRESHOLD`, `CAPABILITY_ROUTER_TOP_N`, `CAPABILITY_ROUTER_MIN_SCORE`, `CAPABILITY_ROUTER_TIMEOUT_MS`, and `CAPABILITY_ROUTER_FALLBACK_HARD_CAP` |
 | **Agents** | Reusable primary agents with instructions, model selection, assigned skills, and scoped capabilities | Available |
 | **Local delegation** | Parent/child runs, permission intersection, depth/child/parallel limits, timeout, token budget, leases, heartbeat, cancellation propagation, and structured results | `IRIS_DELEGATION_V2` |
-| **Runtime budgets** | Server-resolved run limits plus PostgreSQL-backed root aggregates for steps, tokens, tool calls, delegations, child allocation, sandbox compute, and elapsed root duration; reservations and settlements are fenced and idempotent | Available; one persisted root authority is shared by descendants and resume execution |
+| **Runtime budgets** | Server-resolved run limits plus PostgreSQL-backed root aggregates for steps, tokens, tool calls, delegations, child allocation, and elapsed root duration; reservations and settlements are fenced and idempotent | Available; one persisted root authority is shared by descendants and resume execution |
 | **Remote agents / A2A** | Agent Card discovery, authenticated JSON-RPC A2A task send/get/cancel, durable polling, input/auth waiting, resume, cancellation, and artifact ingestion | `IRIS_DELEGATION_V2` + `IRIS_REMOTE_AGENTS_A2A` |
 | **Run operations** | Queued/running/waiting/terminal states, run tree, timeline, retry-safe dispatch, stale-run sweep, and cancel tree | `IRIS_DELEGATION_V2`; requires `worker:iris` |
 | **Canonical artifacts** | Storage-backed artifact records bound to user and run, SHA-256 metadata, verification history, and Markdown report generation | Available where artifact-producing tools run |
@@ -53,7 +53,6 @@ future design.
 | **Authentication and storage** | Better Auth, password and OAuth sign-in, PostgreSQL/pgvector, Vercel Blob or S3-compatible file storage | Available |
 | **Operations UI** | Task operations, automation history, delegation tree/timeline, waiting/resume controls, remote-agent connections, and admin diagnostics | Corresponding V2 flags |
 | **Runtime trajectory** | Sequence-backed repeated runtime events, routing/model/tool/delegation/verification milestones, and replayable run timeline | Available |
-| **Trusted Sandbox** | Optional server-side sandbox platform service exposed as `python_compute` and workflow compute, with a dedicated runner, runsc/gVisor enforcement, non-root/read-only/no-network containers, artifact bridge, budgets, cancellation, and cleanup | Disabled by default; Linux Docker host with registered `runsc` required; it is not an `ExecutionDriver` |
 
 Supported model providers include OpenAI, Anthropic, Google, xAI, OpenRouter,
 Ollama, Groq, and OpenAI-compatible endpoints. Foreground model selection and
@@ -226,8 +225,7 @@ Workflow automation also creates a durable run around workflow execution.
 Runtime events describe boundaries, not retrospective summaries. Routing is
 recorded before execution starts; model request/completion/failure events bracket
 the provider call; tool request, policy/approval, start, and terminal events
-follow the tool lifecycle; and sandbox requested/started events occur around
-durable reservation and runner start. Ordered occurrence identity and recorded
+follow the tool lifecycle. Ordered occurrence identity and recorded
 timestamps make repeated events distinguishable without exposing
 chain-of-thought.
 
@@ -485,65 +483,7 @@ REMOTE_AGENT_ENCRYPTION_KEY=
 
 ## Migrations and Workers
 
-### Trusted Sandbox
-
-Sandbox is a compute plane, not an `ExecutionDriver` or a second agent loop.
-More precisely, it is an optional platform service used by capability and
-workflow execution. The main Harness remains the agent control plane;
-`SandboxManager`, its provider, and the dedicated `sandbox-runner` manage compute
-sessions rather than model execution drivers.
-
-```bash
-# Validate package policy and Compose security invariants
-pnpm sandbox:check
-
-# Standalone sandbox-only Compose stack on Linux with registered runsc.
-# Development runner configuration is contained in the standalone Compose file.
-pnpm sandbox:standalone:build
-pnpm sandbox:standalone:up
-pnpm sandbox:standalone:ps
-pnpm dev
-
-# Remove only the standalone sandbox project
-pnpm sandbox:standalone:down
-
-# Build images only; no production runner secret is required or embedded
-pnpm sandbox:build
-
-# Start the opt-in sandbox control plane (requires SANDBOX_RUNNER_TOKEN)
-pnpm sandbox:up
-
-# Run the runsc smoke profile (requires SANDBOX_RUNNER_TOKEN)
-pnpm sandbox:smoke
-
-# Stop sandbox services
-pnpm sandbox:down
-```
-
-Required behavior:
-
-- `IRIS_SANDBOX_ENABLED=1` is required to expose the capability.
-- The trusted runner alone receives Docker socket access; the app and workers do
-  not receive the socket.
-- Every user sandbox must use Docker `Runtime: runsc`; no `runc` fallback exists.
-- Workloads run non-root with read-only root, dropped capabilities,
-  `no-new-privileges`, bounded CPU/memory/PIDs/output, ephemeral workspace, and
-  network disabled by default.
-- Input artifacts are authorized by canonical artifact ID and outputs are
-  ingested through `ArtifactService` and verified before completion.
-- On macOS Docker Desktop/OrbStack without registered gVisor, readiness is
-  intentionally unavailable. Do not enable unsafe host or runc execution.
-- The standalone Compose stack publishes the authenticated runner only at
-  `127.0.0.1:8787`; the broker has no host port, and only the runner receives the
-  Linux Docker Engine socket.
-- The package broker is a non-fetching authorization skeleton. Dynamic package
-  delivery, installation, and egress are explicitly disabled.
-
-See [Trusted Sandbox operations](docs/operations/trusted-sandbox.md) for Linux
-gVisor setup, runner authentication, Docker topology, package policy, cleanup,
-and production deployment guidance.
-
-The latest checked-in migration is `0061_root_run_budget.sql`. Application
+The latest checked-in migration is `0063_drop_sandbox_subsystem.sql`. Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -557,12 +497,9 @@ delegation and waiting/continuation state, canonical artifacts and verification,
 parent/child rejoin fencing, and the `iris_worker_heartbeat` table added by
 `0046`, memory full-text search GIN indexes added by `0047`, ordered runtime
 trajectory sequence allocation added by `0048`, runtime budget states added by
-`0049`, root trajectory identity added by `0051`, sandbox artifact provenance
-added by `0054`, the sandbox control plane added by `0055`, distributed creation
-fencing added by `0056`, bounded accounting and artifact cleanup added by
-`0057`, pre-upload orphan cleanup added by `0058`, and distributed durable
-compute accounting added by `0059`, Automation budget-exhausted state added by
-`0060`, and durable root-run aggregate authority added by `0061`. Treat the
+`0049`, root trajectory identity added by `0051`, durable root-run aggregate
+authority added by `0061`, automation authority snapshots added by `0062`, and
+removal of the retired sandbox subsystem tables and columns by `0063`. Treat the
 complete checked-in migration set, not an older numeric range, as the release
 unit.
 
@@ -637,7 +574,7 @@ not sufficient.
 | --- | --- |
 | `GET /api/health/live` | Process liveness only; returns `200` with `{"status":"live"}` and does not probe dependencies |
 | `GET /api/health/ready` | Returns `200` only when operations configuration, PostgreSQL, latest migration state, and any required worker/queue checks pass; otherwise `503` |
-| `GET /api/metrics` | Prometheus text for runs, waits, leases, outboxes, budgets, delegations, capability health, sandbox state/failures, artifact/completion verification, A2A, parent joins, worker heartbeats, and pg-boss; requires `Authorization: Bearer $OPERATIONS_METRICS_TOKEN` |
+| `GET /api/metrics` | Prometheus text for runs, waits, leases, outboxes, budgets, delegations, capability health, artifact/completion verification, A2A, parent joins, worker heartbeats, and pg-boss; requires `Authorization: Bearer $OPERATIONS_METRICS_TOKEN` |
 
 ```bash
 curl --fail http://127.0.0.1:3000/api/health/live
@@ -723,13 +660,8 @@ for audit-only checks.
 - Migration operations use separately confirmed targets and write sealed
   evidence to `artifacts/migration-operations/`. These commands are safe-target
   gates, not permission to point tests or drills at production.
-- `.github/workflows/sandbox-gvisor.yml` defines a real Linux Docker/gVisor job
-  for a self-hosted runner labeled `Linux` and `gvisor`. It checks registered
-  `runsc`, builds the images, runs the smoke profile, invokes archive/artifact
-  attack tests, and executes bounded runtime isolation, network, pressure,
-  overflow, timeout, and cancellation assertions. The suite is defined, but no
-  retained successful external run evidence is present in this repository, so
-  its workflow or static-definition success is not a runtime validation result.
+- The retired gVisor sandbox CI workflow was removed together with the sandbox
+  subsystem; no runtime isolation suite ships in this repository.
 
 The current workstream verification records passing local A2A 0.3 and 1.0
 conformance profiles, a disposable A2A lifecycle benchmark, and the isolated
@@ -765,7 +697,7 @@ The current hardening implementation also includes:
   and resume, backed by ContextEngine provenance/trust records;
 - threshold-based deterministic lexical relevance routing with explicit-hint pinning;
 - action/resource/destination-aware PolicyEngine decisions with authority reduction;
-- ordered runtime trajectory events emitted at routing, model, tool, and sandbox
+- ordered runtime trajectory events emitted at routing, model, and tool
   lifecycle boundaries, with occurrence identity and replayable timelines;
 - goal-aware execution, artifact, and outcome verification;
 - a real disposable PostgreSQL north-star integration test covering fake A2A
@@ -838,11 +770,10 @@ evidence for all of the following:
    heartbeat.
 3. Protect and scrape `/api/metrics`; alert on readiness, stale/missing workers,
    queue lag/failures, expired leases, pending outboxes/joins, budget exhaustion,
-   delegation/sandbox failures, and failed artifact verification. The snapshot
+   delegation failures, and failed artifact verification. The snapshot
    intentionally exposes no latency histograms because it has no durable latency
-   series. Collect request, provider, worker, A2A, and sandbox-runner latency in
-   external telemetry. Runner quarantine is likewise runner-local and must be
-   exported by runner telemetry. Use those signals to establish
+   series. Collect request, provider, worker, and A2A latency in
+   external telemetry. Use those signals to establish
    deployment-specific latency SLOs, throughput, saturation, and retention
    baselines.
 4. Capture conformance evidence against each actual external A2A endpoint and

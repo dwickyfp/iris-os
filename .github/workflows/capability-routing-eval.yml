@@ -15,8 +15,6 @@ on:
       - "src/lib/ai/agent/delegation-policy*"
       - "src/lib/ai/tools/delegation/**"
       - "src/lib/delegation/**"
-      - "src/lib/sandbox/**"
-      - "src/lib/sandbox-runner/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/capability-routing-eval.yml"

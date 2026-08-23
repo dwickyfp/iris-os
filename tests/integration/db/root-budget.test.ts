@@ -61,9 +61,8 @@ async function root(maxTokens = 10, maxParallelChildren = 1) {
   await client.query(
     `INSERT INTO root_run_budget
        (root_run_id, max_steps, max_tokens, max_duration_ms, max_tool_calls,
-        max_delegations, max_delegation_depth, max_parallel_children,
-        max_sandbox_compute_ms)
-     VALUES ($1, 10, $2, 90000, 10, 8, 3, $3, 1000)`,
+        max_delegations, max_delegation_depth, max_parallel_children)
+     VALUES ($1, 10, $2, 90000, 10, 8, 3, $3)`,
     [rootRunId, maxTokens, maxParallelChildren],
   );
   return { userId, rootRunId };
@@ -113,23 +112,23 @@ describe("durable root budget authority", () => {
 
     await authority.reserve({
       runId: rootRunId,
-      token: "compute-1",
-      kind: "sandbox_compute_ms",
-      amount: 100,
+      token: "tool-1",
+      kind: "tool_calls",
+      amount: 8,
       expiresAt: new Date(Date.now() + 60_000),
     });
-    expect(await authority.settle("compute-1", 60)).toBe(true);
-    expect(await authority.settle("compute-1", 60)).toBe(false);
+    expect(await authority.settle("tool-1", 6)).toBe(true);
+    expect(await authority.settle("tool-1", 6)).toBe(false);
     const usage = await client.query(
-      `SELECT committed_tokens, committed_sandbox_compute_ms,
-              reserved_sandbox_compute_ms
+      `SELECT committed_tokens, committed_tool_calls,
+              reserved_tool_calls
        FROM root_run_budget WHERE root_run_id = $1`,
       [rootRunId],
     );
     expect(usage.rows[0]).toEqual({
       committed_tokens: 7,
-      committed_sandbox_compute_ms: 60,
-      reserved_sandbox_compute_ms: 0,
+      committed_tool_calls: 6,
+      reserved_tool_calls: 0,
     });
   });
 
@@ -257,13 +256,6 @@ describe("durable root budget authority", () => {
       amount: 3,
       expiresAt: expired,
     });
-    await authority.reserve({
-      runId: rootRunId,
-      token: "expired-sandbox",
-      kind: "sandbox_compute_ms",
-      amount: 100,
-      expiresAt: expired,
-    });
 
     expect(await authority.reconcileExpiredReservations()).toBe(0);
     await client.query(
@@ -277,13 +269,12 @@ describe("durable root budget authority", () => {
     expect(await authority.reconcileExpiredReservations()).toBe(0);
 
     const state = await client.query(
-      `SELECT reserved_tokens, reserved_sandbox_compute_ms
+      `SELECT reserved_tokens
        FROM root_run_budget WHERE root_run_id = $1`,
       [rootRunId],
     );
     expect(state.rows[0]).toEqual({
       reserved_tokens: 0,
-      reserved_sandbox_compute_ms: 100,
     });
   });
 

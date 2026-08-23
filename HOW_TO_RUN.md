@@ -57,45 +57,6 @@ pnpm docker-compose:up
 # Stop Docker stack
 pnpm docker-compose:down
 
-# Validate sandbox package policy and Compose security invariants
-pnpm sandbox:check
-
-# Build the sandbox runner, package broker, and restricted Python image
-# Requires Docker. The runtime image requires gVisor on the Linux Docker host.
-# Build uses a scoped non-runtime placeholder; never deploy with that value.
-pnpm sandbox:build
-
-# Pin the locally built runtime image before starting the runner
-export SANDBOX_RUNNER_IMAGE="$(docker image inspect iris-sandbox-runtime:local --format '{{.Id}}')"
-
-# Start the opt-in sandbox control plane
-# Requires SANDBOX_RUNNER_TOKEN and a Docker host with runsc registered.
-pnpm sandbox:up
-
-# Run the gVisor sandbox smoke test
-# On macOS/OrbStack without runsc this must remain unavailable; never fallback to runc.
-pnpm sandbox:smoke
-
-# Run real Linux/gVisor runtime security assertions
-# Requires a Linux Docker Engine with runsc registered; there is no fallback.
-pnpm sandbox:security
-
-# Stop the sandbox control plane
-pnpm sandbox:down
-
-# Standalone sandbox-only stack on native Linux with registered runsc.
-# Development runner configuration is contained in docker/sandbox/docker-compose.yml.
-# On a fresh Linux Docker Engine host, install gVisor runsc, register it, and
-# recreate the runner with:
-pnpm sandbox:runsc:check
-sudo node docker/sandbox/runsc-setup.mjs configure
-pnpm sandbox:standalone:build
-pnpm sandbox:standalone:up
-pnpm sandbox:runsc:recreate
-pnpm sandbox:standalone:ps
-# Run the app separately with pnpm dev; runner listens only on 127.0.0.1:8787.
-pnpm sandbox:standalone:down
-
 # Check health endpoints
 curl http://127.0.0.1:3000/api/health/live
 curl http://127.0.0.1:3000/api/health/ready
@@ -106,19 +67,6 @@ curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/
 # Minimum required environment
 # POSTGRES_URL, BETTER_AUTH_SECRET, at least one provider API key
 # See .env.example for all variables
-
-# Sandbox requirements
-# IRIS_SANDBOX_ENABLED=1
-# IRIS_RUNNER_URL=http://sandbox-runner:8787
-# IRIS_RUNNER_TOKEN=<32+ random characters>
-# SANDBOX_RUNTIME_IMAGE=<immutable sandbox runtime image>
-# SANDBOX_RUNNER_TOKEN=<32+ random characters>
-# The sandbox feature fails closed unless Docker reports the runsc runtime.
-# Host development publishes only the authenticated runner on 127.0.0.1:8787;
-# the package broker and Docker socket are never exposed to the host app.
-# Sandbox is an optional platform service/capability, not an ExecutionDriver.
-# Package delivery is disabled; the package broker is a non-fetching policy
-# skeleton.
 
 # Runtime contract notes
 # Chat and headless Automation use the canonical serverRunPreparer.
@@ -132,8 +80,4 @@ curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/
 # Capability verification requires canonical terminal success, not nonempty
 # output. Outcome verification separately requires a nonempty evaluated result.
 # /api/metrics has durable state counts, not latency histograms. Export request,
-# provider, worker, A2A, and sandbox-runner latency to external telemetry for SLOs.
-
-# CI source exists at .github/workflows/sandbox-gvisor.yml for a self-hosted
-# Linux + gvisor runner. The repository contains no retained successful run
-# evidence, so run and retain deployment-specific evidence before enablement.
+# provider, worker, and A2A latency to external telemetry for SLOs.

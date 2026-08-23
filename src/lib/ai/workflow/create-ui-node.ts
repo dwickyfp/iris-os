@@ -103,11 +103,6 @@ export function createUINode(
         content: [],
       },
     };
-  } else if (node.data.kind === NodeKind.Compute) {
-    node.data.language = "python";
-    node.data.code = "output = inputs";
-    node.data.inputBindings = [];
-    node.data.timeoutMs = 30000;
   }
 
   return node;

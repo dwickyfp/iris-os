@@ -6,7 +6,6 @@ import logger from "logger";
 import { colorize } from "consola/utils";
 import { safeJSONParse, toAny } from "lib/utils";
 import { generateUUID } from "lib/utils";
-import { sandboxManager, workflowSandboxServices } from "lib/sandbox/server";
 import { runManager } from "lib/ai/runs/server";
 
 export async function POST(
@@ -46,7 +45,6 @@ export async function POST(
       runId,
       userId: session.user.id,
       signal: request.signal,
-      services: workflowSandboxServices(runId),
     },
   });
 
@@ -105,13 +103,14 @@ export async function POST(
         .then((result) => {
           if (!result.isOk) {
             logger.error("Workflow execution error:", result.error);
-            void runManager.fail(runId, String(result.error), "WORKFLOW_FAILED");
+            void runManager.fail(
+              runId,
+              String(result.error),
+              "WORKFLOW_FAILED",
+            );
           } else {
             void runManager.succeed(runId, { workflowId: id });
           }
-        })
-        .finally(() => {
-          void sandboxManager.cancelByRun(runId).catch(() => undefined);
         });
     },
   });

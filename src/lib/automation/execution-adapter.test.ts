@@ -41,17 +41,6 @@ vi.mock("lib/db/repository", () => ({
 vi.mock("lib/ai/mcp/mcp-manager", () => ({
   mcpClientsManager: { tools: () => ({}) },
 }));
-vi.mock("lib/sandbox/server", () => ({
-  sandboxCapability: {
-    provider: {
-      name: "test",
-      status: async () => ({ ready: false, checkedAt: new Date(0) }),
-    },
-    pythonCompute: {},
-  },
-  sandboxManager: { cancelByRun: vi.fn(async () => undefined) },
-  workflowSandboxServices: () => ({}),
-}));
 
 function request(
   targetType: AutomationExecutionRequest["targetType"],
@@ -210,16 +199,20 @@ describe("automation execution adapter", () => {
       capabilitiesModule,
       "buildServerCapabilityResolutionInput",
     ).mockResolvedValue({} as never);
-    vi.spyOn(capabilitiesModule, "resolveServerCapabilities").mockResolvedValue({
-      ordered: [
-        { id: "tool:allowed", key: "allowed", kind: "tool" },
-        { id: "tool:forbidden", key: "forbidden", kind: "tool" },
-      ],
-      model: tools,
-      eligibleDelegationTargets: [],
-      routing: {},
-    } as never);
-    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue({} as never);
+    vi.spyOn(capabilitiesModule, "resolveServerCapabilities").mockResolvedValue(
+      {
+        ordered: [
+          { id: "tool:allowed", key: "allowed", kind: "tool" },
+          { id: "tool:forbidden", key: "forbidden", kind: "tool" },
+        ],
+        model: tools,
+        eligibleDelegationTargets: [],
+        routing: {},
+      } as never,
+    );
+    vi.mocked(customModelProvider.getEngineModel).mockResolvedValue(
+      {} as never,
+    );
     const executeLocal = (workerRequest: any) =>
       runHeadlessAgent({
         request: workerRequest,
@@ -402,7 +395,6 @@ describe("automation execution adapter", () => {
       parallel: 0,
       cost: 0,
       durationMs: 1,
-      computeMs: 0,
     });
 
     await finishWorkflowAgentRun(
@@ -422,7 +414,7 @@ describe("automation execution adapter", () => {
     });
   });
 
-  test("terminalizes a thrown workflow executor failure and always cleans up", async () => {
+  test("terminalizes a thrown workflow executor failure", async () => {
     const manager = {
       start: vi.fn(async () => undefined),
       succeed: vi.fn(),
@@ -431,7 +423,6 @@ describe("automation execution adapter", () => {
       cancel: vi.fn(),
       timeOut: vi.fn(),
     };
-    const cleanup = vi.fn(async () => true);
     const executor = vi.fn(() => ({
       run: vi.fn(async () => {
         throw new Error("executor exploded");
@@ -444,15 +435,16 @@ describe("automation execution adapter", () => {
         workflow: { nodes: [], edges: [] },
         manager: manager as never,
         executor: executor as never,
-        cleanup,
         resolveBudget: async () => ({ maxTokens: 100 }) as never,
       }),
-    ).resolves.toMatchObject({ status: "failed", message: "executor exploded" });
+    ).resolves.toMatchObject({
+      status: "failed",
+      message: "executor exploded",
+    });
     expect(manager.fail).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  test("falls back to failed and surfaces cleanup when terminalization throws", async () => {
+  test("falls back to failed when terminalization throws", async () => {
     const manager = {
       start: vi.fn(async () => undefined),
       succeed: vi.fn(async () => {
@@ -463,9 +455,6 @@ describe("automation execution adapter", () => {
       cancel: vi.fn(),
       timeOut: vi.fn(),
     };
-    const cleanup = vi.fn(async () => {
-      throw new Error("cleanup exploded");
-    });
 
     await expect(
       executeWorkflowAutomation({
@@ -475,41 +464,10 @@ describe("automation execution adapter", () => {
         executor: (() => ({
           run: async () => ({ isOk: true, output: { ok: true } }),
         })) as never,
-        cleanup,
         resolveBudget: async () => ({ maxTokens: 100 }) as never,
       }),
-    ).rejects.toThrow("Workflow terminalization and cleanup failed");
+    ).rejects.toThrow("terminalization exploded");
     expect(manager.succeed).toHaveBeenCalledOnce();
-    expect(manager.fail).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledOnce();
-  });
-
-  test("records cleanup failure without masking a primary workflow failure", async () => {
-    const manager = {
-      start: vi.fn(async () => undefined),
-      succeed: vi.fn(),
-      fail: vi.fn(async () => undefined),
-      exhaustBudget: vi.fn(),
-      cancel: vi.fn(),
-      timeOut: vi.fn(),
-    };
-    await expect(
-      executeWorkflowAutomation({
-        request: request("workflow"),
-        workflow: { nodes: [], edges: [] },
-        manager: manager as never,
-        executor: (() => ({
-          run: async () => ({ isOk: false, error: new Error("primary") }),
-        })) as never,
-        cleanup: async () => {
-          throw new Error("cleanup");
-        },
-        resolveBudget: async () => ({ maxTokens: 100 }) as never,
-      }),
-    ).resolves.toMatchObject({
-      status: "failed",
-      message: "primary; cleanup failed: cleanup",
-    });
     expect(manager.fail).toHaveBeenCalledOnce();
   });
 

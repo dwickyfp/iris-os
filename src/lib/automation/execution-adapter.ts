@@ -33,7 +33,6 @@ import {
   workflowRepository,
 } from "lib/db/repository";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import { sandboxManager, workflowSandboxServices } from "lib/sandbox/server";
 import { generateUUID } from "lib/utils";
 import type { AutomationAuthoritySnapshot } from "./authority";
 import { workflowAuthoritySnapshot } from "./authority";
@@ -220,7 +219,7 @@ export async function finishWorkflowAgentRun(
       ? manager.cancel(runId, message)
       : /timeout/i.test(message)
         ? manager.timeOut(runId, message)
-    : manager.fail(runId, message, "WORKFLOW_FAILED");
+        : manager.fail(runId, message, "WORKFLOW_FAILED");
 }
 
 export async function executeWorkflowAutomation(input: {
@@ -228,17 +227,16 @@ export async function executeWorkflowAutomation(input: {
   workflow: { nodes: any[]; edges: any[] };
   manager?: typeof runManager;
   executor?: typeof createWorkflowExecutor;
-  cleanup?: typeof sandboxManager.cancelByRun;
   resolveBudget?: typeof serverBudgetResolver;
 }) {
   const manager = input.manager ?? runManager;
-  const sandboxRunId = generateUUID();
+  const workflowRunId = generateUUID();
   const budget = await (input.resolveBudget ?? serverBudgetResolver)({
     surface: "automation",
     userId: input.request.userId,
   });
   await manager.start({
-    id: sandboxRunId,
+    id: workflowRunId,
     userId: input.request.userId,
     workspaceId: input.request.workspaceId,
     context: {
@@ -251,17 +249,15 @@ export async function executeWorkflowAutomation(input: {
   });
   let executionResult: { isOk: boolean; output?: unknown; error?: unknown };
   let terminalizationError: unknown;
-  let cleanupError: unknown;
   try {
     executionResult = await (input.executor ?? createWorkflowExecutor)({
       edges: input.workflow.edges,
       nodes: input.workflow.nodes,
       context: {
-        runId: sandboxRunId,
+        runId: workflowRunId,
         userId: input.request.userId,
         workspaceId: input.request.workspaceId,
         signal: input.request.signal,
-        services: workflowSandboxServices(sandboxRunId),
       },
     }).run(input.request.input as never, {
       disableHistory: true,
@@ -276,12 +272,12 @@ export async function executeWorkflowAutomation(input: {
         ? input.request.signal.reason
         : new Error("Run was cancelled");
   try {
-    await finishWorkflowAgentRun(sandboxRunId, executionResult, manager);
+    await finishWorkflowAgentRun(workflowRunId, executionResult, manager);
   } catch (error) {
     terminalizationError = error;
     try {
       await manager.fail(
-        sandboxRunId,
+        workflowRunId,
         error instanceof Error ? error.message : String(error),
         "WORKFLOW_TERMINALIZATION_FAILED",
       );
@@ -291,34 +287,14 @@ export async function executeWorkflowAutomation(input: {
         "Workflow terminalization failed",
       );
     }
-  } finally {
-    try {
-      await (input.cleanup ?? sandboxManager.cancelByRun)(sandboxRunId);
-    } catch (error) {
-      cleanupError = error;
-    }
   }
-  if (terminalizationError) {
-    if (cleanupError)
-      throw new AggregateError(
-        [terminalizationError, cleanupError],
-        "Workflow terminalization and cleanup failed",
-      );
-    throw terminalizationError;
-  }
-  const result = executionResult.isOk
+  if (terminalizationError) throw terminalizationError;
+  return executionResult.isOk
     ? {
         status: "succeeded" as const,
         output: mapWorkflowOutput(executionResult.output),
       }
     : classifyWorkflowFailure(executionResult.error);
-  if (!cleanupError) return result;
-  const cleanupMessage = cleanupError instanceof Error
-    ? cleanupError.message
-    : String(cleanupError);
-  return result.status === "succeeded"
-    ? { ...result, output: { ...result.output, cleanupError: cleanupMessage } }
-    : { ...result, message: `${result.message}; cleanup failed: ${cleanupMessage}` };
 }
 
 export function classifyWorkflowFailure(
@@ -631,7 +607,10 @@ export function createAutomationExecutionAdapter(
     if (request.signal.aborted)
       return request.signal.reason instanceof DOMException &&
         request.signal.reason.name === "TimeoutError"
-        ? { status: "timed_out" as const, message: request.signal.reason.message }
+        ? {
+            status: "timed_out" as const,
+            message: request.signal.reason.message,
+          }
         : { status: "cancelled" as const, message: "Run was cancelled" };
     try {
       return await dependencies[request.targetType](request);

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, lte, ne, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   lockRootBudget,
@@ -19,8 +19,7 @@ export type DurableBudgetKind =
   | "tokens"
   | "tool_calls"
   | "delegations"
-  | "children"
-  | "sandbox_compute_ms";
+  | "children";
 
 const zeroUsage = {
   steps: 0,
@@ -31,7 +30,6 @@ const zeroUsage = {
   parallel: 0,
   cost: 0,
   durationMs: 0,
-  computeMs: 0,
 };
 
 const columns = {
@@ -55,12 +53,6 @@ const columns = {
     "max_parallel_children",
     "maxParallel",
   ],
-  sandbox_compute_ms: [
-    "committed_sandbox_compute_ms",
-    "reserved_sandbox_compute_ms",
-    "max_sandbox_compute_ms",
-    "maxComputeMs",
-  ],
 } as const;
 
 const properties = {
@@ -73,11 +65,6 @@ const properties = {
     "maxDelegations",
   ],
   children: ["committedChildren", "reservedChildren", "maxParallelChildren"],
-  sandbox_compute_ms: [
-    "committedSandboxComputeMs",
-    "reservedSandboxComputeMs",
-    "maxSandboxComputeMs",
-  ],
 } as const;
 
 function exhausted(kind: DurableBudgetKind | "duration", committed = 0): never {
@@ -87,7 +74,6 @@ function exhausted(kind: DurableBudgetKind | "duration", committed = 0): never {
   if (kind === "tokens") usage.tokens = committed;
   if (kind === "tool_calls") usage.toolCalls = committed;
   if (kind === "delegations") usage.delegations = committed;
-  if (kind === "sandbox_compute_ms") usage.computeMs = committed;
   throw new BudgetExhaustedError(budgetKind, usage);
 }
 
@@ -111,7 +97,6 @@ async function canReleaseExpiredReservation(
   tx: Transaction,
   reservation: typeof RootRunBudgetReservationTable.$inferSelect,
 ) {
-  if (reservation.kind === "sandbox_compute_ms") return false;
   const runId =
     reservation.kind === "children" && reservation.token.startsWith("child:")
       ? reservation.token.slice("child:".length)
@@ -288,7 +273,6 @@ export const serverBudgetAuthority = {
         and(
           eq(RootRunBudgetReservationTable.state, "reserved"),
           lte(RootRunBudgetReservationTable.expiresAt, new Date()),
-          ne(RootRunBudgetReservationTable.kind, "sandbox_compute_ms"),
         ),
       )
       .limit(limit);

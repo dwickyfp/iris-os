@@ -18,7 +18,6 @@ export type CapabilityKind =
   | "skill"
   | "localPeer"
   | "remotePeer"
-  | "sandbox"
   | "model";
 
 export type CapabilitySurface = "executable" | "model" | "manual";

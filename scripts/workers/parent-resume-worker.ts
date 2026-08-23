@@ -36,7 +36,6 @@ import {
   skillRepository,
 } from "lib/db/repository";
 import type { DelegationTarget } from "lib/delegation/targets";
-import { sandboxCapability } from "lib/sandbox/server";
 import { generateUUID } from "lib/utils";
 import type PgBoss from "pg-boss";
 import { workflowToVercelAITool } from "../../src/app/api/chat/shared.chat";
@@ -152,7 +151,6 @@ async function resolveRuntime(
     createDelegationTool: () => {
       throw new Error("UNEXPECTED_DELEGATION_CAPABILITY");
     },
-    sandbox: sandboxCapability,
   });
   const tools = Object.fromEntries(
     capabilities.ordered

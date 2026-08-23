@@ -133,42 +133,6 @@ export function renderPrometheus(snapshot: OperationsSnapshot): string {
     snapshot.capabilityHealth,
     "Current remote capabilities",
   );
-  addMap(
-    lines,
-    "iris_sandbox_sessions",
-    snapshot.sandbox.sessions,
-    "Current sandbox sessions",
-  );
-  addMap(
-    lines,
-    "iris_sandbox_executions",
-    snapshot.sandbox.executions,
-    "Current sandbox executions",
-  );
-  addGauge(
-    lines,
-    "iris_sandbox_sessions_forced_destroy",
-    snapshot.sandbox.forcedDestroy,
-    "Current sandbox sessions with forced-destroy terminal error codes.",
-  );
-  addGauge(
-    lines,
-    "iris_sandbox_sessions_reaped",
-    snapshot.sandbox.sessionReaped,
-    "Current durable sandbox session-reaped event rows.",
-  );
-  addGauge(
-    lines,
-    "iris_sandbox_timeouts",
-    snapshot.sandbox.timeouts,
-    "Current timed-out sandbox execution rows.",
-  );
-  addGauge(
-    lines,
-    "iris_sandbox_artifact_rejections",
-    snapshot.sandbox.artifactRejections,
-    "Current sandbox execution rows with artifact rejection errors.",
-  );
   addMap(lines, "iris_a2a_agents", snapshot.a2a.agents, "Current A2A agents");
   addMap(
     lines,

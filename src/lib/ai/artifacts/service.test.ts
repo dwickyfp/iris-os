@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FileStorage } from "lib/file-storage/file-storage.interface";
 import { describe, expect, test, vi } from "vitest";
-import type { ArtifactRecord } from "./contracts";
 import type { ArtifactRepository } from "./repository";
 import { ArtifactService } from "./service";
 
@@ -19,61 +18,6 @@ const artifact = {
   createdAt: new Date(),
   updatedAt: new Date(),
 };
-
-function service(overrides: Partial<ArtifactRecord> = {}, content = bytes) {
-  const record = { ...artifact, ...overrides };
-  const storage = {
-    getMetadata: vi.fn(async () => ({
-      key: record.storageKey,
-      filename: record.filename,
-      contentType: record.mediaType,
-      size: record.size,
-    })),
-    download: vi.fn(async () => content),
-  } as unknown as FileStorage;
-  const repository = {
-    scheduleUploadCleanup: vi.fn(async () => randomUUID()),
-    selectById: vi.fn(async () => record),
-  } as unknown as ArtifactRepository;
-  return { artifacts: new ArtifactService(storage, repository), storage };
-}
-
-describe("ArtifactService sandbox input resolution", () => {
-  test("authorizes owner and source run and verifies source bytes", async () => {
-    const { artifacts } = service();
-    await expect(
-      artifacts.resolveForSandboxInput({
-        artifactId: artifact.artifactId,
-        userId: artifact.userId,
-        sourceRunId: artifact.runId,
-      }),
-    ).resolves.toMatchObject({ bytes });
-  });
-
-  test("rejects ownership, inactive status, and tampered bytes", async () => {
-    await expect(
-      service().artifacts.resolveForSandboxInput({
-        artifactId: artifact.artifactId,
-        userId: randomUUID(),
-        sourceRunId: artifact.runId,
-      }),
-    ).rejects.toThrow("SANDBOX_ARTIFACT_OWNER_RUN_MISMATCH");
-    await expect(
-      service({ status: "archived" }).artifacts.resolveForSandboxInput({
-        artifactId: artifact.artifactId,
-        userId: artifact.userId,
-        sourceRunId: artifact.runId,
-      }),
-    ).rejects.toThrow("SANDBOX_ARTIFACT_NOT_ACTIVE");
-    await expect(
-      service({}, Buffer.from("tampered")).artifacts.resolveForSandboxInput({
-        artifactId: artifact.artifactId,
-        userId: artifact.userId,
-        sourceRunId: artifact.runId,
-      }),
-    ).rejects.toThrow("SANDBOX_ARTIFACT_BYTES_MISMATCH");
-  });
-});
 
 describe("ArtifactService cleanup", () => {
   test("records cleanup before deletion and is idempotent", async () => {

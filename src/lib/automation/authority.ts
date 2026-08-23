@@ -52,8 +52,6 @@ export function workflowAuthoritySnapshot(
       if (tool.type === "app-tool") capabilityIds.push(`builtin:${tool.id}`);
     }
     if (node.kind === NodeKind.Http) capabilityIds.push("workflow:http");
-    if (node.kind === NodeKind.Compute)
-      capabilityIds.push("sandbox:execute_python");
   }
   return {
     version: 1 as const,
@@ -68,8 +66,13 @@ export async function resolveAutomationAuthority(input: {
   userId: string;
 }): Promise<AutomationAuthoritySnapshot> {
   if (input.targetType === "workflow") {
-    const workflow = await workflowRepository.selectStructureById(input.targetId);
-    if (!workflow || !(await workflowRepository.checkAccess(input.targetId, input.userId)))
+    const workflow = await workflowRepository.selectStructureById(
+      input.targetId,
+    );
+    if (
+      !workflow ||
+      !(await workflowRepository.checkAccess(input.targetId, input.userId))
+    )
       throw new Error("AUTOMATION_TARGET_NOT_FOUND");
     return workflowAuthoritySnapshot(workflow.nodes);
   }
@@ -118,7 +121,9 @@ export function intersectAutomationAuthority(
   const currentCapabilities = new Set(current.capabilityIds);
   return {
     version: 1,
-    allowedTools: persisted.allowedTools.filter((tool) => currentTools.has(tool)),
+    allowedTools: persisted.allowedTools.filter((tool) =>
+      currentTools.has(tool),
+    ),
     capabilityIds: persisted.capabilityIds.filter((id) =>
       currentCapabilities.has(id),
     ),

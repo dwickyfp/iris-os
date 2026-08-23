@@ -36,7 +36,6 @@ function dependencies(downloaded = bytes) {
       createdAt: new Date(),
       updatedAt: new Date(),
     })),
-    selectByOutputProvenance: vi.fn(async () => null),
     archive: vi.fn(async () => undefined),
     recordVerification: vi.fn(async (input) => ({
       id: randomUUID(),

@@ -42,7 +42,6 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
-import type { SandboxProfile } from "lib/sandbox/contracts";
 
 export const RemoteAgentTable = pgTable(
   "remote_agent",
@@ -270,8 +269,6 @@ export const ArtifactTable = pgTable(
     mediaType: varchar("media_type", { length: 160 }).notNull(),
     size: integer("size").notNull(),
     sha256: varchar("sha256", { length: 64 }).notNull(),
-    outputExecutionId: uuid("output_execution_id"),
-    outputRelativePath: varchar("output_relative_path", { length: 1024 }),
     status: varchar("status", { enum: ["active", "archived"] })
       .notNull()
       .default("active"),
@@ -284,11 +281,6 @@ export const ArtifactTable = pgTable(
   },
   (table) => [
     index("artifact_user_created_idx").on(table.userId, table.createdAt),
-    unique("artifact_output_provenance_unique").on(
-      table.outputExecutionId,
-      table.outputRelativePath,
-      table.sha256,
-    ),
     check("artifact_size_check", sql`${table.size} >= 0`),
     check("artifact_sha256_check", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
   ],
@@ -1527,23 +1519,16 @@ export const RootRunBudgetTable = pgTable(
     maxDelegations: integer("max_delegations").notNull(),
     maxDelegationDepth: integer("max_delegation_depth").notNull(),
     maxParallelChildren: integer("max_parallel_children").notNull(),
-    maxSandboxComputeMs: integer("max_sandbox_compute_ms").notNull(),
     committedSteps: integer("committed_steps").notNull().default(0),
     committedTokens: integer("committed_tokens").notNull().default(0),
     committedToolCalls: integer("committed_tool_calls").notNull().default(0),
     committedDelegations: integer("committed_delegations").notNull().default(0),
     committedChildren: integer("committed_children").notNull().default(0),
-    committedSandboxComputeMs: integer("committed_sandbox_compute_ms")
-      .notNull()
-      .default(0),
     reservedSteps: integer("reserved_steps").notNull().default(0),
     reservedTokens: integer("reserved_tokens").notNull().default(0),
     reservedToolCalls: integer("reserved_tool_calls").notNull().default(0),
     reservedDelegations: integer("reserved_delegations").notNull().default(0),
     reservedChildren: integer("reserved_children").notNull().default(0),
-    reservedSandboxComputeMs: integer("reserved_sandbox_compute_ms")
-      .notNull()
-      .default(0),
     createdAt: timestamp("created_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -1554,11 +1539,11 @@ export const RootRunBudgetTable = pgTable(
   (table) => [
     check(
       "root_run_budget_limits_check",
-      sql`${table.maxSteps} > 0 AND ${table.maxTokens} > 0 AND ${table.maxDurationMs} > 0 AND ${table.maxToolCalls} >= 0 AND ${table.maxDelegations} >= 0 AND ${table.maxDelegationDepth} >= 0 AND ${table.maxParallelChildren} >= 0 AND ${table.maxSandboxComputeMs} >= 0`,
+      sql`${table.maxSteps} > 0 AND ${table.maxTokens} > 0 AND ${table.maxDurationMs} > 0 AND ${table.maxToolCalls} >= 0 AND ${table.maxDelegations} >= 0 AND ${table.maxDelegationDepth} >= 0 AND ${table.maxParallelChildren} >= 0`,
     ),
     check(
       "root_run_budget_usage_check",
-      sql`${table.committedSteps} >= 0 AND ${table.committedTokens} >= 0 AND ${table.committedToolCalls} >= 0 AND ${table.committedDelegations} >= 0 AND ${table.committedChildren} >= 0 AND ${table.committedSandboxComputeMs} >= 0 AND ${table.reservedSteps} >= 0 AND ${table.reservedTokens} >= 0 AND ${table.reservedToolCalls} >= 0 AND ${table.reservedDelegations} >= 0 AND ${table.reservedChildren} >= 0 AND ${table.reservedSandboxComputeMs} >= 0 AND ${table.committedSteps} + ${table.reservedSteps} <= ${table.maxSteps} AND ${table.committedTokens} + ${table.reservedTokens} <= ${table.maxTokens} AND ${table.committedToolCalls} + ${table.reservedToolCalls} <= ${table.maxToolCalls} AND ${table.committedDelegations} + ${table.reservedDelegations} <= ${table.maxDelegations} AND ${table.reservedChildren} <= ${table.maxParallelChildren} AND ${table.committedSandboxComputeMs} + ${table.reservedSandboxComputeMs} <= ${table.maxSandboxComputeMs}`,
+      sql`${table.committedSteps} >= 0 AND ${table.committedTokens} >= 0 AND ${table.committedToolCalls} >= 0 AND ${table.committedDelegations} >= 0 AND ${table.committedChildren} >= 0 AND ${table.reservedSteps} >= 0 AND ${table.reservedTokens} >= 0 AND ${table.reservedToolCalls} >= 0 AND ${table.reservedDelegations} >= 0 AND ${table.reservedChildren} >= 0 AND ${table.committedSteps} + ${table.reservedSteps} <= ${table.maxSteps} AND ${table.committedTokens} + ${table.reservedTokens} <= ${table.maxTokens} AND ${table.committedToolCalls} + ${table.reservedToolCalls} <= ${table.maxToolCalls} AND ${table.committedDelegations} + ${table.reservedDelegations} <= ${table.maxDelegations} AND ${table.reservedChildren} <= ${table.maxParallelChildren}`,
     ),
   ],
 );
@@ -1574,14 +1559,7 @@ export const RootRunBudgetReservationTable = pgTable(
       .notNull()
       .references(() => AgentRunTable.id, { onDelete: "cascade" }),
     kind: varchar("kind", {
-      enum: [
-        "steps",
-        "tokens",
-        "tool_calls",
-        "delegations",
-        "children",
-        "sandbox_compute_ms",
-      ],
+      enum: ["steps", "tokens", "tool_calls", "delegations", "children"],
     }).notNull(),
     amount: integer("amount").notNull(),
     state: varchar("state", {
@@ -1600,126 +1578,6 @@ export const RootRunBudgetReservationTable = pgTable(
     index("root_run_budget_reservation_stale_idx")
       .on(table.rootRunId, table.expiresAt)
       .where(sql`${table.state} = 'reserved'`),
-  ],
-);
-
-export const SandboxSessionTable = pgTable(
-  "sandbox_session",
-  {
-    id: uuid("id").primaryKey().notNull(),
-    runId: uuid("run_id")
-      .notNull()
-      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => UserTable.id, { onDelete: "cascade" }),
-    workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
-      onDelete: "set null",
-    }),
-    taskId: uuid("task_id").references(() => TaskTable.id, {
-      onDelete: "set null",
-    }),
-    provider: varchar("provider", { length: 80 }).notNull(),
-    providerInstanceId: varchar("provider_instance_id", { length: 240 }),
-    creatorToken: uuid("creator_token"),
-    profile: json("profile").notNull().$type<SandboxProfile>(),
-    status: varchar("status", {
-      enum: [
-        "creating",
-        "active",
-        "destroying",
-        "destroyed",
-        "cancelled",
-        "failed",
-      ],
-    }).notNull(),
-    lastUsedAt: timestamp("last_used_at").notNull(),
-    expiresAt: timestamp("expires_at").notNull(),
-    errorCode: varchar("error_code", { length: 120 }),
-    destroyedAt: timestamp("destroyed_at"),
-    createdAt: timestamp("created_at").notNull(),
-  },
-  (table) => [
-    unique("sandbox_session_run_provider_unique").on(
-      table.runId,
-      table.provider,
-    ),
-    index("sandbox_session_reaper_idx").on(table.status, table.expiresAt),
-    check(
-      "sandbox_session_instance_check",
-      sql`${table.status} <> 'active' OR ${table.providerInstanceId} IS NOT NULL`,
-    ),
-  ],
-);
-
-export const SandboxExecutionTable = pgTable(
-  "sandbox_execution",
-  {
-    id: uuid("id").primaryKey().notNull(),
-    sessionId: uuid("session_id")
-      .notNull()
-      .references(() => SandboxSessionTable.id, { onDelete: "cascade" }),
-    runId: uuid("run_id")
-      .notNull()
-      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
-    status: varchar("status", {
-      enum: [
-        "reserved",
-        "running",
-        "succeeded",
-        "failed",
-        "cancelled",
-        "timed_out",
-      ],
-    }).notNull(),
-    reservationToken: uuid("reservation_token").notNull(),
-    reservedComputeMs: integer("reserved_compute_ms").notNull(),
-    durationMs: integer("duration_ms"),
-    observedWallDurationMs: integer("observed_wall_duration_ms"),
-    exitCode: integer("exit_code"),
-    errorCode: varchar("error_code", { length: 120 }),
-    reservationExpiresAt: timestamp("reservation_expires_at").notNull(),
-    settlementDeadlineAt: timestamp("settlement_deadline_at"),
-    chargedAt: timestamp("charged_at"),
-    startedAt: timestamp("started_at"),
-    completedAt: timestamp("completed_at"),
-  },
-  (table) => [
-    index("sandbox_execution_session_started_idx").on(
-      table.sessionId,
-      table.startedAt,
-    ),
-    index("sandbox_execution_run_started_idx").on(table.runId, table.startedAt),
-    check(
-      "sandbox_execution_compute_check",
-      sql`${table.reservedComputeMs} > 0 AND (${table.durationMs} IS NULL OR (${table.durationMs} >= 0 AND ${table.durationMs} <= ${table.reservedComputeMs})) AND (${table.observedWallDurationMs} IS NULL OR ${table.observedWallDurationMs} >= 0)`,
-    ),
-    check(
-      "sandbox_execution_terminal_check",
-      sql`(${table.status} IN ('reserved', 'running') AND ${table.completedAt} IS NULL) OR (${table.status} NOT IN ('reserved', 'running') AND ${table.completedAt} IS NOT NULL)`,
-    ),
-  ],
-);
-
-export const SandboxRunComputeBudgetTable = pgTable(
-  "sandbox_run_compute_budget",
-  {
-    runId: uuid("run_id")
-      .primaryKey()
-      .notNull()
-      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
-    maxComputeMs: integer("max_compute_ms"),
-    reservedComputeMs: integer("reserved_compute_ms").notNull().default(0),
-    committedComputeMs: integer("committed_compute_ms").notNull().default(0),
-    updatedAt: timestamp("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [
-    check(
-      "sandbox_run_compute_budget_check",
-      sql`(${table.maxComputeMs} IS NULL OR ${table.maxComputeMs} > 0) AND ${table.reservedComputeMs} >= 0 AND ${table.committedComputeMs} >= 0 AND (${table.maxComputeMs} IS NULL OR ${table.reservedComputeMs} + ${table.committedComputeMs} <= ${table.maxComputeMs})`,
-    ),
   ],
 );
 

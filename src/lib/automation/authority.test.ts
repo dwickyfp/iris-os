@@ -27,12 +27,12 @@ describe("automation authorization authority", () => {
             tool: { type: "mcp-tool", serverId: "db", id: "query" },
           },
         },
-        { kind: NodeKind.Compute, nodeConfig: {} },
+        { kind: NodeKind.Http, nodeConfig: {} },
       ]),
     ).toEqual({
       version: 1,
       allowedTools: ["query"],
-      capabilityIds: ["mcp:db:query", "sandbox:execute_python"],
+      capabilityIds: ["mcp:db:query", "workflow:http"],
     });
   });
 

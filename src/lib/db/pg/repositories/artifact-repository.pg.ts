@@ -23,8 +23,6 @@ export const pgArtifactRepository: ArtifactRepository = {
           mediaType: input.mediaType,
           size: input.size,
           sha256: input.sha256,
-          outputExecutionId: input.outputProvenance?.executionId,
-          outputRelativePath: input.outputProvenance?.relativePath,
         })
         .returning();
       if (input.uploadCleanupId) {
@@ -55,21 +53,6 @@ export const pgArtifactRepository: ArtifactRepository = {
       .select()
       .from(ArtifactTable)
       .where(eq(ArtifactTable.id, id));
-    return artifact ? { ...artifact, artifactId: artifact.id } : null;
-  },
-
-  async selectByOutputProvenance(input) {
-    const [artifact] = await db
-      .select()
-      .from(ArtifactTable)
-      .where(
-        and(
-          eq(ArtifactTable.outputExecutionId, input.executionId),
-          eq(ArtifactTable.outputRelativePath, input.relativePath),
-          eq(ArtifactTable.sha256, input.sha256),
-          eq(ArtifactTable.status, "active"),
-        ),
-      );
     return artifact ? { ...artifact, artifactId: artifact.id } : null;
   },
 

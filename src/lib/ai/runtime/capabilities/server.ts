@@ -24,9 +24,6 @@ import {
   delegationTargetId,
 } from "lib/delegation/targets";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import type { SandboxProvider } from "lib/sandbox";
-import { sandboxCapabilityProvider } from "lib/sandbox";
-import { sandboxCapability, workflowSandboxServices } from "lib/sandbox/server";
 import { workflowToVercelAITool } from "../../../../app/api/chat/shared.chat";
 import {
   builtinCapabilities,
@@ -182,7 +179,6 @@ export async function buildServerCapabilityResolutionInput(
           workspaceId: input.workspaceId,
           taskId: input.taskId,
           signal: input.workflowBinding?.signal,
-          services: workflowSandboxServices(input.runId),
         },
       } as any),
     additionalTools: input.additionalTools,
@@ -192,7 +188,6 @@ export async function buildServerCapabilityResolutionInput(
         userId: input.userId,
         targets,
       }),
-    sandbox: sandboxCapability,
   };
 }
 
@@ -235,11 +230,6 @@ export async function resolveServerCapabilities(input: {
   additionalTools?: Record<string, Tool>;
   createDelegationTool: (targets: readonly DelegationTarget[]) => Tool;
   query?: string;
-  sandbox?: {
-    provider: SandboxProvider;
-    pythonCompute: Tool;
-    sandboxExec: Tool;
-  };
 }) {
   const { context } = input;
   const requestedSkillIds = input.hints.requested.flatMap((hint) =>
@@ -330,7 +320,6 @@ export async function resolveServerCapabilities(input: {
       }),
     }),
     skillRuntimeProvider(routedSkillsRuntime),
-    ...(input.sandbox ? [sandboxCapabilityProvider(input.sandbox)] : []),
   ];
   const resolved = await new CapabilityRegistry(providers).resolve(
     context,

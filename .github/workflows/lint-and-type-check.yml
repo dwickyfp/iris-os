@@ -32,6 +32,3 @@ jobs:
 
       - name: Enforce capability-routing release thresholds
         run: pnpm eval:capability-routing
-
-      - name: Validate sandbox security configuration
-        run: pnpm sandbox:check

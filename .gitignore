@@ -66,6 +66,5 @@ public/uploads
 # local benchmark output
 /artifacts/
 
-# python bytecode (sandbox runtime helpers/tests)
-__pycache__/
+# python bytecode
 *.pyc

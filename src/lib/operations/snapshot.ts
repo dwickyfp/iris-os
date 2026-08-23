@@ -41,14 +41,6 @@ const snapshotSchema = z.object({
     total: z.coerce.number(),
   }),
   capabilityHealth: countMap,
-  sandbox: z.object({
-    sessions: countMap,
-    executions: countMap,
-    forcedDestroy: z.coerce.number(),
-    sessionReaped: z.coerce.number(),
-    timeouts: z.coerce.number(),
-    artifactRejections: z.coerce.number(),
-  }),
   a2a: z.object({
     agents: countMap,
     delegations: countMap,
@@ -188,18 +180,6 @@ SELECT jsonb_build_object(
     'unavailable', count(*) FILTER (WHERE status = 'active' AND (agent_card IS NULL OR discovered_at IS NULL)),
     'disabled', count(*) FILTER (WHERE status = 'disabled')
   ) FROM remote_agent),
-  'sandbox', jsonb_build_object(
-    'sessions', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
-      SELECT status, count(*)::int AS count FROM sandbox_session GROUP BY status
-    ) counts), '{}'::jsonb),
-    'executions', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
-      SELECT status, count(*)::int AS count FROM sandbox_execution GROUP BY status
-    ) counts), '{}'::jsonb),
-    'forcedDestroy', (SELECT count(*) FROM sandbox_session WHERE error_code IN ('SANDBOX_TIMED_OUT', 'SANDBOX_SESSION_LOST')),
-    'sessionReaped', (SELECT count(*) FROM iris_activity_event WHERE event_type = 'sandbox.session_reaped'),
-    'timeouts', (SELECT count(*) FROM sandbox_execution WHERE status = 'timed_out'),
-    'artifactRejections', (SELECT count(*) FROM sandbox_execution WHERE error_code LIKE 'SANDBOX_ARTIFACT_%' AND error_code <> 'SANDBOX_ARTIFACT_CAPTURE_FAILED')
-  ),
   'a2a', jsonb_build_object(
     'agents', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
       SELECT status, count(*)::int AS count FROM remote_agent GROUP BY status

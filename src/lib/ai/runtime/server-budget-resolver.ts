@@ -16,7 +16,6 @@ const defaults = {
     maxDelegations: 8,
     maxDepth: 3,
     maxParallel: 8,
-    maxComputeMs: 300_000,
   },
   automation: {
     maxSteps: 10,
@@ -26,7 +25,6 @@ const defaults = {
     maxDelegations: 8,
     maxDepth: 3,
     maxParallel: 8,
-    maxComputeMs: 300_000,
   },
   delegation: {
     maxSteps: 10,
@@ -36,7 +34,6 @@ const defaults = {
     maxDelegations: 8,
     maxDepth: 3,
     maxParallel: 8,
-    maxComputeMs: 300_000,
   },
   resume: {
     maxSteps: 10,
@@ -46,7 +43,6 @@ const defaults = {
     maxDelegations: 8,
     maxDepth: 3,
     maxParallel: 8,
-    maxComputeMs: 300_000,
   },
 } satisfies Record<NonNullable<RunPreparationInput["surface"]>, RunBudget>;
 
@@ -59,7 +55,6 @@ function snapshot(row: typeof RootRunBudgetTable.$inferSelect): RunBudget {
     maxDelegations: row.maxDelegations,
     maxDepth: row.maxDelegationDepth,
     maxParallel: row.maxParallelChildren,
-    maxComputeMs: row.maxSandboxComputeMs,
   };
 }
 
@@ -97,7 +92,7 @@ export async function serverBudgetResolver(
           maxTokens: persisted.tokenBudget,
           ...(persisted.absoluteDeadlineAt
             ? {
-                 maxDurationMs: persisted.remainingDurationMs,
+                maxDurationMs: persisted.remainingDurationMs,
               }
             : {}),
         }
@@ -127,6 +122,5 @@ export function rootBudgetValues(budget: RunBudget) {
     maxDelegations: resolved.maxDelegations!,
     maxDelegationDepth: resolved.maxDepth!,
     maxParallelChildren: resolved.maxParallel!,
-    maxSandboxComputeMs: resolved.maxComputeMs!,
   };
 }

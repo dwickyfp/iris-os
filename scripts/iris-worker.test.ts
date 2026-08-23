@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 
-describe("iris worker root budget maintenance", () => {
+describe("iris worker maintenance", () => {
   test("reconciles expired reservations at startup and periodically", async () => {
     const source = await readFile(
       new URL("./iris-worker.ts", import.meta.url),
@@ -13,13 +13,14 @@ describe("iris worker root budget maintenance", () => {
     expect(source).toContain("clearInterval(rootBudgetReaper)");
   });
 
-  test("reconciles stale sandbox executions regardless of provider state", async () => {
+  test("reaps artifact cleanup jobs periodically", async () => {
     const source = await readFile(
       new URL("./iris-worker.ts", import.meta.url),
       "utf8",
     );
 
-    expect(source.match(/reconcileStaleExecutions\(\)/g)).toHaveLength(2);
-    expect(source).toContain("sandboxManager.reconcileStaleExecutions(),");
+    expect(source).toContain("const artifactCleanupReaper = setInterval(");
+    expect(source).toContain("clearInterval(artifactCleanupReaper)");
+    expect(source).toContain(".reapCleanup()");
   });
 });

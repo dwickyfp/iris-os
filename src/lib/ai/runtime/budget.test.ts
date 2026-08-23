@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  BudgetExhaustedError,
-  BudgetGuard,
-  isBudgetExhausted,
-} from "./budget";
+import { BudgetExhaustedError, BudgetGuard, isBudgetExhausted } from "./budget";
 
 describe("BudgetGuard", () => {
   test("enforces steps and tokens", () => {
@@ -42,40 +38,6 @@ describe("BudgetGuard", () => {
     guard.afterTool();
     guard.afterTool();
   });
-
-  test("reserves worst-case compute and commits actual usage", () => {
-    const guard = new BudgetGuard({ maxComputeMs: 1_000 });
-    const first = guard.reserveCompute(700);
-
-    expect(() => guard.reserveCompute(301)).toThrow(BudgetExhaustedError);
-    guard.commitCompute(first, 250);
-
-    expect(guard.usage.computeMs).toBe(250);
-    expect(guard.reserveCompute(750)).toBe("compute-2");
-  });
-
-  test("releases compute reservations without consuming budget", () => {
-    const guard = new BudgetGuard({ maxComputeMs: 1_000 });
-    const reservation = guard.reserveCompute(700);
-
-    expect(guard.remaining("maxComputeMs")).toBe(300);
-    guard.releaseCompute(reservation);
-
-    expect(guard.usage.computeMs).toBe(0);
-    expect(guard.remaining("maxComputeMs")).toBe(1_000);
-    expect(guard.reserveCompute(1_000)).toBe("compute-2");
-  });
-
-  test("holds and releases child reservations against the parent budget", () => {
-    const parent = new BudgetGuard({ maxComputeMs: 1_000 });
-    const child = parent.child({ maxComputeMs: 800 });
-    const reservation = child.reserveCompute(700);
-
-    expect(parent.remaining("maxComputeMs")).toBe(300);
-    expect(() => parent.reserveCompute(301)).toThrow(BudgetExhaustedError);
-    child.releaseCompute(reservation);
-    expect(parent.remaining("maxComputeMs")).toBe(1_000);
-  });
 });
 
 describe("isBudgetExhausted", () => {
@@ -91,7 +53,6 @@ describe("isBudgetExhausted", () => {
           parallel: 0,
           cost: 0,
           durationMs: 0,
-          computeMs: 0,
         }),
       ),
     ).toBe(true);

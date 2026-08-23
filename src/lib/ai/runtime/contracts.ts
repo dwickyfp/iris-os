@@ -55,7 +55,6 @@ export type HarnessOrchestration = {
   policy?: ResolvedPolicySnapshot;
   completionRequirement?: CompletionRequirement;
   budget?: RunBudget;
-  sandbox?: unknown;
   routing?: {
     descriptorIds?: string[];
     diagnostics?: Record<string, unknown>;

@@ -13,8 +13,6 @@ vi.mock("server-only", () => ({}));
 const client = new Client({ connectionString });
 const loadRepositoryModule = () =>
   import("lib/db/pg/repositories/agent-run-repository.pg");
-const loadSandboxRepositoryModule = () =>
-  import("lib/db/pg/repositories/sandbox-repository.pg");
 type RepositoryModule = Awaited<ReturnType<typeof loadRepositoryModule>>;
 let repository: RepositoryModule["pgAgentRunRepository"];
 
@@ -242,103 +240,6 @@ describe("agent run durable external lifecycle", () => {
         join_completed_at: expect.any(Date),
       });
     }
-  });
-
-  test("serializes cancellation against sandbox reservation without deadlock", async () => {
-    const userId = randomUUID();
-    const runId = randomUUID();
-    const sessionId = randomUUID();
-    const executionId = randomUUID();
-    const reservationToken = randomUUID();
-    await client.query(
-      `INSERT INTO "user" (id, name, email, password)
-       VALUES ($1, 'Sandbox Cancellation Owner', $2, 'hash')`,
-      [userId, `sandbox-cancellation-${userId}@example.test`],
-    );
-    await repository.createRunning({ id: runId, userId });
-    await client.query(
-      `INSERT INTO sandbox_session
-         (id, run_id, user_id, provider, provider_instance_id, profile, status,
-          last_used_at, expires_at, created_at)
-       VALUES ($1, $2, $3, 'iris-runner', 'test-instance', $4::json, 'active',
-               NOW(), NOW() + interval '1 minute', NOW())`,
-      [
-        sessionId,
-        runId,
-        userId,
-        JSON.stringify({
-          id: "lock-order-test",
-          runtime: "python",
-          network: "none",
-          cpu: 1,
-          memoryMb: 128,
-          pids: 32,
-          timeoutMs: 30_000,
-        }),
-      ],
-    );
-    await installAgentRunPauseTrigger(
-      runId,
-      "OLD.cancel_requested_at IS NULL AND NEW.cancel_requested_at IS NOT NULL",
-    );
-    const cancellationClient = new Client({ connectionString });
-    const sandboxClient = new Client({ connectionString });
-    await Promise.all([cancellationClient.connect(), sandboxClient.connect()]);
-    await Promise.all([
-      cancellationClient.query(`SET lock_timeout = '5s'`),
-      sandboxClient.query(`SET lock_timeout = '5s'`),
-    ]);
-    const { createPgAgentRunRepository } = await loadRepositoryModule();
-    const { createPgSandboxRepository } = await loadSandboxRepositoryModule();
-    const cancellationRepository = createPgAgentRunRepository(
-      drizzle(cancellationClient) as never,
-    );
-    const sandboxRepository = createPgSandboxRepository(
-      drizzle(sandboxClient) as never,
-    );
-
-    const cancellation = cancellationRepository.requestCancellationTree(
-      runId,
-      userId,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const reservation = sandboxRepository.reserveExecution(
-      {
-        id: executionId,
-        sessionId,
-        runId,
-        status: "reserved",
-        reservationToken,
-        reservedComputeMs: 1_000,
-        reservationExpiresAt: new Date(Date.now() + 60_000),
-      },
-      1_000,
-    );
-    const [cancelled, reserved] = await Promise.all([
-      cancellation,
-      reservation,
-    ]);
-    await Promise.all([cancellationClient.end(), sandboxClient.end()]);
-
-    expect(cancelled?.cancelRequestedAt).toBeInstanceOf(Date);
-    expect(reserved).toBe(false);
-    const state = await client.query(
-      `SELECT run.cancel_requested_at,
-              budget.reserved_sandbox_compute_ms,
-              budget.committed_sandbox_compute_ms,
-              (SELECT count(*)::int FROM sandbox_execution execution
-               WHERE execution.run_id = run.id) AS execution_count
-       FROM agent_run run
-       JOIN root_run_budget budget ON budget.root_run_id = run.root_run_id
-       WHERE run.id = $1`,
-      [runId],
-    );
-    expect(state.rows[0]).toEqual({
-      cancel_requested_at: expect.any(Date),
-      reserved_sandbox_compute_ms: 0,
-      committed_sandbox_compute_ms: 0,
-      execution_count: 0,
-    });
   });
 
   test("serializes cancellation against child terminal settlement without deadlock", async () => {
@@ -918,9 +819,8 @@ describe("agent run durable external lifecycle", () => {
     await client.query(
       `INSERT INTO root_run_budget
          (root_run_id, max_steps, max_tokens, max_duration_ms, max_tool_calls,
-          max_delegations, max_delegation_depth, max_parallel_children,
-          max_sandbox_compute_ms)
-       VALUES ($1, 10, 50000, 600000, 32, 8, 3, 8, 300000)`,
+          max_delegations, max_delegation_depth, max_parallel_children)
+       VALUES ($1, 10, 50000, 600000, 32, 8, 3, 8)`,
       [parentRunId],
     );
     await repository.createDelegated({
@@ -1363,9 +1263,8 @@ describe("agent run durable external lifecycle", () => {
     await client.query(
       `INSERT INTO root_run_budget
          (root_run_id, max_steps, max_tokens, max_duration_ms, max_tool_calls,
-          max_delegations, max_delegation_depth, max_parallel_children,
-          max_sandbox_compute_ms)
-       VALUES ($1, 10, 50000, 600000, 32, 8, 3, 8, 300000)`,
+          max_delegations, max_delegation_depth, max_parallel_children)
+       VALUES ($1, 10, 50000, 600000, 32, 8, 3, 8)`,
       [parentRunId],
     );
     await client.query(

@@ -40,7 +40,6 @@ export function NodeIcon({
       case NodeKind.Template:
         return TextIcon;
       case NodeKind.Code:
-      case NodeKind.Compute:
         return TerminalIcon;
       default:
         return BoxIcon;
@@ -60,9 +59,7 @@ export function NodeIcon({
                 ? "bg-indigo-500"
                 : type === NodeKind.Tool
                   ? "bg-blue-500"
-                  : type === NodeKind.Code ||
-                      type === NodeKind.Compute ||
-                      type === NodeKind.Http
+                  : type === NodeKind.Code || type === NodeKind.Http
                     ? "bg-rose-500"
                     : type === NodeKind.Template
                       ? "bg-purple-500"

@@ -43,16 +43,6 @@ vi.mock("lib/ai/mcp/mcp-manager", () => ({
     }),
   },
 }));
-vi.mock("lib/sandbox/server", () => ({
-  sandboxCapability: {
-    provider: {
-      name: "test-sandbox",
-      status: async () => ({ ready: true, checkedAt: new Date(0) }),
-    },
-    pythonCompute: { description: "Python compute" },
-  },
-  workflowSandboxServices: () => ({}),
-}));
 vi.mock("../../../../app/api/chat/shared.chat", () => ({
   workflowToVercelAITool: (workflow: { name: string }) => ({
     description: `Run ${workflow.name}`,
@@ -151,7 +141,6 @@ describe("production server capability parity", () => {
         "mcp:warehouse:query",
         "workflow:workflow-1",
         "skill-runtime:skills_list",
-        "sandbox:python_compute",
       ]),
     );
     expect(selectScopedSkills).toHaveBeenCalledWith(
@@ -191,8 +180,8 @@ describe("production server capability parity", () => {
       ),
     ).toBe(true);
     expect(bounded.subtractions).toContainEqual({
-      id: "sandbox:python_compute",
-      key: "python_compute",
+      id: "skill-runtime:skills_list",
+      key: "skills_list",
       reason: "automation_tool_allowlist",
     });
   });

@@ -10,7 +10,6 @@ import {
   toolNodeExecutor,
   httpNodeExecutor,
   templateNodeExecutor,
-  computeNodeExecutor,
   WorkflowExecutionContext,
 } from "./node-executor";
 import { toAny } from "lib/utils";
@@ -41,8 +40,6 @@ function getExecutorByKind(kind: NodeKind): NodeExecutor {
       return httpNodeExecutor;
     case NodeKind.Template:
       return templateNodeExecutor;
-    case NodeKind.Compute:
-      return computeNodeExecutor;
     case "NOOP" as any:
       return () => {
         return {

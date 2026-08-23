@@ -1,6 +1,5 @@
 import type {
   ArtifactCleanupRecord,
-  ArtifactOutputProvenance,
   ArtifactRecord,
   ArtifactReference,
   ArtifactVerificationRecord,
@@ -11,14 +10,10 @@ export interface ArtifactRepository {
     artifact: ArtifactReference & {
       userId: string;
       runId: string;
-      outputProvenance?: ArtifactOutputProvenance;
       uploadCleanupId?: string;
     },
   ): Promise<ArtifactRecord>;
   selectById(id: string): Promise<ArtifactRecord | null>;
-  selectByOutputProvenance(
-    provenance: ArtifactOutputProvenance,
-  ): Promise<ArtifactRecord | null>;
   archive(id: string): Promise<void>;
   scheduleUploadCleanup(storageKey: string): Promise<string>;
   scheduleCleanup(reference: ArtifactReference): Promise<string>;

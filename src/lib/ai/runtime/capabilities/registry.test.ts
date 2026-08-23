@@ -371,10 +371,10 @@ describe("CapabilityRegistry", () => {
   });
 
   it("does not list capabilities from a provider that is not ready", async () => {
-    const eligible = vi.fn(async () => [capability("sandbox:python_compute")]);
+    const eligible = vi.fn(async () => [capability("compute:python_compute")]);
     const registry = new CapabilityRegistry([
       {
-        name: "sandbox",
+        name: "compute",
         metadata: { domain: "compute" },
         readiness: vi.fn(async () => ({
           status: "unavailable" as const,
@@ -391,7 +391,7 @@ describe("CapabilityRegistry", () => {
     expect(result.ordered).toEqual([]);
     expect(result.providers).toEqual([
       {
-        name: "sandbox",
+        name: "compute",
         status: "unavailable",
         ready: false,
         reason: "disabled",

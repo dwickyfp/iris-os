@@ -2,13 +2,12 @@ import { eq, sql } from "drizzle-orm";
 import { AgentRunTable } from "../schema.pg";
 
 /**
- * Canonical transaction lock order for AgentRun and sandbox accounting:
+ * Canonical transaction lock order for AgentRun budget accounting:
  *
- * 1. Resolve stable root/run/session identities without row locks.
+ * 1. Resolve stable root/run identities without row locks.
  * 2. Root-budget advisory lock.
- * 3. Agent-run advisory locks, then sandbox-session advisory locks, each sorted.
- * 4. Mutable agent-run, session, execution, per-run budget, reservation, and
- *    root-budget rows.
+ * 3. Agent-run advisory locks, sorted.
+ * 4. Mutable agent-run, reservation, and root-budget rows.
  *
  * SKIP LOCKED reapers may discover work in a short transaction, but settlement
  * must reacquire locks in this order and recheck the candidate predicates.
@@ -44,12 +43,5 @@ export async function lockAgentRuns(tx: any, runIds: string[]) {
   for (const runId of [...new Set(runIds)].sort())
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`agent-run:${runId}`}, 0))`,
-    );
-}
-
-export async function lockSandboxSessions(tx: any, runIds: string[]) {
-  for (const runId of [...new Set(runIds)].sort())
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`sandbox-session:${runId}`}, 0))`,
     );
 }

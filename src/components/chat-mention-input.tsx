@@ -478,10 +478,6 @@ export function ChatMentionInputSuggestion({
           label = "python-execution";
           description = "Execute simple python code";
           break;
-        case DefaultToolName.PythonCompute:
-          label = "python-compute";
-          description = "Run Python in the trusted isolated sandbox";
-          break;
       }
       return {
         id: toolName,
@@ -713,7 +709,9 @@ export function ChatMentionInputSuggestion({
                         <MentionItem
                           key={item.id}
                           item={item}
-                          isSelected={allMentions[selectedIndex]?.id === item.id}
+                          isSelected={
+                            allMentions[selectedIndex]?.id === item.id
+                          }
                           ref={(el) => {
                             itemRefs.current[item.id] = el;
                           }}
@@ -732,7 +730,9 @@ export function ChatMentionInputSuggestion({
                         <MentionItem
                           key={item.id}
                           item={item}
-                          isSelected={allMentions[selectedIndex]?.id === item.id}
+                          isSelected={
+                            allMentions[selectedIndex]?.id === item.id
+                          }
                           ref={(el) => {
                             itemRefs.current[item.id] = el;
                           }}

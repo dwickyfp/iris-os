@@ -68,7 +68,6 @@ import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { serverFileStorage } from "lib/file-storage";
 import { isChatCorrection } from "lib/learning/policy";
-import { sandboxManager } from "lib/sandbox/server";
 import { buildTaskContextPrompt } from "lib/task/context";
 import { generateUUID } from "lib/utils";
 import {
@@ -94,7 +93,9 @@ const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Chat API: `),
 });
 
-function activityModel(chatModel: { model: string; provider: string } | undefined | null) {
+function activityModel(
+  chatModel: { model: string; provider: string } | undefined | null,
+) {
   return chatModel ? `${chatModel.provider}/${chatModel.model}` : undefined;
 }
 
@@ -877,8 +878,6 @@ export async function POST(request: Request) {
           await harnessStream?.finalize(responseMessage, {
             assistantMessageId: responseMessage.id,
           });
-        if (!delegated)
-          await sandboxManager.cancelByRun(runId).catch(() => undefined);
       },
       onError: (error) => {
         streamError = error;
@@ -886,7 +885,6 @@ export async function POST(request: Request) {
         const errorCode = isBudgetExhausted(error)
           ? "BUDGET_EXHAUSTED"
           : "STREAM_ERROR";
-        void sandboxManager.cancelByRun(runId).catch(() => undefined);
         void recordActivityEvent(session.user.id, {
           actorType: agent ? "agent" : "system",
           actorId: agent?.id,
