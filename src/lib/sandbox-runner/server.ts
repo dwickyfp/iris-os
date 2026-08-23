@@ -11,6 +11,21 @@ import {
   ValidationError,
 } from "./runner";
 
+const workspacePath = /^\/workspace(?:\/[A-Za-z0-9._-]+)*$/;
+
+const execSchema = z.object({
+  executable: z.string().regex(/^[A-Za-z0-9._/-]+$/),
+  args: z.array(z.string().max(4_096)).max(64),
+  cwd: z.string().regex(workspacePath).optional(),
+  env: z
+    .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(4_096))
+    .refine((value) => Object.keys(value).length <= 32, {
+      message: "Too many environment variables",
+    })
+    .optional(),
+  timeoutMs: z.number().int().positive().optional(),
+});
+
 const createSessionSchema = z.object({
   identity: z.object({
     sessionId: z.string().uuid(),
@@ -164,23 +179,35 @@ export function createSandboxRunnerServer(runner: SandboxRunner) {
         return;
       }
       if (request.method === "POST" && action === "exec") {
-        const body = (await readJson(request, 256 * 1024)) as {
-          cmd?: unknown;
-          timeoutMs?: unknown;
-        };
+        const parsed = execSchema.safeParse(
+          await readJson(request, 256 * 1024),
+        );
+        if (!parsed.success)
+          throw new ValidationError("Invalid executable, arguments, or limits");
+        const allowed = runner.config.SANDBOX_RUNNER_ALLOWED_EXECUTABLES.split(
+          ",",
+        )
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const executable = parsed.data.executable.replace(/^\.?\//, "");
+        if (!allowed.includes(executable))
+          throw new ValidationError("Executable is not allowed by profile");
         const controller = new AbortController();
         const abort = () => controller.abort();
         request.once("aborted", abort);
         response.once("close", () => {
           if (!response.writableFinished) abort();
         });
-        const timeoutMs =
-          typeof body.timeoutMs === "number" ? body.timeoutMs : undefined;
         const result = await runner.exec(
           id,
-          body?.cmd,
+          {
+            executable,
+            args: parsed.data.args,
+            cwd: parsed.data.cwd,
+            env: parsed.data.env,
+          },
           controller.signal,
-          timeoutMs,
+          parsed.data.timeoutMs,
         );
         json(response, 200, result);
         return;

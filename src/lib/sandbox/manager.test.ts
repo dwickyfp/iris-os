@@ -145,8 +145,23 @@ function setup() {
       stderr: "",
       durationMs: 120,
       files: [],
-    })),
-    cancel: vi.fn(async () => undefined),
+      })),
+      exec: vi.fn(async () => ({
+        executionId: "provider-cli",
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      })),
+      writeFiles: vi.fn(async () => undefined),
+      readFile: vi.fn(async () => ({
+        path: "work/file.txt",
+        content: "",
+        encoding: "utf8" as const,
+      })),
+      listFiles: vi.fn(async () => ({ files: [] })),
+      removePaths: vi.fn(async () => undefined),
+      cancel: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
   };
   const provider: SandboxProvider = {
@@ -487,6 +502,78 @@ describe("SandboxManager", () => {
     expect(instance.executePython).toHaveBeenCalledTimes(2);
     expect(executions.size).toBe(2);
     expect(repository.settleExecution).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes workspace file operations through policy, reservations, and one session", async () => {
+    const { manager, policy, instance, executions, repository } = setup();
+    const scope = { runId: "run-1", userId: "user-1" };
+
+    await manager.writeFiles({
+      scope,
+      profile,
+      files: [{ path: "work/hello.py", content: "print('hi')" }],
+      maxComputeMs: 2_000,
+    });
+    const listing = await manager.listFiles({
+      scope,
+      profile,
+      path: "/workspace/work",
+    });
+    const file = await manager.readFile({
+      scope,
+      profile,
+      path: "/workspace/work/hello.py",
+    });
+    await manager.removePaths({
+      scope,
+      profile,
+      paths: ["/workspace/work/hello.py"],
+    });
+
+    expect(policy.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sandbox.file.write" }),
+    );
+    expect(policy.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sandbox.file.read" }),
+    );
+    expect(policy.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "sandbox.file.remove" }),
+    );
+    expect(instance.writeFiles).toHaveBeenCalledWith(
+      [{ path: "work/hello.py", content: "print('hi')" }],
+      expect.anything(),
+    );
+    expect(listing.files).toEqual([]);
+    expect(file.path).toBe("work/file.txt");
+    for (const call of [
+      instance.writeFiles,
+      instance.readFile,
+      instance.removePaths,
+    ]) {
+      expect(call).toHaveBeenCalledTimes(1);
+    }
+    expect(instance.listFiles).toHaveBeenCalledWith(
+      "/workspace/work",
+      expect.anything(),
+    );
+    expect(executions.size).toBe(4);
+    expect(repository.settleExecution).toHaveBeenCalledTimes(4);
+  });
+
+  it("denies file operations before touching the provider when policy rejects", async () => {
+    const { manager, policy, provider } = setup();
+    vi.mocked(policy.authorize).mockRejectedValueOnce(
+      new Error("SANDBOX_POLICY_DENIED"),
+    );
+
+    await expect(
+      manager.writeFiles({
+        scope: { runId: "run-1", userId: "user-1" },
+        profile,
+        files: [{ path: "work/x.txt", content: "x" }],
+      }),
+    ).rejects.toThrow("SANDBOX_POLICY_DENIED");
+    expect(provider.create).not.toHaveBeenCalled();
   });
 
   it("persists cancellation when the caller aborts execution", async () => {

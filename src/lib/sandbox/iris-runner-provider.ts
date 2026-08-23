@@ -3,7 +3,12 @@ import tar from "tar-stream";
 import type {
   PythonComputeRequest,
   PythonComputeResult,
+  SandboxExecRequest,
+  SandboxExecResult,
+  SandboxFileInput,
   SandboxInstance,
+  SandboxListResult,
+  SandboxOutputFile,
   SandboxProfile,
   SandboxProvider,
   SandboxProviderStatus,
@@ -186,6 +191,93 @@ class IrisRunnerInstance implements SandboxInstance {
       ...execution,
       files,
     } satisfies PythonComputeResult;
+  }
+
+  async exec(
+    request: SandboxExecRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxExecResult> {
+    const startedAt = Date.now();
+    const execution = await this.client.request<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      durationMs: number;
+    }>({
+      method: "POST",
+      path: `/v1/sessions/${encodeURIComponent(this.id)}/exec`,
+      body: {
+        executable: request.executable,
+        args: request.args,
+        cwd: request.cwd,
+        env: request.env,
+        timeoutMs: request.timeoutMs,
+      },
+      signal: options?.signal,
+    });
+    return {
+      executionId: `runner-${this.id}-${startedAt}`,
+      ...execution,
+      files: [],
+    };
+  }
+
+  async writeFiles(
+    files: SandboxFileInput[],
+    options?: { signal?: AbortSignal },
+  ) {
+    if (!files.length) return;
+    await this.client.uploadArchive(
+      `/v1/sessions/${encodeURIComponent(this.id)}/files`,
+      await packFiles(files),
+      options?.signal,
+    );
+  }
+
+  async readFile(
+    path: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxOutputFile> {
+    const archive = await this.client.downloadArchive(
+      `/v1/sessions/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`,
+      options?.signal,
+    );
+    return unpackSingleFile(archive);
+  }
+
+  async listFiles(
+    path = "/workspace",
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxListResult> {
+    const result = await this.exec(
+      {
+        executable: "python",
+        args: ["/usr/local/bin/sandbox-archive.py", "list", "--path", path],
+        timeoutMs: 10_000,
+      },
+      options,
+    );
+    try {
+      return JSON.parse(result.stdout) as SandboxListResult;
+    } catch {
+      throw new Error("SANDBOX_FILE_LIST_INVALID");
+    }
+  }
+
+  async removePaths(paths: string[], options?: { signal?: AbortSignal }) {
+    if (!paths.length) return;
+    await this.exec(
+      {
+        executable: "python",
+        args: [
+          "/usr/local/bin/sandbox-archive.py",
+          "remove",
+          ...paths.flatMap((path) => ["--path", path]),
+        ],
+        timeoutMs: 10_000,
+      },
+      options,
+    );
   }
 
   cancel(_executionId: string) {

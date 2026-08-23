@@ -1,11 +1,13 @@
 import type { Tool } from "ai";
 import type { CapabilityProvider } from "lib/ai/runtime/capabilities/registry";
 import { PYTHON_COMPUTE_TOOL_NAME } from "lib/ai/tools/code/python-compute";
+import { SANDBOX_EXEC_TOOL_NAME } from "lib/ai/tools/code/sandbox-exec";
 import type { SandboxProvider } from "./contracts";
 
 export function sandboxCapabilityProvider<Context>(input: {
   provider: SandboxProvider;
   pythonCompute: Tool;
+  sandboxExec: Tool;
 }): CapabilityProvider<Context> {
   return {
     name: "sandbox",
@@ -37,6 +39,23 @@ export function sandboxCapabilityProvider<Context>(input: {
           metadata: {
             provider: input.provider.name,
             profile: "python",
+            lifecycleExposed: false,
+          },
+        },
+        {
+          id: `sandbox:${SANDBOX_EXEC_TOOL_NAME}`,
+          hintIds: [`builtin:${SANDBOX_EXEC_TOOL_NAME}`],
+          key: SANDBOX_EXEC_TOOL_NAME,
+          kind: "sandbox",
+          name: "Sandbox Exec",
+          description:
+            "Run allowlisted commands and tests in the isolated run-scoped Linux workspace.",
+          surfaces: ["executable", "model", "manual"],
+          value: input.sandboxExec,
+          risks: ["write", "code", "remote"],
+          metadata: {
+            provider: input.provider.name,
+            profile: "general_compute",
             lifecycleExposed: false,
           },
         },

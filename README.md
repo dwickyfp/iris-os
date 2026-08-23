@@ -497,6 +497,16 @@ sessions rather than model execution drivers.
 # Validate package policy and Compose security invariants
 pnpm sandbox:check
 
+# Standalone sandbox-only Compose stack on Linux with registered runsc.
+# Development runner configuration is contained in the standalone Compose file.
+pnpm sandbox:standalone:build
+pnpm sandbox:standalone:up
+pnpm sandbox:standalone:ps
+pnpm dev
+
+# Remove only the standalone sandbox project
+pnpm sandbox:standalone:down
+
 # Build images only; no production runner secret is required or embedded
 pnpm sandbox:build
 
@@ -523,6 +533,9 @@ Required behavior:
   ingested through `ArtifactService` and verified before completion.
 - On macOS Docker Desktop/OrbStack without registered gVisor, readiness is
   intentionally unavailable. Do not enable unsafe host or runc execution.
+- The standalone Compose stack publishes the authenticated runner only at
+  `127.0.0.1:8787`; the broker has no host port, and only the runner receives the
+  Linux Docker Engine socket.
 - The package broker is a non-fetching authorization skeleton. Dynamic package
   delivery, installation, and egress are explicitly disabled.
 

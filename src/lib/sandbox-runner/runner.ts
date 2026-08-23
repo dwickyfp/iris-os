@@ -333,7 +333,11 @@ export class SandboxRunner {
           input.identity,
           limits,
           input.profile.network,
-          undefined,
+          [
+            "/bin/sh",
+            "-c",
+            "mkdir -p /workspace/input /workspace/work /workspace/output && exec sleep infinity",
+          ],
           input.profile.id,
         ),
       );
@@ -459,23 +463,31 @@ export class SandboxRunner {
 
   async exec(
     id: string,
-    command: unknown,
+    request: {
+      executable: string;
+      args: string[];
+      cwd?: string;
+      env?: Record<string, string>;
+    },
     signal?: AbortSignal,
     requestedTimeoutMs?: number,
   ) {
     const session = this.requireSession(id);
     this.touch(session);
+    const command = [request.executable, ...request.args];
+    if (request.cwd && !/^\/workspace(?:\/[A-Za-z0-9._-]+)*$/.test(request.cwd))
+      throw new ValidationError("cwd must remain inside /workspace");
+    const envEntries = Object.entries(request.env ?? {});
     if (
-      !Array.isArray(command) ||
-      command.length === 0 ||
-      command.length > 64 ||
-      command.some(
-        (part) =>
-          typeof part !== "string" || part.length === 0 || part.length > 4_096,
+      envEntries.some(
+        ([key, value]) =>
+          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ||
+          value.length === 0 ||
+          value.length > 4_096 ||
+          value.includes("\0"),
       )
-    ) {
-      throw new ValidationError("cmd must be a non-empty bounded string array");
-    }
+    )
+      throw new ValidationError("Invalid execution environment");
     if (this.activeExecSessions.has(id))
       throw new ValidationError(
         "Sandbox session already has an active execution",
@@ -506,7 +518,13 @@ export class SandboxRunner {
           Tty: false,
           Cmd: command,
           User: "10001:10001",
-          WorkingDir: "/workspace",
+          WorkingDir: request.cwd ?? "/workspace",
+          Env: Object.hasOwn(request.env ?? {}, "PATH")
+            ? envEntries.map(([key, value]) => `${key}=${value}`)
+            : [
+                "PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/bin",
+                ...envEntries.map(([key, value]) => `${key}=${value}`),
+              ],
           Privileged: false,
         },
         controller.signal,

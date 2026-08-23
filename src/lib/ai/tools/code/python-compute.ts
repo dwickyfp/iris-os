@@ -28,10 +28,10 @@ export function createPythonComputeTool(input: {
     context: PythonComputeContext;
     artifacts: Array<{ artifactId: string; destination: string }>;
   }): Promise<Array<{ path: string; content: string; encoding: "base64" }>>;
-}) {
+  }) {
   return tool({
     description:
-      "Run Python in an isolated server-side compute sandbox. Sessions are managed automatically and reused within the current run.",
+      "Run Python in an isolated server-side compute sandbox. Sessions are managed automatically and reused within the current run. To return downloadable files, write them under /workspace and list their workspace-relative paths in outputPaths; returned artifacts include downloadUrl.",
     inputSchema: z.object({
       code: z.string().min(1).max(200_000),
       inputArtifacts: z
@@ -60,7 +60,7 @@ export function createPythonComputeTool(input: {
         : undefined;
       if (request.inputArtifacts?.length && !files)
         throw new Error("SANDBOX_ARTIFACT_STAGING_UNAVAILABLE");
-      return input.manager.executePython({
+      const result = await input.manager.executePython({
         scope: context,
         profile: input.profile,
         request: {
@@ -73,6 +73,31 @@ export function createPythonComputeTool(input: {
         maxComputeMs: input.maxComputeMs,
         signal: options.abortSignal,
       });
+
+      // Keep internal storage keys out of model and client-visible tool output.
+      const artifacts = result.artifacts.flatMap((artifact) => {
+        const value = artifact as Record<string, unknown>;
+        const { artifactId, filename, mediaType, size, relativePath } = value;
+        if (
+          typeof artifactId !== "string" ||
+          typeof filename !== "string" ||
+          typeof mediaType !== "string" ||
+          typeof size !== "number" ||
+          typeof relativePath !== "string"
+        )
+          return [];
+        return [
+          {
+            artifactId,
+            filename,
+            mediaType,
+            size,
+            relativePath,
+            downloadUrl: `/api/artifacts/${artifactId}`,
+          },
+        ];
+      });
+      return { ...result, artifacts };
     },
   });
 }

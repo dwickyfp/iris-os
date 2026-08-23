@@ -2,17 +2,22 @@ import importlib
 import importlib.metadata
 import json
 import os
+import shutil
 
 
 EXPECTED = {
     "Pillow": ("PIL", "11.3.0"),
     "duckdb": ("duckdb", "1.3.2"),
+    "fastapi": ("fastapi", "0.116.1"),
+    "httpx": ("httpx", "0.28.1"),
     "matplotlib": ("matplotlib", "3.10.5"),
     "numpy": ("numpy", "2.3.2"),
     "openpyxl": ("openpyxl", "3.1.5"),
     "pandas": ("pandas", "2.3.2"),
     "pyarrow": ("pyarrow", "21.0.0"),
+    "pydantic": ("pydantic", "2.11.7"),
     "pypdf": ("pypdf", "6.0.0"),
+    "pytest": ("pytest", "8.4.1"),
     "python-docx": ("docx", "1.2.0"),
     "python-pptx": ("pptx", "1.0.2"),
     "reportlab": ("reportlab", "4.4.3"),
@@ -20,6 +25,10 @@ EXPECTED = {
     "scipy": ("scipy", "1.16.1"),
     "xlsxwriter": ("xlsxwriter", "3.2.5"),
 }
+
+for executable in ("zip", "unzip", "tar", "jq", "file", "pytest"):
+    if shutil.which(executable) is None:
+        raise RuntimeError(f"required executable is unavailable: {executable}")
 
 
 def main() -> None:

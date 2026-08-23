@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { FileStorage } from "lib/file-storage/file-storage.interface";
 import { describe, expect, test, vi } from "vitest";
 import type { ArtifactRepository } from "./repository";
-import { createArtifactVerifier } from "./verifier";
+import { createArtifactVerifier, verifyZipStructure } from "./verifier";
 
 const bytes = Buffer.from("verified report");
 const reference = {
@@ -88,6 +88,26 @@ describe("artifact verifier", () => {
         reason: "ARTIFACT_HASH_MISMATCH",
       }),
     );
+  });
+
+  test("validates ZIP central-directory structure", () => {
+    expect(verifyZipStructure(Buffer.from("not a zip"))).toBe(false);
+    const zip = Buffer.alloc(100);
+    zip.writeUInt32LE(0x04034b50, 0);
+    const directoryOffset = 30;
+    zip.writeUInt32LE(0x02014b50, directoryOffset);
+    zip.writeUInt16LE(1, directoryOffset + 10);
+    const eocd = 76;
+    zip.writeUInt32LE(0x06054b50, eocd);
+    zip.writeUInt16LE(1, eocd + 8);
+    zip.writeUInt16LE(1, eocd + 10);
+    zip.writeUInt32LE(46, eocd + 12);
+    zip.writeUInt16LE(0, eocd + 14);
+    zip.writeUInt32LE(directoryOffset, eocd + 16);
+    zip.writeUInt32LE(directoryOffset, eocd + 20);
+    expect(verifyZipStructure(zip)).toBe(true);
+    zip.writeUInt16LE(2, eocd + 10);
+    expect(verifyZipStructure(zip)).toBe(false);
   });
 
   test("rejects a valid artifact owned by a different user or run", async () => {

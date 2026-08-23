@@ -4,6 +4,7 @@ import { recordRuntimeActivityEvent } from "lib/activity/service";
 import { ArtifactService } from "lib/ai/artifacts";
 import { policyEngine } from "lib/ai/runtime/policy-engine";
 import { createPythonComputeTool } from "lib/ai/tools/code/python-compute";
+import { createSandboxExecTool } from "lib/ai/tools/code/sandbox-exec";
 import { artifactRepository, sandboxRepository } from "lib/db/repository";
 import { serverFileStorage } from "lib/file-storage";
 import { createSandboxArtifactHook } from "./artifact-bridge";
@@ -15,28 +16,37 @@ import {
   FetchIrisRunnerHttpClient,
   IrisRunnerProvider,
 } from "./iris-runner-provider";
+import { namedIrisRunnerProvider } from "./provider-registry";
 import { SandboxManager } from "./manager";
 
 const config = sandboxServerConfig();
 
-export const sandboxProvider = new IrisRunnerProvider(
-  new FetchIrisRunnerHttpClient(
-    config.runnerUrl ?? "http://127.0.0.1:8787",
-    config.runnerToken,
+export const sandboxProvider = namedIrisRunnerProvider(
+  new IrisRunnerProvider(
+    new FetchIrisRunnerHttpClient(
+      config.runnerUrl ?? "http://127.0.0.1:8787",
+      config.runnerToken,
+    ),
   ),
+  config.provider,
 );
 
 const policy: SandboxPolicyGate = {
   async authorize({ action, profile, scope }) {
     if (!config.enabled) throw new Error("SANDBOX_DISABLED");
     if (profile.network !== "none") throw new Error("SANDBOX_NETWORK_DENIED");
-    if (action === "sandbox.execute_python" && profile.id !== config.profile.id)
+    if (
+      (action === "sandbox.execute_python" ||
+        action === "sandbox.execute_cli") &&
+      profile.id !== config.profile.id
+    )
       throw new Error("SANDBOX_PROFILE_DENIED");
     const decision = policyEngine.evaluate({
       actor: { type: "system", userId: scope.userId },
       capability: {
-        id: "sandbox:python_compute",
-        key: "python_compute",
+        id: `sandbox:${action === "sandbox.execute_cli" ? "sandbox_exec" : "python_compute"}`,
+        key:
+          action === "sandbox.execute_cli" ? "sandbox_exec" : "python_compute",
         kind: "sandbox",
         risks: ["write", "code", "remote"],
       },
@@ -118,8 +128,18 @@ export const pythonComputeTool = createPythonComputeTool({
   },
 });
 
+export const sandboxExecTool = createSandboxExecTool({
+  manager: sandboxManager,
+  profile: config.profile,
+  maxComputeMs: config.profile.executionTimeoutMs * 5,
+});
+
 export const sandboxCapability = config.enabled
-  ? { provider: sandboxProvider, pythonCompute: pythonComputeTool }
+  ? {
+      provider: sandboxProvider,
+      pythonCompute: pythonComputeTool,
+      sandboxExec: sandboxExecTool,
+    }
   : undefined;
 
 export function workflowSandboxServices(_runId: string) {

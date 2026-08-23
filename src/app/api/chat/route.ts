@@ -94,6 +94,10 @@ const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Chat API: `),
 });
 
+function activityModel(chatModel: { model: string; provider: string } | undefined | null) {
+  return chatModel ? `${chatModel.provider}/${chatModel.model}` : undefined;
+}
+
 export async function POST(request: Request) {
   try {
     const json = await request.json();
@@ -317,7 +321,10 @@ export async function POST(request: Request) {
       eventType: "chat.started",
       subjectType: "thread",
       subjectId: thread!.id,
-      payload: { userMessageId: message.id, model: chatModel },
+      payload: {
+        userMessageId: message.id,
+        model: activityModel(chatModel),
+      },
       requestId,
       runId,
       threadId: thread!.id,
@@ -804,7 +811,7 @@ export async function POST(request: Request) {
           payload: {
             userMessageId: message.id,
             assistantMessageId: responseMessage.id,
-            model: chatModel,
+            model: activityModel(chatModel),
             userText: completedUserText,
           },
           requestId,

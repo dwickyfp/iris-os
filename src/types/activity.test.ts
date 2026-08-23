@@ -27,6 +27,28 @@ describe("ActivityEventInputSchema", () => {
     ).toThrow(/scopeId/i);
   });
 
+  test("requires chat model payloads to be provider/model strings", () => {
+    const payload = {
+      actorType: "user",
+      eventType: "chat.started",
+      subjectType: "thread",
+      payload: { userMessageId: "message-1", model: "provider/model" },
+      idempotencyKey: "chat.started:message-1",
+    };
+    expect(ActivityEventInputSchema.parse(payload).payload).toMatchObject({
+      model: "provider/model",
+    });
+    expect(() =>
+      ActivityEventInputSchema.parse({
+        ...payload,
+        payload: {
+          userMessageId: "message-1",
+          model: { provider: "provider", model: "model" },
+        },
+      }),
+    ).toThrow(/expected string/i);
+  });
+
   test("accepts runtime trajectory events", () => {
     expect(
       ActivityEventInputSchema.parse({

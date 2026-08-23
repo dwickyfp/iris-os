@@ -9,10 +9,4 @@ if [ ! -S "$socket" ]; then
 fi
 
 socket_gid="$(stat -c '%g' "$socket")"
-if ! getent group "$socket_gid" >/dev/null 2>&1; then
-  groupadd --gid "$socket_gid" docker-host
-fi
-socket_group="$(getent group "$socket_gid" | cut -d: -f1)"
-usermod --append --groups "$socket_group" sandbox
-
-exec gosu sandbox "$@"
+exec gosu "10001:$socket_gid" "$@"

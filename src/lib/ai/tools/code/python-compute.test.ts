@@ -30,4 +30,47 @@ describe("python_compute", () => {
       schema.parse({ code: "print('ok')", packages: ["requests==2.32.5"] }),
     ).toThrow("Dynamic package installation is disabled");
   });
+
+  it("returns downloadable artifact links without exposing storage keys", async () => {
+    const executePython = vi.fn(async () => ({
+      executionId: "execution-1",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      durationMs: 1,
+      files: [],
+      artifacts: [
+        {
+          artifactId: "0f98f5c9-45f1-4a5f-88e4-56724ab11701",
+          storageKey: "artifacts/internal-secret.bin",
+          filename: "project.zip",
+          mediaType: "application/zip",
+          size: 12,
+          sha256: "a".repeat(64),
+          relativePath: "output/project.zip",
+        },
+      ],
+    }));
+    const tool = createPythonComputeTool({
+      manager: { executePython } as any,
+      profile: {} as any,
+      maxComputeMs: 5_000,
+    });
+    const result = (await tool.execute!(
+      { code: "pass", outputPaths: ["output/project.zip"] },
+      { context: { runId: "run-1", userId: "user-1" }, toolCallId: "call-1" } as any,
+    )) as any;
+
+    expect(result.artifacts).toEqual([
+      {
+        artifactId: "0f98f5c9-45f1-4a5f-88e4-56724ab11701",
+        filename: "project.zip",
+        mediaType: "application/zip",
+        size: 12,
+        relativePath: "output/project.zip",
+        downloadUrl: "/api/artifacts/0f98f5c9-45f1-4a5f-88e4-56724ab11701",
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain("internal-secret.bin");
+  });
 });

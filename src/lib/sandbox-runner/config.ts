@@ -70,6 +70,26 @@ const schema = z.object({
     .int()
     .min(1)
     .default(4),
+  SANDBOX_RUNNER_ALLOWED_EXECUTABLES: z
+    .string()
+    .default(
+      [
+        "python",
+        "python3",
+        "pytest",
+        "zip",
+        "unzip",
+        "tar",
+        "gzip",
+        "gunzip",
+        "file",
+        "find",
+        "grep",
+        "sed",
+        "awk",
+        "jq",
+      ].join(","),
+    ),
   SANDBOX_RUNNER_CHILD_BROKER_NETWORK: z.string().trim().min(1).optional(),
   SANDBOX_SECURITY_RUN_ID: z
     .string()

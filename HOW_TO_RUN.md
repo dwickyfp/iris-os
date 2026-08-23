@@ -83,6 +83,19 @@ pnpm sandbox:security
 # Stop the sandbox control plane
 pnpm sandbox:down
 
+# Standalone sandbox-only stack on native Linux with registered runsc.
+# Development runner configuration is contained in docker/sandbox/docker-compose.yml.
+# On a fresh Linux Docker Engine host, install gVisor runsc, register it, and
+# recreate the runner with:
+pnpm sandbox:runsc:check
+sudo node docker/sandbox/runsc-setup.mjs configure
+pnpm sandbox:standalone:build
+pnpm sandbox:standalone:up
+pnpm sandbox:runsc:recreate
+pnpm sandbox:standalone:ps
+# Run the app separately with pnpm dev; runner listens only on 127.0.0.1:8787.
+pnpm sandbox:standalone:down
+
 # Check health endpoints
 curl http://127.0.0.1:3000/api/health/live
 curl http://127.0.0.1:3000/api/health/ready
@@ -101,6 +114,8 @@ curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/
 # SANDBOX_RUNTIME_IMAGE=<immutable sandbox runtime image>
 # SANDBOX_RUNNER_TOKEN=<32+ random characters>
 # The sandbox feature fails closed unless Docker reports the runsc runtime.
+# Host development publishes only the authenticated runner on 127.0.0.1:8787;
+# the package broker and Docker socket are never exposed to the host app.
 # Sandbox is an optional platform service/capability, not an ExecutionDriver.
 # Package delivery is disabled; the package broker is a non-fetching policy
 # skeleton.

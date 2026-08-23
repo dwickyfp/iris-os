@@ -20,12 +20,29 @@ export type DurableBudgetAuthority = {
   ): Promise<unknown>;
 };
 
-export const AGENT_TIMEOUTS = {
+const DEFAULT_AGENT_TIMEOUTS = {
   totalMs: 90_000,
   stepMs: 30_000,
   chunkMs: 15_000,
   toolMs: 30_000,
 } as const;
+
+export function configuredAgentTimeouts(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const stepMs = Number.parseInt(environment.AI_STEP_TIMEOUT_MS ?? "", 10);
+  if (!Number.isFinite(stepMs)) return DEFAULT_AGENT_TIMEOUTS;
+  if (stepMs < 30_000 || stepMs > 300_000) {
+    throw new RangeError("AI_STEP_TIMEOUT_MS must be between 30000 and 300000");
+  }
+  return {
+    ...DEFAULT_AGENT_TIMEOUTS,
+    stepMs,
+    totalMs: Math.max(DEFAULT_AGENT_TIMEOUTS.totalMs, stepMs * 2),
+  };
+}
+
+export const AGENT_TIMEOUTS = configuredAgentTimeouts();
 
 export type ToolLoopAgentProfile =
   | { type: "base" }

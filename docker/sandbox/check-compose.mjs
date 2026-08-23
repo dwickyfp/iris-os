@@ -8,6 +8,7 @@ const overlayFiles = [
   ...baseFiles,
   "docker/sandbox/compose.linux-gvisor.yml",
 ];
+const standaloneFiles = ["docker/sandbox/docker-compose.yml"];
 const scripts = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url)))
   .scripts;
 
@@ -15,8 +16,15 @@ assert.match(scripts["sandbox:build"], /SANDBOX_RUNNER_TOKEN=[^ ]+/);
 for (const command of [scripts["sandbox:up"], scripts["sandbox:smoke"]]) {
   assert.doesNotMatch(command, /SANDBOX_RUNNER_TOKEN=/);
 }
+for (const command of ["build", "up", "down", "ps"]) {
+  assert.match(
+    scripts[`sandbox:standalone:${command}`],
+    /-f docker\/sandbox\/docker-compose\.yml/,
+  );
+  assert.doesNotMatch(scripts[`sandbox:standalone:${command}`], /--env-file/);
+}
 
-function composeConfig(files) {
+function composeConfig(files, environment = {}) {
   const args = files.flatMap((file) => ["--file", file]);
   const output = execFileSync(
     "docker",
@@ -28,6 +36,7 @@ function composeConfig(files) {
         ...process.env,
         SANDBOX_RUNNER_TOKEN: "sandbox-compose-check-token-32-characters",
         SANDBOX_RUNNER_IMAGE: `iris-sandbox-runtime@sha256:${"a".repeat(64)}`,
+        ...environment,
       },
     },
   );
@@ -156,5 +165,35 @@ for (const service of ["iris-os", "iris-worker", "memory-worker"]) {
   assert.equal(socketServices({ services: { [service]: overlay.services[service] } }).length, 0);
 }
 assertNetworkTopology(overlay);
+
+const standalone = composeConfig(standaloneFiles);
+assert.deepEqual(Object.keys(standalone.services).sort(), [
+  "package-broker",
+  "runner",
+  "runtime-smoke",
+]);
+assert.deepEqual(socketServices(standalone), ["runner"]);
+assert.deepEqual(standalone.services.runner.ports, [
+  {
+    mode: "ingress",
+    target: 8787,
+    published: "8787",
+    host_ip: "127.0.0.1",
+    protocol: "tcp",
+  },
+]);
+assert.equal(standalone.services["package-broker"].ports, undefined);
+assert.equal(standalone.services["runtime-smoke"].runtime, "runsc");
+assert.equal(standalone.services["runtime-smoke"].network_mode, "none");
+assert.equal(standalone.services.runner.environment.SANDBOX_RUNNER_RUNTIME, "runsc");
+assert.equal(standalone.services.runner.environment.SANDBOX_RUNTIME, "runsc");
+assert.match(
+  standalone.services.runner.environment.SANDBOX_RUNNER_TOKEN,
+  /^iris-sandbox-local-development-token-/,
+);
+assert.equal(
+  standalone.services["package-broker"].environment?.SANDBOX_RUNNER_TOKEN,
+  undefined,
+);
 
 console.log("sandbox Compose security invariants passed");

@@ -4,7 +4,13 @@ import type {
   PythonComputeResult,
   SandboxArtifactHook,
   SandboxEventSink,
+  SandboxExecRequest,
+  SandboxExecResult,
+  SandboxFileInput,
   SandboxInstance,
+  SandboxListResult,
+  SandboxOutputFile,
+  SandboxPolicyAction,
   SandboxPolicyGate,
   SandboxProfile,
   SandboxProvider,
@@ -176,6 +182,166 @@ export class SandboxManager {
     return this.serialized(input.scope.runId, () => this.performPython(input));
   }
 
+  execute(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    request: SandboxExecRequest;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }): Promise<SandboxExecResult & { artifacts: unknown[] }> {
+    return this.serialized(input.scope.runId, () =>
+      this.performExecution({
+        scope: input.scope,
+        profile: input.profile,
+        action: "sandbox.execute_cli",
+        timeoutMs: input.request.timeoutMs,
+        maxComputeMs: input.maxComputeMs,
+        signal: input.signal,
+        failureErrorCode: "SANDBOX_CLI_EXECUTION_FAILED",
+        invoke: (instance) =>
+          instance.exec(input.request, { signal: input.signal }),
+      }),
+    );
+  }
+
+  writeFiles(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    files: SandboxFileInput[];
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }) {
+    return this.performFileOperation("sandbox.file.write", input, (instance) =>
+      instance.writeFiles(input.files, { signal: input.signal }),
+    );
+  }
+
+  readFile(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    path: string;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }): Promise<SandboxOutputFile> {
+    return this.performFileOperation("sandbox.file.read", input, (instance) =>
+      instance.readFile(input.path, { signal: input.signal }),
+    );
+  }
+
+  listFiles(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    path?: string;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }): Promise<SandboxListResult> {
+    return this.performFileOperation("sandbox.file.read", input, (instance) =>
+      instance.listFiles(input.path ?? "/workspace", { signal: input.signal }),
+    );
+  }
+
+  removePaths(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    paths: string[];
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }) {
+    return this.performFileOperation("sandbox.file.remove", input, (instance) =>
+      instance.removePaths(input.paths, { signal: input.signal }),
+    );
+  }
+
+  createArchive(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    sourcePath: string;
+    outputPath: string;
+    maxFiles?: number;
+    maxTotalBytes?: number;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }): Promise<SandboxExecResult & { artifacts: unknown[] }> {
+    return this.execute({
+      scope: input.scope,
+      profile: input.profile,
+      request: {
+        executable: "python",
+        args: [
+          "/usr/local/bin/sandbox-archive.py",
+          "create",
+          "--source",
+          input.sourcePath,
+          "--output",
+          input.outputPath,
+          "--max-files",
+          String(Math.min(Math.max(input.maxFiles ?? 2_000, 1), 10_000)),
+          "--max-total-bytes",
+          String(
+            Math.min(
+              Math.max(input.maxTotalBytes ?? 100 * 1024 * 1024, 1),
+              1024 * 1024 * 1024,
+            ),
+          ),
+        ],
+        cwd: "/workspace",
+      },
+      maxComputeMs: input.maxComputeMs,
+      signal: input.signal,
+    });
+  }
+
+  extractArchive(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    archivePath: string;
+    destinationPath: string;
+    maxFiles?: number;
+    maxFileBytes?: number;
+    maxTotalBytes?: number;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+  }): Promise<SandboxExecResult> {
+    if (!input.archivePath.startsWith("/workspace/input/"))
+      return Promise.reject(new Error("SANDBOX_ARCHIVE_INPUT_REQUIRED"));
+    if (!input.destinationPath.startsWith("/workspace/work/"))
+      return Promise.reject(new Error("SANDBOX_ARCHIVE_DESTINATION_REQUIRED"));
+    return this.execute({
+      scope: input.scope,
+      profile: input.profile,
+      request: {
+        executable: "python",
+        args: [
+          "/usr/local/bin/sandbox-archive.py",
+          "extract",
+          "--archive",
+          input.archivePath,
+          "--destination",
+          input.destinationPath,
+          "--max-files",
+          String(Math.min(Math.max(input.maxFiles ?? 2_000, 1), 10_000)),
+          "--max-file-bytes",
+          String(
+            Math.min(
+              Math.max(input.maxFileBytes ?? 25 * 1024 * 1024, 1),
+              256 * 1024 * 1024,
+            ),
+          ),
+          "--max-total-bytes",
+          String(
+            Math.min(
+              Math.max(input.maxTotalBytes ?? 100 * 1024 * 1024, 1),
+              1024 * 1024 * 1024,
+            ),
+          ),
+        ],
+        cwd: "/workspace",
+      },
+      maxComputeMs: input.maxComputeMs,
+      signal: input.signal,
+    });
+  }
+
   private async performPython(input: {
     scope: SandboxScope;
     profile: SandboxProfile;
@@ -183,13 +349,43 @@ export class SandboxManager {
     maxComputeMs?: number;
     signal?: AbortSignal;
   }): Promise<PythonComputeResult & { artifacts: unknown[] }> {
-    await this.dependencies.policy.authorize({
+    return (await this.performExecution({
+      scope: input.scope,
+      profile: input.profile,
       action: "sandbox.execute_python",
+      timeoutMs: input.request.timeoutMs,
+      maxComputeMs: input.maxComputeMs,
+      signal: input.signal,
+      failureErrorCode: "PYTHON_EXIT_NONZERO",
+      invoke: (instance) =>
+        instance.executePython({ ...input.request }, { signal: input.signal }),
+    })) as unknown as Promise<PythonComputeResult & { artifacts: unknown[] }>;
+  }
+
+  private async performExecution(input: {
+    scope: SandboxScope;
+    profile: SandboxProfile;
+    action: Extract<
+      SandboxPolicyAction,
+      "sandbox.execute_python" | "sandbox.execute_cli"
+    >;
+    timeoutMs?: number;
+    maxComputeMs?: number;
+    signal?: AbortSignal;
+    failureErrorCode: string;
+    invoke: (
+      instance: SandboxInstance,
+    ) => Promise<PythonComputeResult | SandboxExecResult>;
+  }): Promise<
+    (PythonComputeResult | SandboxExecResult) & { artifacts: unknown[] }
+  > {
+    await this.dependencies.policy.authorize({
+      action: input.action,
       scope: input.scope,
       profile: input.profile,
     });
     const timeoutMs = Math.min(
-      input.request.timeoutMs ?? input.profile.executionTimeoutMs,
+      input.timeoutMs ?? input.profile.executionTimeoutMs,
       input.profile.executionTimeoutMs,
     );
     let session: SandboxSessionRecord;
@@ -276,12 +472,9 @@ export class SandboxManager {
       throw error;
     }
 
-    let result: PythonComputeResult;
+    let result: PythonComputeResult | SandboxExecResult;
     try {
-      result = await instance.executePython(
-        { ...input.request, timeoutMs },
-        { signal: input.signal },
-      );
+      result = await input.invoke(instance);
     } catch (error) {
       const observedWallDurationMs = Math.max(
         0,
@@ -362,7 +555,7 @@ export class SandboxManager {
             scope: input.scope,
             sessionId: session.id,
             executionId,
-            files: result.files,
+            files: result.files ?? [],
           })
         : [];
     } catch (error) {
@@ -409,7 +602,7 @@ export class SandboxManager {
           durationMs,
           observedWallDurationMs,
           exitCode: result.exitCode,
-          errorCode: result.exitCode === 0 ? undefined : "PYTHON_EXIT_NONZERO",
+          errorCode: result.exitCode === 0 ? undefined : input.failureErrorCode,
           completedAt,
         },
       );
@@ -772,6 +965,84 @@ export class SandboxManager {
     });
   }
 
+  private async performFileOperation<T>(
+    action: Extract<
+      SandboxPolicyAction,
+      "sandbox.file.read" | "sandbox.file.write" | "sandbox.file.remove"
+    >,
+    input: {
+      scope: SandboxScope;
+      profile: SandboxProfile;
+      maxComputeMs?: number;
+      signal?: AbortSignal;
+    },
+    operation: (instance: SandboxInstance) => Promise<T>,
+  ): Promise<T> {
+    const timeoutMs = Math.min(
+      input.maxComputeMs ?? 10_000,
+      input.profile.executionTimeoutMs,
+    );
+    await this.dependencies.policy.authorize({
+      action,
+      scope: input.scope,
+      profile: input.profile,
+    });
+    return this.serialized(input.scope.runId, async () => {
+      const { session, instance } = await this.session(
+        input.scope,
+        input.profile,
+        input.signal,
+      );
+      await this.touch(session, input.profile);
+      const executionId = this.generateId();
+      const reservationToken = this.generateId();
+      const reservedAt = this.now();
+      const reserved = await this.dependencies.repository.reserveExecution(
+        {
+          id: executionId,
+          sessionId: session.id,
+          runId: input.scope.runId,
+          status: "reserved",
+          reservationToken,
+          reservedComputeMs: timeoutMs,
+          reservationExpiresAt: new Date(
+            reservedAt.getTime() + RESERVATION_LEASE_MS,
+          ),
+        },
+        timeoutMs,
+      );
+      if (!reserved) throw new Error("RUN_CANCELLED");
+      try {
+        const result = await operation(instance);
+        const completedAt = this.now();
+        await this.dependencies.repository.settleExecution(
+          executionId,
+          reservationToken,
+          Math.min(1, timeoutMs),
+          Math.max(0, completedAt.getTime() - reservedAt.getTime()),
+          completedAt,
+        );
+        await this.touch(session, input.profile);
+        return result;
+      } catch (error) {
+        const completedAt = this.now();
+        await this.dependencies.repository
+          .settleExecution(
+            executionId,
+            reservationToken,
+            Math.min(
+              timeoutMs,
+              Math.max(1, completedAt.getTime() - reservedAt.getTime()),
+            ),
+            Math.max(0, completedAt.getTime() - reservedAt.getTime()),
+            completedAt,
+          )
+          .catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
   private touch(session: SandboxSessionRecord, profile: SandboxProfile) {
     const now = this.now();
     session.lastUsedAt = now;
@@ -780,13 +1051,11 @@ export class SandboxManager {
       session.createdAt.getTime() +
       (profile.absoluteTimeoutMs ?? profile.idleTimeoutMs * 3);
     session.expiresAt = new Date(Math.min(idleExpiry, absoluteExpiry));
-    return this.dependencies.repository.touchSession(
-      session.id,
-      session.lastUsedAt,
-      session.expiresAt,
-    ).then((touched) => {
-      if (!touched) throw new Error("SANDBOX_SESSION_DESTROYING");
-    });
+    return this.dependencies.repository
+      .touchSession(session.id, session.lastUsedAt, session.expiresAt)
+      .then((touched) => {
+        if (!touched) throw new Error("SANDBOX_SESSION_DESTROYING");
+      });
   }
 
   private serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {

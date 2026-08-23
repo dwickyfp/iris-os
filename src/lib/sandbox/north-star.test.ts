@@ -76,6 +76,21 @@ describe("Harness sandbox north star", () => {
           },
         ],
       })),
+      exec: vi.fn(async () => ({
+        executionId: "provider-cli",
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        durationMs: 1,
+      })),
+      writeFiles: vi.fn(async () => undefined),
+      readFile: vi.fn(async () => ({
+        path: "output/trend.json",
+        content: "",
+        encoding: "base64" as const,
+      })),
+      listFiles: vi.fn(async () => ({ files: [] })),
+      removePaths: vi.fn(async () => undefined),
       cancel: vi.fn(async () => undefined),
       destroy: vi.fn(async () => undefined),
     };

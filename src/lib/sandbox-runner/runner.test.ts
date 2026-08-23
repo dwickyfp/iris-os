@@ -145,7 +145,11 @@ describe("SandboxRunner", () => {
     expect(creates).toHaveLength(2);
     expect(creates[1].body).toEqual({
       Image: image,
-      Cmd: ["sleep", "infinity"],
+      Cmd: [
+        "/bin/sh",
+        "-c",
+        "mkdir -p /workspace/input /workspace/work /workspace/output && exec sleep infinity",
+      ],
       User: "10001:10001",
       WorkingDir: "/workspace",
       NetworkDisabled: true,
@@ -393,14 +397,14 @@ describe("SandboxRunner", () => {
     );
 
     vi.setSystemTime(2_500);
-    await runner.exec(session.id, ["true"]);
+    await runner.exec(session.id, { executable: "true", args: [] });
     await runner.reap(3_001);
     expect(await runner.getSession(session.id)).toMatchObject({
       id: session.id,
     });
 
     vi.setSystemTime(4_500);
-    await runner.exec(session.id, ["true"]);
+    await runner.exec(session.id, { executable: "true", args: [] });
     await runner.reap(6_001);
     await expect(runner.getSession(session.id)).rejects.toThrow("not found");
     await runner.stop();
@@ -541,7 +545,9 @@ describe("SandboxRunner", () => {
     });
     arrange(docker);
 
-    await expect(runner.exec(session.id, ["true"])).rejects.toThrow();
+    await expect(
+      runner.exec(session.id, { executable: "true", args: [] }),
+    ).rejects.toThrow();
     expect(docker.calls).toContainEqual({
       method: "DELETE",
       path: "/containers/container-2?force=true&v=true",
@@ -574,7 +580,7 @@ describe("SandboxRunner", () => {
 
       const execution = runner.exec(
         session.id,
-        ["sleep", "1"],
+        { executable: "sleep", args: ["1"] },
         controller.signal,
         100,
       );
@@ -593,7 +599,9 @@ describe("SandboxRunner", () => {
     docker.execOutput = Readable.from(execFrame(3, "x"));
     docker.removeFailures = 1;
 
-    await expect(runner.exec(session.id, ["true"])).rejects.toThrow("Invalid");
+    await expect(
+      runner.exec(session.id, { executable: "true", args: [] }),
+    ).rejects.toThrow("Invalid");
     await expect(runner.getSession(session.id)).rejects.toThrow("not found");
     expect(
       docker.calls.filter((call) => call.method === "DELETE"),
@@ -612,7 +620,9 @@ describe("SandboxRunner", () => {
     docker.execInspect = { ExitCode: 7, Running: false };
     docker.execOutput = Readable.from(execFrame(2, "failed"));
 
-    await expect(runner.exec(session.id, ["false"])).resolves.toMatchObject({
+    await expect(
+      runner.exec(session.id, { executable: "false", args: [] }),
+    ).resolves.toMatchObject({
       exitCode: 7,
       stderr: "failed",
     });

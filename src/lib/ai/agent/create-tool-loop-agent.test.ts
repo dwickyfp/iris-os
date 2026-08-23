@@ -4,7 +4,9 @@ import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
+  AGENT_TIMEOUTS,
   createToolLoopAgent,
+  configuredAgentTimeouts,
   evaluateToolCallPolicy,
   getAgentToolTimeouts,
   getToolLoopAgentReasoningMode,
@@ -41,6 +43,29 @@ function eventTypes(events: Array<{ type: string }>) {
 }
 
 describe("getAgentToolTimeouts", () => {
+  it("keeps the safe default step timeout and bounded overrides", () => {
+    expect(AGENT_TIMEOUTS).toEqual({
+      totalMs: 90_000,
+      stepMs: 30_000,
+      chunkMs: 15_000,
+      toolMs: 30_000,
+    });
+
+    expect(
+      configuredAgentTimeouts({
+        ...process.env,
+        AI_STEP_TIMEOUT_MS: "60000",
+      }),
+    ).toMatchObject({ stepMs: 60_000, totalMs: 120_000 });
+    expect(configuredAgentTimeouts(process.env)).toEqual(AGENT_TIMEOUTS);
+    expect(() =>
+      configuredAgentTimeouts({
+        ...process.env,
+        AI_STEP_TIMEOUT_MS: "1000",
+      }),
+    ).toThrow(RangeError);
+  });
+
   it("uses AI SDK v7 per-tool timeout keys and risk-based durations", () => {
     const timeouts = getAgentToolTimeouts({
       [DefaultToolName.WebSearch]: {} as any,

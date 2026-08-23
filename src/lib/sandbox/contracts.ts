@@ -115,6 +115,33 @@ export type PythonComputeResult = {
   metadata?: Record<string, unknown>;
 };
 
+export type SandboxExecRequest = {
+  executable: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export type SandboxExecResult = {
+  executionId: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  files?: SandboxOutputFile[];
+};
+
+export type SandboxFileEntry = {
+  path: string;
+  type: "file" | "directory";
+  size: number;
+};
+
+export type SandboxListResult = {
+  files: SandboxFileEntry[];
+};
+
 export interface SandboxInstance {
   readonly id: string;
   readonly profile: SandboxProfile;
@@ -123,6 +150,26 @@ export interface SandboxInstance {
     request: PythonComputeRequest,
     options?: { signal?: AbortSignal },
   ): Promise<PythonComputeResult>;
+  exec(
+    request: SandboxExecRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxExecResult>;
+  writeFiles(
+    files: SandboxFileInput[],
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
+  readFile(
+    path: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxOutputFile>;
+  listFiles(
+    path?: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SandboxListResult>;
+  removePaths(
+    paths: string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
   cancel(executionId: string): Promise<void>;
   destroy(): Promise<void>;
 }
@@ -314,6 +361,12 @@ export interface SandboxRepository {
 export type SandboxPolicyAction =
   | "sandbox.create"
   | "sandbox.execute_python"
+  | "sandbox.execute_cli"
+  | "sandbox.file.read"
+  | "sandbox.file.write"
+  | "sandbox.file.remove"
+  | "sandbox.archive.create"
+  | "sandbox.archive.extract"
   | "sandbox.cancel"
   | "sandbox.destroy"
   | "sandbox.reap";

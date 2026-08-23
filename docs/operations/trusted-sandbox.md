@@ -53,7 +53,8 @@ an `ExecutionDriver` and does not own an agent/model loop.
 
 The Python 3.12 runtime includes pinned NumPy, pandas, SciPy, PyArrow, DuckDB,
 Matplotlib, scikit-learn, OpenPyXL, XlsxWriter, python-docx, python-pptx,
-ReportLab, pypdf, and Pillow distributions. All transitive dependencies are
+ReportLab, pypdf, Pillow, FastAPI, Uvicorn, HTTPX, Pydantic, Pytest, and
+pytest-asyncio distributions. All transitive dependencies are
 pinned and hash-locked in `requirements-runtime-amd64.txt` and
 `requirements-runtime-arm64.txt`. Docker selects the matching lock through
 BuildKit `TARGETARCH`, installs wheels only with `--require-hashes --no-deps`,
@@ -167,6 +168,28 @@ and never starts a service or embeds that value in an image. It is not a runtime
 credential. `sandbox:up`, `sandbox:smoke`, and deployment rendering still
 require the operator-generated token.
 
+### Standalone sandbox Compose
+
+On a native Linux host with the exact `runsc` runtime registered, the standalone
+development Compose file contains its loopback-only development credential and
+pinned local runtime image ID. Start only the trusted runner and package broker:
+
+```sh
+pnpm sandbox:standalone:build
+pnpm sandbox:standalone:up
+pnpm sandbox:standalone:ps
+pnpm dev
+```
+
+The standalone Compose file publishes the authenticated runner only on
+`127.0.0.1:8787`, does not publish the broker, and mounts
+`/var/run/docker.sock` only into the trusted runner. Stop and remove only that
+project with:
+
+```sh
+pnpm sandbox:standalone:down
+```
+
 Run the gVisor smoke profile. Success proves that the image runs as UID 10001
 through the Docker `runsc` runtime:
 
@@ -231,13 +254,18 @@ OrbStack because this deployment cannot establish and verify the required
 native Linux gVisor boundary. A Linux VM hidden behind either product is not an
 accepted production configuration.
 
+On macOS, the standalone images can be built, but `up` cannot become ready
+because Docker does not provide the mandatory `runsc` runtime. Existing disabled
+sandbox application settings must remain unchanged.
+
 There is no `runc`, Docker Desktop, OrbStack, process-only, or unsandboxed
 fallback. If `runsc` is unavailable or the smoke test fails, keep sandbox
 execution disabled and move the workload to a supported dedicated Linux host.
 
 ## Verification
 
-`pnpm sandbox:check:compose` renders both the base extension and Linux overlay.
+`pnpm sandbox:check:compose` renders the base extension, Linux overlay, and
+host-development overlay.
 It fails unless the base has no socket mount, the overlay mounts the socket only
 into `sandbox-runner`, the smoke service uses `runsc` with no network, both
 control and child-facing networks are internal, and exact service membership

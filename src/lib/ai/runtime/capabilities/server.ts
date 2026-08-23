@@ -238,6 +238,7 @@ export async function resolveServerCapabilities(input: {
   sandbox?: {
     provider: SandboxProvider;
     pythonCompute: Tool;
+    sandboxExec: Tool;
   };
 }) {
   const { context } = input;
