@@ -1,12 +1,15 @@
 import path from "node:path";
 import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { FileNotFoundError } from "lib/errors";
+import { generateUUID } from "lib/utils";
 import type {
   FileMetadata,
   FileStorage,
@@ -14,27 +17,46 @@ import type {
   UploadUrl,
   UploadUrlOptions,
 } from "./file-storage.interface";
-import {
-  resolveStoragePrefix,
-  sanitizeFilename,
-  toBuffer,
-} from "./storage-utils";
-import { FileNotFoundError } from "lib/errors";
-import { generateUUID } from "lib/utils";
+import { sanitizeFilename, toBuffer } from "./storage-utils";
 
-const STORAGE_PREFIX = resolveStoragePrefix();
+type PresignCommand = PutObjectCommand | GetObjectCommand;
 
-const required = (name: string, value: string | undefined) => {
-  if (!value) throw new Error(`Missing required env: ${name}`);
-  return value;
-};
+export type S3Presigner = (
+  client: S3Client,
+  command: PresignCommand,
+  options: { expiresIn: number },
+) => Promise<string>;
 
-const buildKey = (filename: string) => {
+export interface S3FileStorageConfig {
+  endpoint?: string;
+  region: string;
+  bucket: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  forcePathStyle?: boolean;
+  publicBaseUrl?: string;
+  prefix?: string;
+  client?: S3Client;
+  presigner?: S3Presigner;
+  clientFactory?: (config: S3ClientConfig) => S3Client;
+}
+
+const normalizePrefix = (prefix: string) =>
+  prefix.replace(/^\/+|\/+$/g, "").trim();
+
+const buildKey = (filename: string, prefix: string) => {
   const safeName = sanitizeFilename(filename || "file");
   const id = generateUUID();
-  const prefix = STORAGE_PREFIX ? `${STORAGE_PREFIX}/` : "";
   return path.posix.join(prefix, `${id}-${safeName}`);
 };
+
+const encodeKeySegment = (segment: string) =>
+  encodeURIComponent(segment).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+
+const encodeKey = (key: string) =>
+  key.split("/").map(encodeKeySegment).join("/");
 
 const buildPublicUrl = (
   bucket: string,
@@ -44,53 +66,80 @@ const buildPublicUrl = (
   endpoint?: string,
   forcePathStyle?: boolean,
 ) => {
+  const encodedKey = encodeKey(key);
+
   if (publicBaseUrl) {
-    return `${publicBaseUrl.replace(/\/$/, "")}/${encodeURI(key)}`;
+    return `${publicBaseUrl.replace(/\/+$/, "")}/${encodedKey}`;
   }
 
-  // If custom endpoint provided (e.g., MinIO), fall back to constructing from it
   if (endpoint) {
-    const base = endpoint.replace(/\/$/, "");
-    if (forcePathStyle) return `${base}/${bucket}/${encodeURI(key)}`;
+    const base = endpoint.replace(/\/+$/, "");
+    if (forcePathStyle) return `${base}/${bucket}/${encodedKey}`;
     try {
-      const u = new URL(base);
-      return `${u.protocol}//${bucket}.${u.host}/${encodeURI(key)}`;
+      const url = new URL(base);
+      return `${url.protocol}//${bucket}.${url.host}/${encodedKey}`;
     } catch {
-      return `${base}/${bucket}/${encodeURI(key)}`;
+      return `${base}/${bucket}/${encodedKey}`;
     }
   }
 
-  // AWS standard virtual-hosted–style URL
-  return `https://${bucket}.s3.${region}.amazonaws.com/${encodeURI(key)}`;
+  return `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`;
 };
 
-export const createS3FileStorage = (): FileStorage => {
-  const bucket = required(
-    "FILE_STORAGE_S3_BUCKET",
-    process.env.FILE_STORAGE_S3_BUCKET,
-  );
-  const region = process.env.FILE_STORAGE_S3_REGION || process.env.AWS_REGION;
-  if (!region)
-    throw new Error(
-      "Missing required env: FILE_STORAGE_S3_REGION or AWS_REGION",
-    );
-  const endpoint = process.env.FILE_STORAGE_S3_ENDPOINT;
-  const forcePathStyle = /^1|true$/i.test(
-    process.env.FILE_STORAGE_S3_FORCE_PATH_STYLE || "",
-  );
-  const publicBaseUrl = process.env.FILE_STORAGE_S3_PUBLIC_BASE_URL;
+const isNotFound = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "$metadata" in error &&
+  (error.$metadata as { httpStatusCode?: number } | undefined)
+    ?.httpStatusCode === 404;
 
-  const s3 = new S3Client({
+/**
+ * Creates S3 storage from explicit configuration. Calling without configuration
+ * temporarily retains the legacy environment-based factory used by the router.
+ */
+export const createS3FileStorage = (
+  input: S3FileStorageConfig,
+): FileStorage => {
+  const config = input;
+  const {
+    accessKeyId,
+    bucket,
+    endpoint,
+    forcePathStyle = false,
+    publicBaseUrl,
+    region,
+    secretAccessKey,
+  } = config;
+  const prefix = normalizePrefix(config.prefix ?? "uploads");
+
+  if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
+    throw new Error(
+      "S3 accessKeyId and secretAccessKey must be provided together",
+    );
+  }
+
+  const clientConfig: S3ClientConfig = {
     region,
     endpoint,
     forcePathStyle,
-  });
+    credentials:
+      accessKeyId && secretAccessKey
+        ? { accessKeyId, secretAccessKey }
+        : undefined,
+  };
+  const s3 =
+    config.client ??
+    (config.clientFactory ?? ((options) => new S3Client(options)))(clientConfig);
+  const presign = config.presigner ?? (getSignedUrl as S3Presigner);
 
   return {
+    destroy() {
+      s3.destroy();
+    },
     async upload(content, options: UploadOptions = {}) {
       const buffer = await toBuffer(content);
       const filename = options.filename ?? "file";
-      const key = options.key ?? buildKey(filename);
+      const key = options.key ?? buildKey(filename, prefix);
 
       await s3.send(
         new PutObjectCommand({
@@ -99,7 +148,7 @@ export const createS3FileStorage = (): FileStorage => {
           Body: buffer,
           ContentType: options.contentType,
           Metadata: options.sha256 ? { sha256: options.sha256 } : undefined,
-          ACL: undefined, // rely on bucket policy for public/private
+          ACL: undefined,
         }),
       );
 
@@ -111,22 +160,24 @@ export const createS3FileStorage = (): FileStorage => {
         uploadedAt: new Date(),
       };
 
-      const sourceUrl = buildPublicUrl(
-        bucket,
-        region,
+      return {
         key,
-        publicBaseUrl,
-        endpoint,
-        forcePathStyle,
-      );
-
-      return { key, sourceUrl, metadata };
+        sourceUrl: buildPublicUrl(
+          bucket,
+          region,
+          key,
+          publicBaseUrl,
+          endpoint,
+          forcePathStyle,
+        ),
+        metadata,
+      };
     },
 
     async createUploadUrl(
       options: UploadUrlOptions,
     ): Promise<UploadUrl | null> {
-      const key = buildKey(options.filename);
+      const key = buildKey(options.filename, prefix);
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
@@ -136,7 +187,7 @@ export const createS3FileStorage = (): FileStorage => {
         60,
         Math.min(60 * 60 * 12, options.expiresInSeconds ?? 900),
       );
-      const url = await getSignedUrl(s3, command, { expiresIn: expires });
+      const url = await presign(s3, command, { expiresIn: expires });
       return {
         key,
         url,
@@ -156,15 +207,15 @@ export const createS3FileStorage = (): FileStorage => {
         const stream = body as unknown as NodeJS.ReadableStream;
         const chunks: Buffer[] = [];
         await new Promise<void>((resolve, reject) => {
-          stream.on("data", (c) =>
-            chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)),
+          stream.on("data", (chunk) =>
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
           );
-          stream.once("end", () => resolve());
-          stream.once("error", (e) => reject(e));
+          stream.once("end", resolve);
+          stream.once("error", reject);
         });
         return Buffer.concat(chunks);
       } catch (error: unknown) {
-        if ((error as any)?.$metadata?.httpStatusCode === 404) {
+        if (isNotFound(error)) {
           throw new FileNotFoundError(key, error);
         }
         throw error;
@@ -180,8 +231,8 @@ export const createS3FileStorage = (): FileStorage => {
         await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
         return true;
       } catch (error: unknown) {
-        if ((error as any)?.$metadata?.httpStatusCode === 404) return false;
-        return false;
+        if (isNotFound(error)) return false;
+        throw error;
       }
     },
 
@@ -198,7 +249,7 @@ export const createS3FileStorage = (): FileStorage => {
           uploadedAt: res.LastModified ?? undefined,
         } satisfies FileMetadata;
       } catch (error: unknown) {
-        if ((error as any)?.$metadata?.httpStatusCode === 404) return null;
+        if (isNotFound(error)) return null;
         throw error;
       }
     },
@@ -216,8 +267,7 @@ export const createS3FileStorage = (): FileStorage => {
 
     async getDownloadUrl(key) {
       const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-      const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
-      return url;
+      return presign(s3, command, { expiresIn: 3600 });
     },
   } satisfies FileStorage;
 };

@@ -129,6 +129,8 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     taskId: null,
     status: "queued",
     context: { objective: "Research durable delegation" },
+    goalRequirement: null,
+    goalRevision: 1,
     allowedTools: [],
     timeoutMs: 1_000,
     depth: 1,

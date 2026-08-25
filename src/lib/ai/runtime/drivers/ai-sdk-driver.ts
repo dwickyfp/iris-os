@@ -5,6 +5,7 @@ import type {
   DriverStreamInput,
   ExecutionDriver,
 } from "../execution-driver";
+import { projectCapabilityResultSurface } from "../result-surface.server";
 
 export type DurableBudgetCharger = {
   charge(
@@ -39,6 +40,7 @@ function guardedAgent(
           amount,
         ),
     },
+    projectCapabilityResult: projectCapabilityResultSurface,
   };
 }
 

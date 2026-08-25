@@ -1,5 +1,5 @@
 import { hasValidMetricsBearer } from "lib/operations/auth";
-import { parseOperationsConfig } from "lib/operations/config";
+import { loadOperationsConfig } from "lib/operations/config";
 import { renderPrometheus } from "lib/operations/prometheus";
 import { getOperationsSnapshot } from "lib/operations/snapshot";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   let config;
   try {
-    config = parseOperationsConfig(process.env);
+    config = await loadOperationsConfig();
   } catch {
     return new Response("Service unavailable\n", { status: 503 });
   }

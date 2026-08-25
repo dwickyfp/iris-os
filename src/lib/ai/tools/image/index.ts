@@ -12,8 +12,9 @@ import { safe, watchError } from "ts-safe";
 import z from "zod/v4";
 import { ImageToolName } from "..";
 import logger from "logger";
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import { toAny } from "lib/utils";
+import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
 
 export type ImageToolResult = {
   images: {
@@ -126,10 +127,10 @@ export const openaiImageTool = createTool({
       ),
   }),
   execute: async ({ mode }, { messages, abortSignal }) => {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is not set");
-    }
+    const { apiKey } = await resolveConfiguredProviderCredential(
+      "providers.imageProviderId",
+    );
+    const openai = createOpenAI({ apiKey });
 
     let hasFoundImage = false;
     const latestMessages = messages

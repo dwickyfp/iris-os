@@ -47,6 +47,63 @@ function dependencies() {
 }
 
 describe("IrisHarness", () => {
+  test("continues a recoverably incomplete goal through the durable checkpoint", async () => {
+    const native = { text: "" };
+    const driver = {
+      id: "test",
+      generate: vi.fn(),
+      stream: vi.fn(async () => native),
+    };
+    const { runs, recorder } = dependencies();
+    const harness = new IrisHarness(
+      driver as never,
+      runs as never,
+      [
+        {
+          verifyCompletion: vi.fn(async () => ({
+            verified: false as const,
+            verificationKind: "outcome" as const,
+            reason: "OUTCOME_EMPTY",
+          })),
+        },
+      ],
+      recorder,
+    );
+    const stream = await harness.stream({
+      agent: {},
+      execution: {},
+      orchestration: orchestration(),
+    } as never);
+
+    const result = await stream.finalize(native, {}, {
+      checkpoint: {
+        continuationKind: "goal",
+        goalRound: 1,
+        maxGoalRounds: 3,
+        delegationToolCallIds: [],
+        responseMessages: [],
+        modelMessages: [],
+        modelConfig: {},
+        authorizationRecipe: {},
+      },
+    });
+
+    expect(result).toMatchObject({ status: "continued" });
+    expect(runs.suspendParent).toHaveBeenCalledWith(
+      "run-1",
+      "lease-1",
+      expect.objectContaining({
+        continuationKind: "goal",
+        goalRound: 2,
+        verificationFeedback: {
+          checks: [expect.objectContaining({ reason: "OUTCOME_EMPTY" })],
+        },
+      }),
+    );
+    expect(runs.succeedWithLease).not.toHaveBeenCalled();
+    expect(runs.failWithLease).not.toHaveBeenCalled();
+  });
+
   test.each(H10_HARNESS_POINTS)("H10 recovery seam: %s", async (point) => {
     const { runs } = dependencies();
     const harness = new IrisHarness(

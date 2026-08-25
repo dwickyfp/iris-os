@@ -1,7 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { Button } from "ui/button";
-import { getAuthConfig } from "auth/config";
+import { getDatabaseAuthConfig } from "auth/config.server";
 
 export default async function SignUpLayout({
   children,
@@ -9,7 +9,7 @@ export default async function SignUpLayout({
   children: React.ReactNode;
 }) {
   const t = await getTranslations();
-  const { signUpEnabled } = getAuthConfig();
+  const { signUpEnabled } = await getDatabaseAuthConfig();
 
   // Only show sign-in button if sign-up is enabled
   // We don't need to check isFirstUser here since the sign-up page already does it

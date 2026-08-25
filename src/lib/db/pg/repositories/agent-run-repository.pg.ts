@@ -30,6 +30,7 @@ import {
   IrisActivityEventTable,
   RootRunBudgetReservationTable,
   RootRunBudgetTable,
+  RootRunGoalTable,
 } from "../schema.pg";
 import {
   lockAgentRuns,
@@ -128,10 +129,20 @@ export function createPgAgentRunRepository(
     async createRunning(input) {
       const now = new Date();
       const leaseToken = randomUUID();
-      let parent: { rootRunId: string } | undefined;
+      let parent:
+        | {
+            rootRunId: string;
+            goalRevision: number;
+            goalRequirement: typeof AgentRunTable.$inferSelect.goalRequirement;
+          }
+        | undefined;
       if (input.parentRunId) {
         const parents = await db
-          .select({ rootRunId: AgentRunTable.rootRunId })
+          .select({
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
+            goalRequirement: AgentRunTable.goalRequirement,
+          })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, input.parentRunId));
         parent = parents[0];
@@ -144,10 +155,13 @@ export function createPgAgentRunRepository(
             agentId: input.agentId ?? null,
             parentRunId: input.parentRunId ?? null,
             rootRunId: parent?.rootRunId ?? input.id,
+            goalRevision: parent?.goalRevision ?? 1,
             workspaceId: input.workspaceId ?? null,
             taskId: input.taskId ?? null,
             status: "running",
             context: input.context ?? {},
+            goalRequirement:
+              input.goalRequirement ?? parent?.goalRequirement ?? null,
             allowedTools: input.allowedTools ?? [],
             startedAt: now,
             lastHeartbeatAt: now,
@@ -164,6 +178,11 @@ export function createPgAgentRunRepository(
           await tx.insert(RootRunBudgetTable).values({
             rootRunId: input.id,
             ...rootBudgetValues(input.budget ?? {}),
+          });
+          await tx.insert(RootRunGoalTable).values({
+            rootRunId: input.id,
+            revision: 1,
+            requirement: input.goalRequirement ?? null,
           });
         }
         return rows;
@@ -201,6 +220,7 @@ export function createPgAgentRunRepository(
             status: AgentRunTable.status,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, input.parentRunId))
@@ -291,6 +311,7 @@ export function createPgAgentRunRepository(
             tokenBudget: input.tokenBudget,
             absoluteDeadlineAt,
             rootRunId: parent.rootRunId,
+            goalRevision: parent.goalRevision,
           })
           .returning();
         const run = Array.isArray(inserted) ? inserted[0] : undefined;
@@ -347,6 +368,8 @@ export function createPgAgentRunRepository(
             leaseExpiresAt: AgentRunTable.leaseExpiresAt,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, id));
@@ -354,6 +377,36 @@ export function createPgAgentRunRepository(
           await lockRootBudgetForRun(tx, id);
           if (candidate.parentRunId)
             await lockAgentRuns(tx, [candidate.parentRunId]);
+        }
+        if (candidate) {
+          const [goal] = await tx
+            .select({ revision: RootRunGoalTable.revision })
+            .from(RootRunGoalTable)
+            .where(eq(RootRunGoalTable.rootRunId, candidate.rootRunId));
+          if (goal && goal.revision !== candidate.goalRevision) {
+            const [stale] = await tx
+              .update(AgentRunTable)
+              .set({
+                status: "cancelled",
+                error: "Run was superseded by a newer goal revision",
+                errorCode: "STALE_GOAL_REVISION",
+                completedAt: now,
+                leaseToken: null,
+                leaseExpiresAt: null,
+              })
+              .where(
+                and(
+                  eq(AgentRunTable.id, id),
+                  inArray(AgentRunTable.status, ["queued", "waiting_external"]),
+                ),
+              )
+              .returning();
+            if (stale) await observeTerminalChild(tx, stale);
+            await tx
+              .delete(AgentRunDispatchTable)
+              .where(eq(AgentRunDispatchTable.runId, id));
+            return null;
+          }
         }
         if (
           ["queued", "waiting_external"].includes(candidate?.status ?? "") &&
@@ -464,6 +517,8 @@ export function createPgAgentRunRepository(
             leaseExpiresAt: AgentRunTable.leaseExpiresAt,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, id))
@@ -543,6 +598,8 @@ export function createPgAgentRunRepository(
             leaseExpiresAt: AgentRunTable.leaseExpiresAt,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, id))
@@ -554,19 +611,31 @@ export function createPgAgentRunRepository(
           leased.leaseExpiresAt <= now
         )
           return null;
-        const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
-          ? {
-              status: "cancelled",
-              error: "Run was cancelled",
-              errorCode: "CANCELLED",
-            }
-          : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+        const [goal] = await tx
+          .select({ revision: RootRunGoalTable.revision })
+          .from(RootRunGoalTable)
+          .where(eq(RootRunGoalTable.rootRunId, leased.rootRunId))
+          .for("update");
+        const classifiedOutcome: RunOutcome =
+          goal && goal.revision !== leased.goalRevision
             ? {
-                status: "timed_out",
-                error: "Run deadline exceeded",
-                errorCode: "TIMED_OUT",
+                status: "failed",
+                error: "Run result belongs to a stale goal revision",
+                errorCode: "STALE_GOAL_REVISION",
               }
-            : outcome;
+            : leased.cancelRequestedAt
+              ? {
+                  status: "cancelled",
+                  error: "Run was cancelled",
+                  errorCode: "CANCELLED",
+                }
+              : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+                ? {
+                    status: "timed_out",
+                    error: "Run deadline exceeded",
+                    errorCode: "TIMED_OUT",
+                  }
+                : outcome;
         const values = terminalValues(classifiedOutcome);
         const [run] = await tx
           .update(AgentRunTable)
@@ -1681,6 +1750,8 @@ export function createPgAgentRunRepository(
             leaseExpiresAt: AgentRunTable.leaseExpiresAt,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, id))
@@ -1691,6 +1762,13 @@ export function createPgAgentRunRepository(
           !leased.leaseExpiresAt ||
           leased.leaseExpiresAt <= now
         )
+          return null;
+        const [currentGoal] = await tx
+          .select({ revision: RootRunGoalTable.revision })
+          .from(RootRunGoalTable)
+          .where(eq(RootRunGoalTable.rootRunId, leased.rootRunId))
+          .for("update");
+        if (currentGoal && currentGoal.revision !== leased.goalRevision)
           return null;
         const [currentCheckpoint] = await tx
           .select({
@@ -1759,30 +1837,48 @@ export function createPgAgentRunRepository(
           return run;
         }
         const generation = (currentCheckpoint?.generation ?? 0) + 1;
+        const continuationKind = checkpoint.continuationKind ?? "delegation";
+        const goalRound = checkpoint.goalRound ?? 1;
+        const maxGoalRounds = checkpoint.maxGoalRounds ?? 3;
+        if (
+          goalRound <= 0 ||
+          maxGoalRounds <= 0 ||
+          goalRound > maxGoalRounds ||
+          (continuationKind === "goal" && !checkpoint.verificationFeedback) ||
+          (continuationKind === "delegation" && checkpoint.verificationFeedback)
+        )
+          return null;
         const requestedToolCallIds = [
           ...new Set(checkpoint.delegationToolCallIds),
         ];
-        if (!requestedToolCallIds.length) return null;
-        const joins = await tx
-          .select({ toolCallId: AgentRunJoinTable.toolCallId })
-          .from(AgentRunJoinTable)
-          .where(
-            and(
-              eq(AgentRunJoinTable.parentRunId, id),
-              eq(AgentRunJoinTable.checkpointGeneration, generation),
-              inArray(AgentRunJoinTable.toolCallId, requestedToolCallIds),
-            ),
-          );
-        if (
-          joins.length !== requestedToolCallIds.length ||
-          joins.some((join) => !requestedToolCallIds.includes(join.toolCallId))
-        )
-          return null;
+        if (continuationKind === "delegation") {
+          if (!requestedToolCallIds.length) return null;
+          const joins = await tx
+            .select({ toolCallId: AgentRunJoinTable.toolCallId })
+            .from(AgentRunJoinTable)
+            .where(
+              and(
+                eq(AgentRunJoinTable.parentRunId, id),
+                eq(AgentRunJoinTable.checkpointGeneration, generation),
+                inArray(AgentRunJoinTable.toolCallId, requestedToolCallIds),
+              ),
+            );
+          if (
+            joins.length !== requestedToolCallIds.length ||
+            joins.some(
+              (join) => !requestedToolCallIds.includes(join.toolCallId),
+            )
+          )
+            return null;
+        } else if (requestedToolCallIds.length) return null;
         const [run] = await tx
           .update(AgentRunTable)
           .set({
             status: "waiting_external",
-            waitingReason: "DELEGATED_CHILDREN",
+            waitingReason:
+              continuationKind === "goal"
+                ? "GOAL_CONTINUATION"
+                : "DELEGATED_CHILDREN",
             lastHeartbeatAt: now,
             leaseToken: null,
             leaseExpiresAt: null,
@@ -1803,6 +1899,10 @@ export function createPgAgentRunRepository(
             target: AgentRunCheckpointTable.parentRunId,
             set: {
               generation,
+              continuationKind,
+              goalRound,
+              maxGoalRounds,
+              verificationFeedback: checkpoint.verificationFeedback ?? null,
               responseMessages: checkpoint.responseMessages,
               modelMessages: checkpoint.modelMessages,
               modelConfig: checkpoint.modelConfig,
@@ -1887,6 +1987,13 @@ export function createPgAgentRunRepository(
           (row.checkpoint.claimExpiresAt && row.checkpoint.claimExpiresAt > now)
         )
           return null;
+        const [currentGoal] = await tx
+          .select({ revision: RootRunGoalTable.revision })
+          .from(RootRunGoalTable)
+          .where(eq(RootRunGoalTable.rootRunId, row.run.rootRunId))
+          .for("update");
+        if (currentGoal && currentGoal.revision !== row.run.goalRevision)
+          return null;
         const [pending] = await tx
           .select({ childRunId: AgentRunJoinTable.childRunId })
           .from(AgentRunJoinTable)
@@ -1897,7 +2004,8 @@ export function createPgAgentRunRepository(
             ),
           )
           .limit(1);
-        if (pending) return null;
+        if (row.checkpoint.continuationKind === "delegation" && pending)
+          return null;
         const expiresAt = new Date(now.getTime() + leaseMs);
         const [run] = await tx
           .update(AgentRunTable)
@@ -1932,12 +2040,18 @@ export function createPgAgentRunRepository(
           run,
           checkpoint: {
             generation: row.checkpoint.generation,
+            continuationKind: row.checkpoint.continuationKind,
+            goalRound: row.checkpoint.goalRound,
+            maxGoalRounds: row.checkpoint.maxGoalRounds,
+            verificationFeedback:
+              row.checkpoint.verificationFeedback ?? undefined,
+            goalRequirement: run.goalRequirement ?? undefined,
             delegationToolCallIds: [],
             responseMessages: row.checkpoint.responseMessages,
             modelMessages: row.checkpoint.modelMessages,
             modelConfig: row.checkpoint.modelConfig,
             authorizationRecipe: row.checkpoint.authorizationRecipe,
-            assistantMessageId: row.checkpoint.assistantMessageId,
+            assistantMessageId: row.checkpoint.assistantMessageId ?? undefined,
           },
           joins: joins.map((join) => ({
             checkpointGeneration: join.checkpointGeneration,
@@ -1964,6 +2078,8 @@ export function createPgAgentRunRepository(
             leaseExpiresAt: AgentRunTable.leaseExpiresAt,
             cancelRequestedAt: AgentRunTable.cancelRequestedAt,
             absoluteDeadlineAt: AgentRunTable.absoluteDeadlineAt,
+            rootRunId: AgentRunTable.rootRunId,
+            goalRevision: AgentRunTable.goalRevision,
           })
           .from(AgentRunTable)
           .where(eq(AgentRunTable.id, id))
@@ -1992,19 +2108,31 @@ export function createPgAgentRunRepository(
           .for("update");
         if (!checkpoint?.claimExpiresAt || checkpoint.claimExpiresAt <= now)
           return null;
-        const classifiedOutcome: RunOutcome = leased.cancelRequestedAt
-          ? {
-              status: "cancelled",
-              error: "Run was cancelled",
-              errorCode: "CANCELLED",
-            }
-          : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+        const [goal] = await tx
+          .select({ revision: RootRunGoalTable.revision })
+          .from(RootRunGoalTable)
+          .where(eq(RootRunGoalTable.rootRunId, leased.rootRunId))
+          .for("update");
+        const classifiedOutcome: RunOutcome =
+          goal && goal.revision !== leased.goalRevision
             ? {
-                status: "timed_out",
-                error: "Run deadline exceeded",
-                errorCode: "TIMED_OUT",
+                status: "failed",
+                error: "Run result belongs to a stale goal revision",
+                errorCode: "STALE_GOAL_REVISION",
               }
-            : outcome;
+            : leased.cancelRequestedAt
+              ? {
+                  status: "cancelled",
+                  error: "Run was cancelled",
+                  errorCode: "CANCELLED",
+                }
+              : leased.absoluteDeadlineAt && leased.absoluteDeadlineAt <= now
+                ? {
+                    status: "timed_out",
+                    error: "Run deadline exceeded",
+                    errorCode: "TIMED_OUT",
+                  }
+                : outcome;
         const [run] = await tx
           .update(AgentRunTable)
           .set({

@@ -20,8 +20,8 @@ import {
   resolveServerCapabilities,
 } from "lib/ai/runtime/capabilities/server";
 import {
-  intersectPolicyAuthority,
   type PolicyAuthority,
+  intersectPolicyAuthority,
 } from "lib/ai/runtime/policy-engine";
 import { irisHarness } from "lib/ai/runtime/server";
 import { serverBudgetResolver } from "lib/ai/runtime/server-budget-resolver";
@@ -201,25 +201,34 @@ export function mapWorkflowOutput(output: unknown): Record<string, unknown> {
 
 export async function finishWorkflowAgentRun(
   runId: string,
+  leaseToken: string,
   result: { isOk: boolean; output?: unknown; error?: unknown },
   manager: Pick<
     typeof runManager,
-    "succeed" | "fail" | "exhaustBudget" | "cancel" | "timeOut"
+    | "succeedWithLease"
+    | "failWithLease"
+    | "exhaustBudgetWithLease"
+    | "cancelWithLease"
+    | "timeOutWithLease"
   > = runManager,
 ) {
   if (result.isOk)
-    return manager.succeed(runId, mapWorkflowOutput(result.output));
+    return manager.succeedWithLease(
+      runId,
+      leaseToken,
+      mapWorkflowOutput(result.output),
+    );
   const message =
     result.error instanceof Error
       ? result.error.message.slice(0, 2_000)
       : String(result.error).slice(0, 2_000);
   return isBudgetExhausted(result.error)
-    ? manager.exhaustBudget(runId, message)
+    ? manager.exhaustBudgetWithLease(runId, leaseToken, message)
     : /cancel/i.test(message)
-      ? manager.cancel(runId, message)
+      ? manager.cancelWithLease(runId, leaseToken, message)
       : /timeout/i.test(message)
-        ? manager.timeOut(runId, message)
-        : manager.fail(runId, message, "WORKFLOW_FAILED");
+        ? manager.timeOutWithLease(runId, leaseToken, message)
+        : manager.failWithLease(runId, leaseToken, message, "WORKFLOW_FAILED");
 }
 
 export async function executeWorkflowAutomation(input: {
@@ -235,7 +244,7 @@ export async function executeWorkflowAutomation(input: {
     surface: "automation",
     userId: input.request.userId,
   });
-  await manager.start({
+  const started = await manager.start({
     id: workflowRunId,
     userId: input.request.userId,
     workspaceId: input.request.workspaceId,
@@ -247,6 +256,26 @@ export async function executeWorkflowAutomation(input: {
     timeoutMs: input.request.timeoutMs,
     budget,
   });
+  if (!started.leaseToken) throw new Error("WORKFLOW_RUN_LEASE_REQUIRED");
+  const executionController = new AbortController();
+  const abortFromCaller = () =>
+    executionController.abort(input.request.signal.reason);
+  if (input.request.signal.aborted) abortFromCaller();
+  else
+    input.request.signal.addEventListener("abort", abortFromCaller, {
+      once: true,
+    });
+  const heartbeat = setInterval(
+    () =>
+      void manager
+        .heartbeat(workflowRunId, started.leaseToken!, 30_000)
+        .then((state) => {
+          if (state !== "active") executionController.abort(new Error(state));
+        })
+        .catch((error) => executionController.abort(error)),
+    10_000,
+  );
+  heartbeat.unref?.();
   let executionResult: { isOk: boolean; output?: unknown; error?: unknown };
   let terminalizationError: unknown;
   try {
@@ -257,7 +286,7 @@ export async function executeWorkflowAutomation(input: {
         runId: workflowRunId,
         userId: input.request.userId,
         workspaceId: input.request.workspaceId,
-        signal: input.request.signal,
+        signal: executionController.signal,
       },
     }).run(input.request.input as never, {
       disableHistory: true,
@@ -272,12 +301,19 @@ export async function executeWorkflowAutomation(input: {
         ? input.request.signal.reason
         : new Error("Run was cancelled");
   try {
-    await finishWorkflowAgentRun(workflowRunId, executionResult, manager);
+    const terminal = await finishWorkflowAgentRun(
+      workflowRunId,
+      started.leaseToken,
+      executionResult,
+      manager,
+    );
+    if (!terminal) throw new Error("WORKFLOW_RUN_LEASE_LOST");
   } catch (error) {
     terminalizationError = error;
     try {
-      await manager.fail(
+      await manager.failWithLease(
         workflowRunId,
+        started.leaseToken,
         error instanceof Error ? error.message : String(error),
         "WORKFLOW_TERMINALIZATION_FAILED",
       );
@@ -288,6 +324,8 @@ export async function executeWorkflowAutomation(input: {
       );
     }
   }
+  clearInterval(heartbeat);
+  input.request.signal.removeEventListener("abort", abortFromCaller);
   if (terminalizationError) throw terminalizationError;
   return executionResult.isOk
     ? {
@@ -430,6 +468,7 @@ export async function runHeadlessAgent(input: {
       instructions: prepared.instructions,
       tools,
       runtimeContext,
+      resolvedPolicy: prepared.policy!,
     },
     execution: {
       prompt: objective(input.request.input),
@@ -467,8 +506,8 @@ export async function runHeadlessAgent(input: {
                   targetType: input.request.targetType,
                   targetId: input.request.targetId,
                   objective: objective(input.request.input),
-                  goalRequirement: prepared.goalRequirement,
                 },
+                goalRequirement: prepared.goalRequirement,
                 allowedTools: Object.keys(tools),
                 timeoutMs: input.request.timeoutMs,
                 budget: prepared.budget,
@@ -529,6 +568,7 @@ export const defaultAutomationExecutionDependencies: AutomationExecutionDependen
         };
       const workflow = await workflowRepository.selectStructureById(
         request.targetId,
+        { ignoreNote: true },
       );
       if (!workflow)
         return {

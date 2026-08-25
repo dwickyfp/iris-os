@@ -1,7 +1,10 @@
 import "server-only";
 
 import type { CapabilityRef } from "app-types/chat";
-import { NodeKind } from "lib/ai/workflow/workflow.interface";
+import {
+  assertSupportedWorkflowNodeKind,
+  NodeKind,
+} from "lib/ai/workflow/workflow.interface";
 import {
   agentRepository,
   skillRepository,
@@ -43,6 +46,8 @@ export function workflowAuthoritySnapshot(
   const capabilityIds: string[] = [];
   const allowedTools: string[] = [];
   for (const node of nodes) {
+    if (node.kind === NodeKind.Note) continue;
+    assertSupportedWorkflowNodeKind(node.kind);
     if (node.kind === NodeKind.Tool && node.nodeConfig?.tool) {
       const tool = node.nodeConfig.tool;
       if (typeof tool.id !== "string") continue;
@@ -68,6 +73,7 @@ export async function resolveAutomationAuthority(input: {
   if (input.targetType === "workflow") {
     const workflow = await workflowRepository.selectStructureById(
       input.targetId,
+      { ignoreNote: true },
     );
     if (
       !workflow ||

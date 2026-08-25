@@ -36,6 +36,12 @@ describe("automation authorization authority", () => {
     });
   });
 
+  test("rejects retired workflow nodes instead of omitting their authority", () => {
+    expect(() =>
+      workflowAuthoritySnapshot([{ kind: "compute", nodeConfig: {} }]),
+    ).toThrow("UNSUPPORTED_WORKFLOW_NODE_KIND:compute");
+  });
+
   test("captures an empty skill grant without persisted secrets", async () => {
     const repositories = await import("lib/db/repository");
     vi.mocked(repositories.skillRepository.selectSkillById).mockResolvedValue({

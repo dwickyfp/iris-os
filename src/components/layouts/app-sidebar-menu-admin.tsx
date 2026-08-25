@@ -9,7 +9,7 @@ import {
 import { Tooltip } from "ui/tooltip";
 import { SidebarMenuItem } from "ui/sidebar";
 import { SidebarMenuButton } from "ui/sidebar";
-import { Activity, Shield, Users } from "lucide-react";
+import { Activity, Settings, Shield, Users } from "lucide-react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
@@ -35,6 +35,13 @@ const AppSidebarAdmin = () => {
         url: "/admin/operations",
         icon: Activity,
         isActive: pathname.startsWith("/admin/operations"),
+      },
+      {
+        id: "settings",
+        title: "System settings",
+        url: "/admin/settings",
+        icon: Settings,
+        isActive: pathname.startsWith("/admin/settings"),
       },
     ],
     [t, pathname],

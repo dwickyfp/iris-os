@@ -7,12 +7,15 @@ export type UploadContent =
   | ReadableStream<Uint8Array>
   | NodeJS.ReadableStream;
 
+export type FileStorageDriver = "vercel-blob" | "s3" | "minio";
+
 export interface FileMetadata {
   key: string;
   filename: string;
   contentType: string;
   size: number;
   uploadedAt?: Date;
+  storageProfileId?: string;
 }
 
 export interface UploadOptions {
@@ -26,6 +29,7 @@ export interface UploadResult {
   key: string;
   sourceUrl: string; // Public URL that anyone can access
   metadata: FileMetadata;
+  storageProfileId?: string;
 }
 
 export interface UploadUrlOptions {
@@ -43,9 +47,13 @@ export interface UploadUrl {
   expiresAt: Date;
   headers?: Record<string, string>;
   fields?: Record<string, string>;
+  storageProfileId?: string;
 }
 
 export interface FileStorage {
+  destroy?(): void;
+  /** Stable location identity for profile-aware durable records. */
+  getProfileId?(): Promise<string | undefined>;
   /** Upload file content directly from the server (e.g. AI generated image). */
   upload(
     content: UploadContent,

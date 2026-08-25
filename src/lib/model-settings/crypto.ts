@@ -1,44 +1,31 @@
 import "server-only";
 
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createDecipheriv } from "node:crypto";
+import {
+  decryptSystemSettingValue,
+  encryptSystemSettingValue,
+} from "lib/security/encrypted-value";
 
-const ALGORITHM = "aes-256-gcm";
-
-function encryptionKey() {
-  const value = process.env.MODEL_SETTINGS_ENCRYPTION_KEY;
-  if (!value) {
-    throw new Error("MODEL_SETTINGS_ENCRYPTION_KEY is required");
-  }
-  const key = Buffer.from(value, "base64");
-  if (key.length !== 32) {
-    throw new Error(
-      "MODEL_SETTINGS_ENCRYPTION_KEY must be a base64-encoded 32-byte key",
-    );
-  }
-  return key;
-}
+const SETTING_KEY = "model-provider.apiKey";
 
 export function encryptSecret(value: string) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv(ALGORITHM, encryptionKey(), iv);
-  const encrypted = Buffer.concat([
-    cipher.update(value, "utf8"),
-    cipher.final(),
-  ]);
-  return [
-    iv.toString("base64"),
-    cipher.getAuthTag().toString("base64"),
-    encrypted.toString("base64"),
-  ].join(".");
+  return encryptSystemSettingValue(SETTING_KEY, value);
 }
 
-export function decryptSecret(value: string) {
+async function decryptLegacy(value: string) {
+  const { systemSettingsService } = await import("lib/system-settings/server");
+  const encoded = await systemSettingsService.getSecret(
+    "legacy.modelSettingsEncryptionKey",
+  );
+  if (!encoded) throw new Error("Legacy model encryption key is not configured");
+  const key = Buffer.from(encoded, "base64");
+  if (key.length !== 32) throw new Error("Invalid legacy model encryption key");
   const [ivValue, tagValue, payload] = value.split(".");
   if (!ivValue || !tagValue || !payload)
     throw new Error("Invalid encrypted model credential");
   const decipher = createDecipheriv(
-    ALGORITHM,
-    encryptionKey(),
+    "aes-256-gcm",
+    key,
     Buffer.from(ivValue, "base64"),
   );
   decipher.setAuthTag(Buffer.from(tagValue, "base64"));
@@ -48,7 +35,12 @@ export function decryptSecret(value: string) {
   ]).toString("utf8");
 }
 
+export async function decryptSecret(value: string) {
+  return value.startsWith("ss1.")
+    ? decryptSystemSettingValue(SETTING_KEY, value)
+    : decryptLegacy(value);
+}
+
 export function maskSecret(value: string | null) {
-  if (!value) return null;
-  return "••••";
+  return value ? "••••" : null;
 }

@@ -19,11 +19,11 @@ describe("User Utils", () => {
       expect(getUserAvatar({ image: "" })).toBe("/pf.png");
     });
 
-    it("should respect DISABLE_DEFAULT_AVATAR environment flag", () => {
+    it("does not read avatar policy from the environment", () => {
       process.env.DISABLE_DEFAULT_AVATAR = "true";
 
-      expect(getUserAvatar({ image: null })).toBe("");
-      expect(getUserAvatar({})).toBe("");
+      expect(getUserAvatar({ image: null })).toBe("/pf.png");
+      expect(getUserAvatar({})).toBe("/pf.png");
 
       // But still return user image when available
       expect(getUserAvatar({ image: "custom.jpg" })).toBe("custom.jpg");

@@ -190,6 +190,7 @@ describe("parent resume executor", () => {
 
   it("runs fake A2A rejoin through generate_report and succeeds the root", async () => {
     const saveAssistant = vi.fn(async () => undefined);
+    const complete = vi.fn(async () => undefined);
     const finalize = vi.fn(async () => undefined);
     const generate = vi.fn(async (messages: any[]) => {
       expect(messages[1].content[0].output.value.status).toBe("succeeded");
@@ -235,6 +236,7 @@ describe("parent resume executor", () => {
       claim: vi.fn(async () => claimed()),
       resolve: vi.fn(async () => ({ generate })),
       saveAssistant,
+      complete,
       fail: vi.fn(async () => undefined),
     });
 
@@ -258,6 +260,17 @@ describe("parent resume executor", () => {
     expect(finalize).toHaveBeenCalledWith(
       { assistantMessageId: "assistant-root-1", totalTokens: 42 },
       expect.arrayContaining([expect.objectContaining({ role: "tool" })]),
+      expect.objectContaining({
+        continuationKind: "goal",
+        goalRound: 1,
+        maxGoalRounds: 3,
+      }),
+    );
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread-1",
+        messageId: "assistant-root-1",
+      }),
     );
   });
 

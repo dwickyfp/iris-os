@@ -1,4 +1,7 @@
-import { NodeKind } from "../workflow.interface";
+import {
+  assertSupportedWorkflowNodeKind,
+  NodeKind,
+} from "../workflow.interface";
 import { createGraphStore, WorkflowRuntimeState } from "./graph-store";
 import { createStateGraph, graphNode, StateGraphRegistry } from "ts-edge";
 import {
@@ -25,6 +28,7 @@ import { colorize } from "consola/utils";
  * When adding a new node type, add its executor here.
  */
 function getExecutorByKind(kind: NodeKind): NodeExecutor {
+  assertSupportedWorkflowNodeKind(kind);
   switch (kind) {
     case NodeKind.Input:
       return inputNodeExecutor;
@@ -40,18 +44,8 @@ function getExecutorByKind(kind: NodeKind): NodeExecutor {
       return httpNodeExecutor;
     case NodeKind.Template:
       return templateNodeExecutor;
-    case "NOOP" as any:
-      return () => {
-        return {
-          input: {},
-          output: {},
-        };
-      };
   }
-  return () => {
-    console.warn(`Undefined '${kind}' Node Executor`);
-    return {};
-  };
+  throw new Error(`UNSUPPORTED_WORKFLOW_NODE_KIND:${kind}`);
 }
 
 /**
@@ -71,6 +65,9 @@ export const createWorkflowExecutor = (workflow: {
   logger?: ConsolaInstance;
   context?: WorkflowExecutionContext;
 }) => {
+  for (const node of workflow.nodes) {
+    assertSupportedWorkflowNodeKind(node.kind);
+  }
   // Create runtime state store for the workflow
   const store = createGraphStore({
     nodes: workflow.nodes,

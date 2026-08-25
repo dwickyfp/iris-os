@@ -19,6 +19,7 @@ export const pgArtifactRepository: ArtifactRepository = {
           userId: input.userId,
           runId: input.runId,
           storageKey: input.storageKey,
+          storageProfileId: input.storageProfileId ?? null,
           filename: input.filename,
           mediaType: input.mediaType,
           size: input.size,
@@ -44,7 +45,11 @@ export const pgArtifactRepository: ArtifactRepository = {
         if (enrolled.length !== 1)
           throw new Error("ARTIFACT_UPLOAD_CLEANUP_NOT_FOUND");
       }
-      return { ...created, artifactId: created.id };
+      return {
+        ...created,
+        storageProfileId: created.storageProfileId ?? undefined,
+        artifactId: created.id,
+      };
     });
   },
 
@@ -53,7 +58,13 @@ export const pgArtifactRepository: ArtifactRepository = {
       .select()
       .from(ArtifactTable)
       .where(eq(ArtifactTable.id, id));
-    return artifact ? { ...artifact, artifactId: artifact.id } : null;
+    return artifact
+      ? {
+          ...artifact,
+          storageProfileId: artifact.storageProfileId ?? undefined,
+          artifactId: artifact.id,
+        }
+      : null;
   },
 
   async archive(id) {
@@ -63,11 +74,12 @@ export const pgArtifactRepository: ArtifactRepository = {
       .where(eq(ArtifactTable.id, id));
   },
 
-  async scheduleUploadCleanup(storageKey) {
+  async scheduleUploadCleanup(storageKey, storageProfileId) {
     const [cleanup] = await db
       .insert(ArtifactCleanupTable)
       .values({
         storageKey,
+        storageProfileId: storageProfileId ?? null,
         nextAttemptAt: new Date(Date.now() + 15 * 60_000),
       })
       .returning({ id: ArtifactCleanupTable.id });
@@ -77,7 +89,10 @@ export const pgArtifactRepository: ArtifactRepository = {
   async scheduleCleanup(reference) {
     return db.transaction(async (tx) => {
       const [artifact] = await tx
-        .select({ storageKey: ArtifactTable.storageKey })
+        .select({
+          storageKey: ArtifactTable.storageKey,
+          storageProfileId: ArtifactTable.storageProfileId,
+        })
         .from(ArtifactTable)
         .where(eq(ArtifactTable.id, reference.artifactId))
         .for("update");
@@ -89,11 +104,13 @@ export const pgArtifactRepository: ArtifactRepository = {
         .values({
           artifactId: reference.artifactId,
           storageKey: artifact.storageKey,
+          storageProfileId: artifact.storageProfileId,
         })
         .onConflictDoUpdate({
           target: ArtifactCleanupTable.artifactId,
           set: {
             storageKey: artifact.storageKey,
+            storageProfileId: artifact.storageProfileId,
             status: "pending",
             nextAttemptAt: new Date(),
             claimedAt: null,
@@ -156,6 +173,7 @@ export const pgArtifactRepository: ArtifactRepository = {
         cleanupId: job.id,
         artifactId: job.artifactId ?? undefined,
         storageKey: job.storageKey,
+        storageProfileId: job.storageProfileId ?? undefined,
         status: "processing" as const,
         attempts: job.attempts + 1,
         nextAttemptAt: job.nextAttemptAt,

@@ -5,6 +5,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  SidebarMenuBadge,
   useSidebar,
 } from "ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
@@ -26,6 +27,7 @@ import {
   Waypoints,
   BrainIcon,
   CableIcon,
+  ActivityIcon,
 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Skeleton } from "ui/skeleton";
@@ -34,6 +36,7 @@ import { ArchiveDialog } from "../archive-dialog";
 import { getIsUserAdmin } from "lib/user/utils";
 import { BasicUser } from "app-types/user";
 import { AppSidebarAdmin } from "./app-sidebar-menu-admin";
+import { useRunInboxCount } from "@/hooks/use-run-inbox";
 
 export function AppSidebarMenus({
   user,
@@ -47,6 +50,7 @@ export function AppSidebarMenus({
   const { setOpenMobile } = useSidebar();
   const [expandedArchive, setExpandedArchive] = useState(false);
   const [addArchiveDialogOpen, setAddArchiveDialogOpen] = useState(false);
+  const { data: runInbox } = useRunInboxCount();
 
   const { data: archives, isLoading: isLoadingArchives } = useArchives();
   const toggleArchive = useCallback(() => {
@@ -98,6 +102,28 @@ export function AppSidebarMenus({
             </SidebarMenuItem>
           </SidebarMenu>
         )}
+        <SidebarMenu>
+          <Tooltip>
+            <SidebarMenuItem>
+              <Link href="/os" onClick={() => setOpenMobile(false)}>
+                <SidebarMenuButton className="font-semibold">
+                  <ActivityIcon className="size-4" />
+                  Runs
+                  {!!runInbox?.open && (
+                    <span className="sr-only">
+                      , {runInbox.open} open attention items
+                    </span>
+                  )}
+                </SidebarMenuButton>
+              </Link>
+              {!!runInbox?.open && (
+                <SidebarMenuBadge>
+                  {Math.min(runInbox.open, 99)}
+                </SidebarMenuBadge>
+              )}
+            </SidebarMenuItem>
+          </Tooltip>
+        </SidebarMenu>
         <SidebarMenu>
           <Tooltip>
             <SidebarMenuItem>

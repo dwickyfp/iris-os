@@ -41,7 +41,7 @@ describe("Auth Config", () => {
 
   describe("getAuthConfig", () => {
     it("should return default config when no environment variables are set", () => {
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
 
       expect(config).toEqual({
         emailAndPasswordEnabled: true,
@@ -57,14 +57,14 @@ describe("Auth Config", () => {
     it("should parse DISABLE_EMAIL_SIGN_IN correctly", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "1");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.emailAndPasswordEnabled).toBe(false);
     });
 
     it("should parse DISABLE_EMAIL_SIGN_UP correctly", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_UP", "1");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.signUpEnabled).toBe(false);
     });
 
@@ -72,7 +72,7 @@ describe("Auth Config", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "0");
       vi.stubEnv("DISABLE_SIGN_UP", "False");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.emailAndPasswordEnabled).toBe(true);
       expect(config.signUpEnabled).toBe(true);
     });
@@ -81,7 +81,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GITHUB_CLIENT_ID", "github-client-id");
       vi.stubEnv("GITHUB_CLIENT_SECRET", "github-client-secret");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.github).toEqual({
         clientId: "github-client-id",
         clientSecret: "github-client-secret",
@@ -94,7 +94,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GITHUB_CLIENT_SECRET", "github-client-secret");
       vi.stubEnv("DISABLE_SIGN_UP", "1");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.github).toEqual({
         clientId: "github-client-id",
         clientSecret: "github-client-secret",
@@ -107,7 +107,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GOOGLE_CLIENT_SECRET", "google-client-secret");
       vi.stubEnv("GOOGLE_FORCE_ACCOUNT_SELECTION", "true");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.google).toEqual({
         clientId: "google-client-id",
         clientSecret: "google-client-secret",
@@ -121,7 +121,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GOOGLE_CLIENT_SECRET", "google-client-secret");
       vi.stubEnv("GOOGLE_FORCE_ACCOUNT_SELECTION", "false");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.google).toEqual({
         clientId: "google-client-id",
         clientSecret: "google-client-secret",
@@ -134,7 +134,7 @@ describe("Auth Config", () => {
       vi.stubEnv("MICROSOFT_CLIENT_SECRET", "microsoft-client-secret");
       vi.stubEnv("MICROSOFT_TENANT_ID", "custom-tenant-id");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.microsoft).toEqual({
         clientId: "microsoft-client-id",
         clientSecret: "microsoft-client-secret",
@@ -147,7 +147,7 @@ describe("Auth Config", () => {
       vi.stubEnv("MICROSOFT_CLIENT_ID", "microsoft-client-id");
       vi.stubEnv("MICROSOFT_CLIENT_SECRET", "microsoft-client-secret");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.microsoft).toEqual({
         clientId: "microsoft-client-id",
         clientSecret: "microsoft-client-secret",
@@ -161,7 +161,7 @@ describe("Auth Config", () => {
       vi.stubEnv("MICROSOFT_CLIENT_SECRET", "microsoft-client-secret");
       vi.stubEnv("MICROSOFT_FORCE_ACCOUNT_SELECTION", "true");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.microsoft).toEqual({
         clientId: "microsoft-client-id",
         clientSecret: "microsoft-client-secret",
@@ -185,7 +185,7 @@ describe("Auth Config", () => {
       vi.stubEnv("MICROSOFT_TENANT_ID", "custom-tenant");
       vi.stubEnv("MICROSOFT_FORCE_ACCOUNT_SELECTION", "true");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
 
       expect(config).toEqual({
         emailAndPasswordEnabled: false,
@@ -218,7 +218,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GITHUB_CLIENT_SECRET", "github-client-secret");
       // Missing Google and Microsoft credentials
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.github).toBeDefined();
       expect(config.socialAuthenticationProviders.google).toBeUndefined();
       expect(config.socialAuthenticationProviders.microsoft).toBeUndefined();
@@ -228,7 +228,7 @@ describe("Auth Config", () => {
       vi.stubEnv("GITHUB_CLIENT_ID", "");
       vi.stubEnv("GITHUB_CLIENT_SECRET", "github-client-secret");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.socialAuthenticationProviders.github).toBeUndefined();
     });
 
@@ -238,7 +238,7 @@ describe("Auth Config", () => {
 
       // Set invalid configuration that would cause parsing to fail
       // This tests the fallback behavior in the catch block
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
 
       expect(config).toEqual({
         emailAndPasswordEnabled: true,
@@ -258,7 +258,7 @@ describe("Auth Config", () => {
     it("should handle 'y' as true for DISABLE variables (disabling features)", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "y");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.emailAndPasswordEnabled).toBe(false);
     });
 
@@ -266,14 +266,14 @@ describe("Auth Config", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "TRUE");
       vi.stubEnv("DISABLE_EMAIL_SIGN_UP", "True");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.emailAndPasswordEnabled).toBe(false);
       expect(config.signUpEnabled).toBe(false);
     });
 
     it("should treat undefined DISABLE variables as enabled by default", () => {
       // Don't set any environment variables
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       // Should use defaults which are true (features enabled)
       expect(config.emailAndPasswordEnabled).toBe(true);
       expect(config.signUpEnabled).toBe(true);
@@ -283,7 +283,7 @@ describe("Auth Config", () => {
       vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "0");
       vi.stubEnv("DISABLE_SIGN_UP", "false");
 
-      const config = getAuthConfig();
+      const config = getAuthConfig(process.env);
       expect(config.emailAndPasswordEnabled).toBe(true);
       expect(config.signUpEnabled).toBe(true);
     });

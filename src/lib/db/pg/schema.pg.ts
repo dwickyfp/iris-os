@@ -35,6 +35,7 @@ import {
   index,
   integer,
   json,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -42,6 +43,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import type { NormalizedGoalRequirement } from "lib/ai/runtime/goal-requirement-resolver";
 
 export const RemoteAgentTable = pgTable(
   "remote_agent",
@@ -254,6 +256,166 @@ export const TaskResourceRefTable = pgTable(
   (table) => [unique().on(table.taskId, table.kind, table.referenceId)],
 );
 
+export const SystemSettingTable = pgTable(
+  "system_setting",
+  {
+    key: varchar("key", { length: 128 }).primaryKey().notNull(),
+    valueKind: varchar("value_kind", { length: 16 })
+      .$type<"plain" | "secret">()
+      .notNull(),
+    value: json("value").$type<string | number | boolean | null>(),
+    encryptedValue: text("encrypted_value"),
+    encryptionKeyId: varchar("encryption_key_id", { length: 64 }),
+    revision: integer("revision").notNull().default(1),
+    createdBy: uuid("created_by").notNull(),
+    updatedBy: uuid("updated_by").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    rotatedAt: timestamp("rotated_at"),
+  },
+  (table) => [
+    check(
+      "system_setting_value_kind_check",
+      sql`${table.valueKind} IN ('plain','secret')`,
+    ),
+    check("system_setting_revision_check", sql`${table.revision} > 0`),
+    check(
+      "system_setting_value_check",
+      sql`(${table.valueKind} = 'plain' AND ${table.encryptedValue} IS NULL AND ${table.encryptionKeyId} IS NULL) OR (${table.valueKind} = 'secret' AND ${table.value} IS NULL AND ${table.encryptedValue} IS NOT NULL AND ${table.encryptionKeyId} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const SystemSettingAuditTable = pgTable(
+  "system_setting_audit",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    key: varchar("key", { length: 128 }).notNull(),
+    operation: varchar("operation", { length: 16 })
+      .$type<"set" | "clear">()
+      .notNull(),
+    valueKind: varchar("value_kind", { length: 16 })
+      .$type<"plain" | "secret">()
+      .notNull(),
+    revision: integer("revision").notNull(),
+    actorId: uuid("actor_id").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("system_setting_audit_key_created_idx").on(
+      table.key,
+      table.createdAt,
+    ),
+    index("system_setting_audit_actor_created_idx").on(
+      table.actorId,
+      table.createdAt,
+    ),
+    check(
+      "system_setting_audit_operation_check",
+      sql`${table.operation} IN ('set','clear')`,
+    ),
+    check(
+      "system_setting_audit_value_kind_check",
+      sql`${table.valueKind} IN ('plain','secret')`,
+    ),
+    check("system_setting_audit_revision_check", sql`${table.revision} > 0`),
+  ],
+);
+
+export const FileStorageProfileTable = pgTable(
+  "file_storage_profile",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    name: varchar("name", { length: 160 }).notNull(),
+    driver: varchar("driver", { length: 24 })
+      .$type<"vercel-blob" | "s3" | "minio">()
+      .notNull(),
+    endpoint: text("endpoint"),
+    region: varchar("region", { length: 120 }),
+    bucket: varchar("bucket", { length: 240 }),
+    encryptedAccessKey: text("encrypted_access_key"),
+    encryptedSecretKey: text("encrypted_secret_key"),
+    forcePathStyle: boolean("force_path_style").notNull().default(false),
+    publicBaseUrl: text("public_base_url"),
+    prefix: varchar("prefix", { length: 256 }).notNull().default("uploads"),
+    version: integer("version").notNull().default(1),
+    enabled: boolean("enabled").notNull().default(true),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    retiredAt: timestamp("retired_at"),
+  },
+  (table) => [
+    check(
+      "file_storage_profile_driver_check",
+      sql`${table.driver} IN ('vercel-blob','s3','minio')`,
+    ),
+    check("file_storage_profile_version_check", sql`${table.version} > 0`),
+    check(
+      "file_storage_profile_credentials_check",
+      sql`(${table.encryptedAccessKey} IS NULL) = (${table.encryptedSecretKey} IS NULL)`,
+    ),
+    check(
+      "file_storage_profile_s3_check",
+      sql`${table.driver} = 'vercel-blob' OR (${table.region} IS NOT NULL AND ${table.bucket} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const FileStorageSettingTable = pgTable(
+  "file_storage_setting",
+  {
+    singleton: boolean("singleton").primaryKey().notNull().default(true),
+    activeProfileId: uuid("active_profile_id")
+      .notNull()
+      .references(() => FileStorageProfileTable.id, { onDelete: "restrict" }),
+    version: integer("version").notNull().default(1),
+    updatedBy: uuid("updated_by").notNull(),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check("file_storage_setting_singleton_check", sql`${table.singleton}`),
+    check("file_storage_setting_version_check", sql`${table.version} > 0`),
+  ],
+);
+
+export const UploadedFileTable = pgTable(
+  "uploaded_file",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    storageProfileId: uuid("storage_profile_id")
+      .notNull()
+      .references(() => FileStorageProfileTable.id, { onDelete: "restrict" }),
+    storageKey: text("storage_key").notNull().unique(),
+    sourceUrl: text("source_url").notNull(),
+    filename: varchar("filename", { length: 240 }).notNull(),
+    mediaType: varchar("media_type", { length: 160 }).notNull(),
+    size: integer("size").notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("uploaded_file_user_created_idx").on(table.userId, table.createdAt),
+    check("uploaded_file_size_check", sql`${table.size} >= 0`),
+  ],
+);
+
 export const ArtifactTable = pgTable(
   "artifact",
   {
@@ -265,6 +427,10 @@ export const ArtifactTable = pgTable(
       .notNull()
       .references(() => AgentRunTable.id, { onDelete: "cascade" }),
     storageKey: text("storage_key").notNull().unique(),
+    storageProfileId: uuid("storage_profile_id").references(
+      () => FileStorageProfileTable.id,
+      { onDelete: "restrict" },
+    ),
     filename: varchar("filename", { length: 240 }).notNull(),
     mediaType: varchar("media_type", { length: 160 }).notNull(),
     size: integer("size").notNull(),
@@ -323,6 +489,10 @@ export const ArtifactCleanupTable = pgTable(
       onDelete: "set null",
     }),
     storageKey: text("storage_key").notNull(),
+    storageProfileId: uuid("storage_profile_id").references(
+      () => FileStorageProfileTable.id,
+      { onDelete: "restrict" },
+    ),
     status: varchar("status", {
       enum: ["pending", "processing", "retrying", "completed", "failed"],
     })
@@ -1473,6 +1643,9 @@ export const AgentRunTable = pgTable(
       .notNull()
       .$type<Record<string, unknown>>()
       .default({}),
+    goalRequirement:
+      json("goal_requirement").$type<NormalizedGoalRequirement>(),
+    goalRevision: integer("goal_revision").notNull().default(1),
     allowedTools: json("allowed_tools").notNull().$type<string[]>().default([]),
     timeoutMs: integer("timeout_ms").notNull().default(300000),
     depth: integer("depth").notNull().default(0),
@@ -1499,9 +1672,179 @@ export const AgentRunTable = pgTable(
       "agent_run_token_budget_check",
       sql`${table.tokenBudget} BETWEEN 1000 AND 200000`,
     ),
+    check("agent_run_goal_revision_check", sql`${table.goalRevision} > 0`),
     index("agent_run_parent_idx").on(table.parentRunId),
     index("agent_run_root_idx").on(table.rootRunId),
     index("agent_run_reclaim_idx").on(table.status, table.leaseExpiresAt),
+  ],
+);
+
+export const RootRunGoalTable = pgTable(
+  "root_run_goal",
+  {
+    rootRunId: uuid("root_run_id")
+      .primaryKey()
+      .notNull()
+      .references(() => AgentRunTable.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull().default(1),
+    requirement: json("requirement").$type<NormalizedGoalRequirement>(),
+    sourceMessageId: uuid("source_message_id"),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check("root_run_goal_revision_check", sql`${table.revision} > 0`),
+  ],
+);
+
+export const RunInboxTable = pgTable(
+  "run_inbox",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    rootRunId: uuid("root_run_id").references(() => AgentRunTable.id, {
+      onDelete: "cascade",
+    }),
+    targetRunId: uuid("target_run_id").references(() => AgentRunTable.id, {
+      onDelete: "cascade",
+    }),
+    mode: varchar("mode", { length: 24 })
+      .$type<"followup" | "steer" | "inject">()
+      .notNull(),
+    source: varchar("source", { length: 24 })
+      .$type<"user" | "system" | "a2a" | "workflow" | "job" | "automation">()
+      .notNull(),
+    status: varchar("status", { length: 24 })
+      .$type<"open" | "consumed" | "dismissed" | "superseded">()
+      .notNull()
+      .default("open"),
+    content: json("content").notNull().$type<Record<string, unknown>>(),
+    goalRevision: integer("goal_revision"),
+    idempotencyKey: varchar("idempotency_key", { length: 240 }).notNull(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    consumedAt: timestamp("consumed_at"),
+  },
+  (table) => [
+    unique().on(table.userId, table.idempotencyKey),
+    check(
+      "run_inbox_mode_check",
+      sql`${table.mode} IN ('followup','steer','inject')`,
+    ),
+    check(
+      "run_inbox_source_check",
+      sql`${table.source} IN ('user','system','a2a','workflow','job','automation')`,
+    ),
+    check(
+      "run_inbox_status_check",
+      sql`${table.status} IN ('open','consumed','dismissed','superseded')`,
+    ),
+    check(
+      "run_inbox_goal_revision_check",
+      sql`${table.goalRevision} IS NULL OR ${table.goalRevision} > 0`,
+    ),
+    index("run_inbox_user_open_idx").on(
+      table.userId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const DurableJobTable = pgTable(
+  "durable_job",
+  {
+    id: text("id").primaryKey().notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    target: jsonb("target").notNull().$type<Record<string, unknown>>(),
+    payload: jsonb("payload").notNull().$type<unknown>(),
+    status: varchar("status", { length: 20 })
+      .$type<"queued" | "running" | "completed" | "failed" | "cancelled">()
+      .notNull()
+      .default("queued"),
+    runId: uuid("run_id"),
+    correlationId: text("correlation_id"),
+    attempt: integer("attempt").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    nextAttemptAt: timestamp("next_attempt_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    leaseToken: uuid("lease_token"),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    finishedLeaseToken: uuid("finished_lease_token"),
+    outcome: jsonb("outcome").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check(
+      "durable_job_status_check",
+      sql`${table.status} IN ('queued','running','completed','failed','cancelled')`,
+    ),
+    check(
+      "durable_job_attempt_check",
+      sql`${table.attempt} >= 0 AND ${table.maxAttempts} > 0`,
+    ),
+    check(
+      "durable_job_run_inbox_check",
+      sql`(${table.runId} IS NULL AND ${table.correlationId} IS NULL) OR (${table.runId} IS NOT NULL AND ${table.correlationId} IS NOT NULL)`,
+    ),
+    check(
+      "durable_job_target_check",
+      sql`json_typeof(${table.target}) = 'object' AND ${table.target} ->> 'kind' = 'job' AND ${table.target} ->> 'jobType' = 'capability-orchestration'`,
+    ),
+    check(
+      "durable_job_lease_check",
+      sql`(${table.status} = 'running' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseOwner} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL) OR (${table.status} <> 'running' AND ${table.leaseToken} IS NULL AND ${table.leaseOwner} IS NULL AND ${table.leaseExpiresAt} IS NULL)`,
+    ),
+    index("durable_job_claim_idx").on(table.nextAttemptAt, table.createdAt),
+    index("durable_job_run_idx").on(table.runId),
+  ],
+);
+
+export const DurableJobCompletionOutboxTable = pgTable(
+  "durable_job_completion_outbox",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => DurableJobTable.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    completion: jsonb("completion").notNull().$type<Record<string, unknown>>(),
+    attempt: integer("attempt").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    lastError: text("last_error"),
+    deliveredAt: timestamp("delivered_at"),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    check("durable_job_outbox_attempt_check", sql`${table.attempt} >= 0`),
+    check(
+      "durable_job_outbox_lease_check",
+      sql`(${table.leaseToken} IS NULL) = (${table.leaseExpiresAt} IS NULL)`,
+    ),
+    index("durable_job_outbox_claim_idx").on(
+      table.nextAttemptAt,
+      table.createdAt,
+    ),
   ],
 );
 
@@ -1575,6 +1918,18 @@ export const RootRunBudgetReservationTable = pgTable(
       .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
+    check(
+      "root_run_budget_reservation_kind_check",
+      sql`${table.kind} IN ('steps','tokens','tool_calls','delegations','children')`,
+    ),
+    check(
+      "root_run_budget_reservation_state_check",
+      sql`${table.state} IN ('reserved','committed','released')`,
+    ),
+    check(
+      "root_run_budget_reservation_amount_check",
+      sql`${table.amount} > 0 AND (${table.committedAmount} IS NULL OR ${table.committedAmount} BETWEEN 0 AND ${table.amount}) AND ((${table.state} = 'reserved' AND ${table.settledAt} IS NULL) OR (${table.state} <> 'reserved' AND ${table.settledAt} IS NOT NULL))`,
+    ),
     index("root_run_budget_reservation_stale_idx")
       .on(table.rootRunId, table.expiresAt)
       .where(sql`${table.state} = 'reserved'`),
@@ -1782,6 +2137,15 @@ export const AgentRunCheckpointTable = pgTable(
       .primaryKey()
       .references(() => AgentRunTable.id, { onDelete: "cascade" }),
     generation: integer("generation").notNull().default(1),
+    continuationKind: varchar("continuation_kind", { length: 32 })
+      .$type<"delegation" | "goal">()
+      .notNull()
+      .default("delegation"),
+    goalRound: integer("goal_round").notNull().default(1),
+    maxGoalRounds: integer("max_goal_rounds").notNull().default(3),
+    verificationFeedback: json("verification_feedback").$type<
+      Record<string, unknown>
+    >(),
     responseMessages: json("response_messages").notNull().$type<unknown[]>(),
     modelMessages: json("model_messages").notNull().$type<unknown[]>(),
     modelConfig: json("model_config")
@@ -1790,7 +2154,7 @@ export const AgentRunCheckpointTable = pgTable(
     authorizationRecipe: json("authorization_recipe")
       .notNull()
       .$type<Record<string, unknown>>(),
-    assistantMessageId: text("assistant_message_id").notNull(),
+    assistantMessageId: text("assistant_message_id"),
     claimToken: uuid("claim_token"),
     claimExpiresAt: timestamp("claim_expires_at"),
     completedAt: timestamp("completed_at"),
@@ -1805,6 +2169,18 @@ export const AgentRunCheckpointTable = pgTable(
     check(
       "agent_run_checkpoint_generation_check",
       sql`${table.generation} > 0`,
+    ),
+    check(
+      "agent_run_checkpoint_continuation_kind_check",
+      sql`${table.continuationKind} IN ('delegation','goal')`,
+    ),
+    check(
+      "agent_run_checkpoint_goal_round_check",
+      sql`${table.goalRound} > 0 AND ${table.maxGoalRounds} > 0 AND ${table.goalRound} <= ${table.maxGoalRounds}`,
+    ),
+    check(
+      "agent_run_checkpoint_feedback_check",
+      sql`(${table.continuationKind} = 'goal' AND ${table.verificationFeedback} IS NOT NULL) OR (${table.continuationKind} = 'delegation' AND ${table.verificationFeedback} IS NULL)`,
     ),
     check(
       "agent_run_checkpoint_claim_check",

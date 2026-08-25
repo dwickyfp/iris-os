@@ -2,8 +2,12 @@ import { IS_VERCEL_ENV } from "lib/const";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { parseOperationsConfig } = await import("lib/operations/config");
-    parseOperationsConfig(process.env);
+    const { startRuntimeSystemSettingsRefresh } = await import(
+      "lib/system-settings/runtime"
+    );
+    await startRuntimeSystemSettingsRefresh();
+    const { loadOperationsConfig } = await import("lib/operations/config");
+    await loadOperationsConfig();
   }
 
   if (

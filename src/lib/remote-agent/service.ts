@@ -55,9 +55,9 @@ function requireAgent(agent: RemoteAgent | null) {
   return agent;
 }
 
-function credentialFor(agent: RemoteAgent) {
+async function credentialFor(agent: RemoteAgent) {
   if (!agent.credentialType || !agent.encryptedCredential) return undefined;
-  const value = decryptRemoteAgentSecret(agent.encryptedCredential);
+  const value = await decryptRemoteAgentSecret(agent.encryptedCredential);
   return agent.credentialType === "bearer"
     ? ({ type: "bearer", value } as const)
     : ({
@@ -159,7 +159,7 @@ export function createRemoteAgentService(
         const candidate = { ...current, ...update };
         update.agentCard = await discoverAgent(
           candidate.endpointUrl,
-          credentialFor(candidate),
+          await credentialFor(candidate),
         );
         update.discoveredAt = new Date();
       }
@@ -176,7 +176,10 @@ export function createRemoteAgentService(
 
     async discover(userId: string, id: string) {
       const agent = await ownedActiveAgent(userId, id);
-      const card = await discoverAgent(agent.endpointUrl, credentialFor(agent));
+      const card = await discoverAgent(
+        agent.endpointUrl,
+        await credentialFor(agent),
+      );
       return publicAgent(
         requireAgent(
           await repository.update(id, userId, {
@@ -200,7 +203,7 @@ export function createRemoteAgentService(
       const args = [
         rpcBinding(agent),
         A2ATaskSendSchema.parse(input),
-        options?.credential ?? credentialFor(agent),
+        options?.credential ?? (await credentialFor(agent)),
       ] as const;
       return options?.requestId
         ? provider.sendTask(...args, options.requestId)
@@ -217,7 +220,7 @@ export function createRemoteAgentService(
       return provider.getTask(
         rpcBinding(agent),
         taskId,
-        credential ?? credentialFor(agent),
+        credential ?? (await credentialFor(agent)),
       );
     },
 
@@ -231,7 +234,7 @@ export function createRemoteAgentService(
       return provider.cancelTask(
         rpcBinding(agent),
         taskId,
-        credential ?? credentialFor(agent),
+        credential ?? (await credentialFor(agent)),
       );
     },
 
@@ -248,7 +251,7 @@ export function createRemoteAgentService(
       return provider.sendTask(
         rpcBinding(agent),
         A2ATaskSendSchema.parse(input),
-        options.credential ?? credentialFor(agent),
+        options.credential ?? (await credentialFor(agent)),
         options.requestId,
       );
     },

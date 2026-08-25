@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { assertSandboxRetirementDrained } from "lib/db/pg/migrate.pg";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { applyMigrations, recreatePublicSchema } from "./migration-harness";
@@ -96,10 +98,199 @@ describe("IRIS V2 PostgreSQL migrations", () => {
     expect(applied).toContain("0061_root_run_budget.sql");
     expect(applied).toContain("0056_sandbox_creation_fencing.sql");
     expect(applied).toContain("0063_drop_sandbox_subsystem.sql");
+    expect(applied).toContain(
+      "0064_restore_root_budget_reservation_checks.sql",
+    );
+    expect(applied).toContain("0065_agent_run_goal_continuation.sql");
+    expect(applied).toContain("0066_run_inbox_goal_revision.sql");
+    expect(applied).toContain("0067_system_settings_storage_profiles.sql");
+    expect(applied).toContain("0068_uploaded_file_ownership.sql");
+    expect(applied).toContain("0069_durable_jobs.sql");
     const result = await client.query(
       "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public'",
     );
     expect(result.rows[0].count).toBeGreaterThan(20);
+  });
+
+  test("requires a sandbox drain before 0063 and preserves non-sandbox state", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, {
+      through: "0062_automation_authority_snapshot.sql",
+    });
+    const userId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    const executionId = randomUUID();
+    const artifactId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Sandbox Retirement', $2, 'hash')`,
+      [userId, `sandbox-retirement-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO agent_run
+        (id, user_id, root_run_id, status, lease_token, lease_expires_at,
+         started_at, absolute_deadline_at, attempt)
+       VALUES ($1, $2, $1, 'running', gen_random_uuid(),
+               NOW() + interval '1 minute', NOW(),
+               NOW() + interval '10 minutes', 1)`,
+      [runId, userId],
+    );
+    await client.query(
+      `INSERT INTO root_run_budget
+        (root_run_id, max_steps, max_tokens, max_duration_ms, max_tool_calls,
+         max_delegations, max_delegation_depth, max_parallel_children,
+         max_sandbox_compute_ms)
+       VALUES ($1, 10, 1000, 60000, 10, 2, 1, 1, 1000)`,
+      [runId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_session
+        (id, run_id, user_id, provider, provider_instance_id, profile, status,
+         last_used_at, expires_at, created_at)
+       VALUES ($1, $2, $3, 'iris-runner', 'container-1', '{}'::json, 'active',
+               NOW(), NOW() + interval '1 hour', NOW())`,
+      [sessionId, runId, userId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_execution
+        (id, session_id, run_id, status, reserved_compute_ms,
+         reservation_token, reservation_expires_at, started_at)
+       VALUES ($1, $2, $3, 'running', 100, $4,
+               NOW() + interval '1 minute', NOW())`,
+      [executionId, sessionId, runId, randomUUID()],
+    );
+    await client.query(
+      `INSERT INTO sandbox_run_compute_budget
+        (run_id, max_compute_ms, reserved_compute_ms)
+       VALUES ($1, 1000, 100)`,
+      [runId],
+    );
+    await client.query(
+      `INSERT INTO root_run_budget_reservation
+        (token, root_run_id, run_id, kind, amount, expires_at)
+       VALUES ('sandbox-retirement', $1, $1, 'sandbox_compute_ms', 100,
+               NOW() + interval '1 minute'),
+              ('token-retention', $1, $1, 'tokens', 10,
+               NOW() + interval '1 minute')`,
+      [runId],
+    );
+    await client.query(
+      `INSERT INTO artifact
+        (id, user_id, run_id, storage_key, filename, media_type, size, sha256,
+         output_execution_id, output_relative_path)
+       VALUES ($1, $2, $3, 'sandbox/output.txt', 'output.txt', 'text/plain',
+               6, $4, $5, 'output/output.txt')`,
+      [artifactId, userId, runId, "a".repeat(64), executionId],
+    );
+
+    await expect(
+      assertSandboxRetirementDrained(drizzle(client)),
+    ).rejects.toThrow("SANDBOX_DRAIN_REQUIRED");
+    const retainedSession = await client.query(
+      `SELECT provider_instance_id FROM sandbox_session WHERE id = $1`,
+      [sessionId],
+    );
+    expect(retainedSession.rows[0].provider_instance_id).toBe("container-1");
+
+    await client.query(
+      `UPDATE sandbox_session
+       SET status = 'destroyed', provider_instance_id = NULL,
+           destroyed_at = NOW()
+       WHERE id = $1`,
+      [sessionId],
+    );
+    await client.query(
+      `UPDATE sandbox_execution
+       SET status = 'succeeded', duration_ms = 50, completed_at = NOW()
+       WHERE id = $1`,
+      [executionId],
+    );
+    await expect(
+      assertSandboxRetirementDrained(drizzle(client)),
+    ).rejects.toThrow("SANDBOX_DRAIN_REQUIRED");
+    await client.query(
+      `UPDATE sandbox_execution SET charged_at = NOW() WHERE id = $1`,
+      [executionId],
+    );
+    await expect(
+      assertSandboxRetirementDrained(drizzle(client)),
+    ).resolves.toBeUndefined();
+    await applyMigrations(client, {
+      after: "0062_automation_authority_snapshot.sql",
+    });
+
+    const removedTables = await client.query(
+      `SELECT count(*)::int AS count
+       FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN
+           ('sandbox_session', 'sandbox_execution', 'sandbox_run_compute_budget')`,
+    );
+    expect(removedTables.rows[0].count).toBe(0);
+    const reservations = await client.query(
+      `SELECT token, kind FROM root_run_budget_reservation ORDER BY token`,
+    );
+    expect(reservations.rows).toEqual([
+      { token: "token-retention", kind: "tokens" },
+    ]);
+    const artifact = await client.query(
+      `SELECT id, storage_key FROM artifact WHERE id = $1`,
+      [artifactId],
+    );
+    expect(artifact.rows).toEqual([
+      { id: artifactId, storage_key: "sandbox/output.txt" },
+    ]);
+    await expect(
+      client.query(
+        `INSERT INTO root_run_budget_reservation
+          (token, root_run_id, run_id, kind, amount, expires_at)
+         VALUES ('invalid-kind', $1, $1, 'sandbox_compute_ms', 1, NOW())`,
+        [runId],
+      ),
+    ).rejects.toThrow();
+  });
+
+  test("checks pre-0059 sandbox executions without requiring charged_at", async () => {
+    await recreatePublicSchema(client);
+    await applyMigrations(client, {
+      through: "0058_orphan_artifact_cleanup.sql",
+    });
+    const userId = randomUUID();
+    const runId = randomUUID();
+    const sessionId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Legacy Sandbox', $2, 'hash')`,
+      [userId, `legacy-sandbox-${userId}@example.test`],
+    );
+    await client.query(
+      `INSERT INTO agent_run
+        (id, user_id, root_run_id, status, lease_token, lease_expires_at,
+         started_at, absolute_deadline_at, attempt)
+       VALUES ($1, $2, $1, 'running', gen_random_uuid(),
+               NOW() + interval '1 minute', NOW(),
+               NOW() + interval '10 minutes', 1)`,
+      [runId, userId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_session
+        (id, run_id, user_id, provider, profile, status, last_used_at,
+         expires_at, created_at)
+       VALUES ($1, $2, $3, 'iris-runner', '{}'::json, 'creating', NOW(),
+               NOW() + interval '1 hour', NOW())`,
+      [sessionId, runId, userId],
+    );
+    await client.query(
+      `INSERT INTO sandbox_execution
+        (id, session_id, run_id, status, reserved_compute_ms, started_at)
+       VALUES ($1, $2, $3, 'running', 100, NOW())`,
+      [randomUUID(), sessionId, runId],
+    );
+
+    await expect(
+      assertSandboxRetirementDrained(drizzle(client)),
+    ).rejects.toThrow("SANDBOX_DRAIN_REQUIRED");
   });
 
   test("persists budget exhaustion for automation runs and attempts", async () => {

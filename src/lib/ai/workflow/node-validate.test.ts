@@ -196,5 +196,31 @@ describe("node-validate", () => {
       expect(result).not.toBe(true);
       expect(result).toHaveProperty("errorMessage");
     });
+
+    it("rejects retired workflow node kinds", () => {
+      const startNode = createInputNodeData("start", "Start Node");
+      const endNode = createOutputNodeData("end", "End Node");
+      const retiredNode = {
+        id: "compute",
+        type: "default",
+        position: { x: 0, y: 0 },
+        data: {
+          id: "compute",
+          name: "Retired Compute",
+          kind: "compute",
+          outputSchema: { type: "object", properties: {} },
+        },
+      } as unknown as UINode;
+
+      const result = allNodeValidate({
+        nodes: [startNode, retiredNode, endNode],
+        edges: [createEdge("e1", "start", "compute")],
+      });
+
+      expect(result).toEqual({
+        node: retiredNode,
+        errorMessage: "UNSUPPORTED_WORKFLOW_NODE_KIND:compute",
+      });
+    });
   });
 });

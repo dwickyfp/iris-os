@@ -1,4 +1,5 @@
 import "load-env";
+import { startRuntimeSystemSettingsRefresh } from "lib/system-settings/runtime";
 import PgBoss from "pg-boss";
 import { embed, generateObject } from "ai";
 import { z } from "zod";
@@ -596,6 +597,7 @@ async function sweepAll() {
   }
 }
 
+await startRuntimeSystemSettingsRefresh();
 if (!process.env.POSTGRES_URL)
   throw new Error("POSTGRES_URL is required for the memory worker");
 const boss = new PgBoss({ connectionString: process.env.POSTGRES_URL });

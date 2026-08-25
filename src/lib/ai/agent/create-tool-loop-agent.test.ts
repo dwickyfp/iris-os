@@ -1,12 +1,13 @@
-import { DefaultToolName, ImageToolName } from "lib/ai/tools";
 import { tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
+import { DefaultToolName, ImageToolName } from "lib/ai/tools";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { BudgetGuard } from "../runtime/budget";
 import {
   AGENT_TIMEOUTS,
-  createToolLoopAgent,
   configuredAgentTimeouts,
+  createToolLoopAgent,
   evaluateToolCallPolicy,
   getAgentToolTimeouts,
   getToolLoopAgentReasoningMode,
@@ -160,8 +161,58 @@ describe("getAgentToolTimeouts", () => {
 });
 
 describe("accurate runtime event boundaries", () => {
+  it("admits parallel AI SDK tool calls through session maxParallel", async () => {
+    let active = 0;
+    let peak = 0;
+    const execute = vi.fn(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return "ok";
+    });
+    const model = new MockLanguageModelV3({
+      doGenerate: [
+        modelResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "parallel-1",
+              toolName: "search",
+              input: JSON.stringify({ query: "one" }),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "parallel-2",
+              toolName: "search",
+              input: JSON.stringify({ query: "two" }),
+            },
+          ],
+          "tool-calls",
+        ),
+        modelResult([{ type: "text", text: "complete" }]),
+      ],
+    });
+    const agent = createToolLoopAgent({
+      profile: { type: "base" },
+      model,
+      instructions: "test",
+      tools: {
+        search: tool({ inputSchema: z.object({ query: z.string() }), execute }),
+      },
+      runtimeContext: runtimeContext(),
+      budget: new BudgetGuard({ maxParallel: 1, maxToolCalls: 2 }),
+    });
+
+    await agent.generate({ prompt: "search twice" });
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(peak).toBe(1);
+  });
+
   it("orders successful model and tool events without step-end duplicates", async () => {
-    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const events: Array<{ type: string; payload: Record<string, unknown> }> =
+      [];
     const execute = vi.fn(async () => "ok");
     const model = new MockLanguageModelV3({
       doGenerate: [
@@ -183,7 +234,9 @@ describe("accurate runtime event boundaries", () => {
       profile: { type: "base" },
       model,
       instructions: "test",
-      tools: { search: tool({ inputSchema: z.object({ query: z.string() }), execute }) },
+      tools: {
+        search: tool({ inputSchema: z.object({ query: z.string() }), execute }),
+      },
       runtimeContext: runtimeContext(),
       onRuntimeEvent: async (type, payload) => {
         events.push({ type, payload });
@@ -337,7 +390,10 @@ describe("accurate runtime event boundaries", () => {
   });
 
   it.each([
-    { approved: true, lifecycle: ["tool.approved", "tool.started", "tool.completed"] },
+    {
+      approved: true,
+      lifecycle: ["tool.approved", "tool.started", "tool.completed"],
+    },
     { approved: false, lifecycle: ["tool.rejected", "tool.cancelled"] },
   ])(
     "records the approval lifecycle when approved is $approved",

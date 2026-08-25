@@ -1,4 +1,5 @@
 import type { Tool } from "ai";
+import { recordActivityEvent } from "lib/activity/service";
 import { createToolLoopAgent } from "lib/ai/agent/create-tool-loop-agent";
 import {
   createAgentRuntimeContext,
@@ -9,6 +10,8 @@ import type {
   RuntimeToolMode,
 } from "lib/ai/agent/runtime-context";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
+import { enqueueMemoryReview } from "lib/ai/memory/queue";
+import { indexChatMessage } from "lib/ai/memory/service";
 import { customModelProvider } from "lib/ai/models";
 import {
   type ParentResumeGeneration,
@@ -42,6 +45,7 @@ import { workflowToVercelAITool } from "../../src/app/api/chat/shared.chat";
 
 type Recipe = {
   userId: string;
+  userMessageId?: string;
   threadId: string;
   workspaceId?: string;
   taskId?: string;
@@ -240,15 +244,30 @@ async function resolveRuntime(
       taskId: recipe.taskId,
       agentId: recipe.agentId,
       instructions: recipe.instructions ?? "Continue the task.",
-      sources: currentGenerationObservations(claimed).map(
-        (observation, index) => ({
+      sources: [
+        ...currentGenerationObservations(claimed).map((observation, index) => ({
           id: `joined-observation-${index}`,
           kind: "remote_observation" as const,
           content: JSON.stringify(observation),
           trust: "untrusted" as const,
           priority: 100,
-        }),
-      ),
+        })),
+        ...(claimed.checkpoint.verificationFeedback
+          ? [
+              {
+                id: `goal-verification-${claimed.checkpoint.goalRound ?? 1}`,
+                kind: "continuation" as const,
+                content: JSON.stringify({
+                  kind: "goal_verification_feedback",
+                  round: claimed.checkpoint.goalRound ?? 1,
+                  feedback: claimed.checkpoint.verificationFeedback,
+                }),
+                trust: "mixed" as const,
+                priority: 110,
+              },
+            ]
+          : []),
+      ],
       restore: {
         routing: recipe.routingSnapshot,
         budget: recipe.budgetSnapshot,
@@ -257,7 +276,7 @@ async function resolveRuntime(
         model: recipe.modelSnapshot,
         driver: recipe.driverSnapshot,
       },
-      goal: claimed.checkpoint.goalRequirement?.goal,
+      goal: claimed.run.goalRequirement?.goal,
     },
   });
   const runtimeContext = prepared.runtimeContext!;
@@ -301,10 +320,8 @@ async function resolveRuntime(
           },
           run: { mode: "claimed", claimToken: claimed.token },
           policy: prepared.policy,
-          completionRequirement: claimed.checkpoint.goalRequirement
-            ? createGoalVerificationRequirement(
-                claimed.checkpoint.goalRequirement,
-              )
+          completionRequirement: claimed.run.goalRequirement
+            ? createGoalVerificationRequirement(claimed.run.goalRequirement)
             : undefined,
           context: prepared.context,
           budget: prepared.budget,
@@ -332,7 +349,12 @@ async function resolveRuntime(
         signal: lifecycle.signal,
         assertActive: lifecycle.assertActive,
         fail: lifecycle.fail,
-        finalize: lifecycle.finalize,
+        finalize: (result, value, checkpoint) =>
+          lifecycle.finalize(
+            result,
+            value,
+            checkpoint ? { checkpoint } : undefined,
+          ),
         checkpoint: lifecycle.waitForExternal,
       } as ParentResumeGeneration;
     },
@@ -359,6 +381,50 @@ const execute = createParentResumeExecutor({
       metadata: {
         chatModel: modelConfig as { provider: string; model: string },
       },
+    });
+  },
+  complete: async ({ claimed, threadId, messageId, parts }) => {
+    const recipe = claimed.checkpoint.authorizationRecipe as Recipe;
+    await indexChatMessage({
+      userId: claimed.run.userId,
+      threadId,
+      message: { id: messageId, role: "assistant", parts },
+    });
+    if (recipe.userMessageId)
+      void enqueueMemoryReview({
+        id: `${threadId}:${messageId}`,
+        userId: claimed.run.userId,
+        threadId,
+        workspaceId: claimed.run.workspaceId ?? undefined,
+        taskId: claimed.run.taskId ?? undefined,
+        assistantMessageId: messageId,
+        userMessageId: recipe.userMessageId,
+        agentId: claimed.run.agentId ?? undefined,
+      });
+    void recordActivityEvent(claimed.run.userId, {
+      actorType: claimed.run.agentId ? "agent" : "system",
+      actorId: claimed.run.agentId ?? undefined,
+      scopeType: claimed.run.taskId
+        ? "task"
+        : claimed.run.workspaceId
+          ? "workspace"
+          : claimed.run.agentId
+            ? "agent"
+            : "global",
+      scopeId:
+        claimed.run.taskId ??
+        claimed.run.workspaceId ??
+        claimed.run.agentId ??
+        null,
+      eventType: "chat.completed",
+      subjectType: "thread",
+      subjectId: threadId,
+      payload: { assistantMessageId: messageId },
+      runId: claimed.run.id,
+      threadId,
+      taskId: claimed.run.taskId ?? undefined,
+      agentId: claimed.run.agentId ?? undefined,
+      idempotencyKey: `chat.completed:${messageId}`,
     });
   },
   fail: async () => undefined,

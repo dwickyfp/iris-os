@@ -19,6 +19,19 @@ export function renderPrometheus(snapshot: OperationsSnapshot): string {
     snapshot.leases.active,
     "Current active agent-run leases.",
   );
+  addMap(
+    lines,
+    "iris_intelligence_events",
+    snapshot.intelligence,
+    "Current durable Intelligence Harness event rows",
+  );
+  addMap(lines, "iris_durable_jobs", snapshot.jobs, "Current durable jobs");
+  addMap(
+    lines,
+    "iris_run_inbox",
+    snapshot.runInbox,
+    "Current durable run inbox items",
+  );
   addGauge(
     lines,
     "iris_agent_run_leases_expired",

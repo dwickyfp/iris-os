@@ -197,7 +197,7 @@ export type DelegationWorkerExecutorDependencies = {
   }): Promise<AutomationExecutionResult>;
   enqueue(runId: string, delaySeconds?: number): Promise<boolean>;
   markDispatched(runId: string): Promise<void>;
-  decryptCredential(value: string): string;
+  decryptCredential(value: string): string | Promise<string>;
   recordEvent(event: DelegationWorkerEvent): Promise<void>;
   ingestRemoteArtifacts(
     claimed: unknown[],
@@ -240,7 +240,7 @@ export function createDelegationWorkerExecutor(
     if (!intent) return;
     const credential = intent.encryptedCredential
       ? (JSON.parse(
-          dependencies.decryptCredential(intent.encryptedCredential),
+          await dependencies.decryptCredential(intent.encryptedCredential),
         ) as RemoteAgentCredential)
       : undefined;
     try {
@@ -470,7 +470,7 @@ export function createDelegationWorkerExecutor(
         await dependencies.runs.selectTransientCredential(child.id, token);
       credential = encryptedCredential
         ? (JSON.parse(
-            dependencies.decryptCredential(encryptedCredential),
+            await dependencies.decryptCredential(encryptedCredential),
           ) as RemoteAgentCredential)
         : undefined;
       const sendResult = continuation

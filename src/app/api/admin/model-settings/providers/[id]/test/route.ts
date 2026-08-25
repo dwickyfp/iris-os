@@ -43,7 +43,7 @@ export async function POST(
     );
   try {
     const apiKey = provider.encryptedApiKey
-      ? decryptSecret(provider.encryptedApiKey)
+      ? await decryptSecret(provider.encryptedApiKey)
       : undefined;
     const response = await fetch(endpoint, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},

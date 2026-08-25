@@ -1,6 +1,10 @@
 import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import {
+  decryptSystemSettingValue,
+  encryptSystemSettingValue,
+} from "./encrypted-value";
 
 const ALGORITHM = "aes-256-gcm";
 const VERSION = "v2";
@@ -18,8 +22,9 @@ function encryptionKey(value: string | undefined, name: string) {
 
 export function encryptRemoteAgentSecret(
   value: string,
-  env: SecretEnv = process.env,
+  env?: SecretEnv,
 ) {
+  if (!env) return encryptSystemSettingValue("remote-agent.credential", value);
   const iv = randomBytes(12);
   const cipher = createCipheriv(
     ALGORITHM,
@@ -40,10 +45,7 @@ export function encryptRemoteAgentSecret(
   ].join(".");
 }
 
-export function decryptRemoteAgentSecret(
-  value: string,
-  env: SecretEnv = process.env,
-) {
+function parseLegacyEnvelope(value: string) {
   const [version, iv, tag, payload, extra] = value.split(".");
   if (
     !(["v1", VERSION] as string[]).includes(version) ||
@@ -54,6 +56,51 @@ export function decryptRemoteAgentSecret(
   ) {
     throw new Error("Invalid encrypted remote agent credential");
   }
+  return { version: version as "v1" | "v2", iv, tag, payload };
+}
+
+export function decryptRemoteAgentSecret(value: string, env: SecretEnv): string;
+export function decryptRemoteAgentSecret(value: string): Promise<string>;
+export function decryptRemoteAgentSecret(value: string, env?: SecretEnv) {
+  if (value.startsWith("ss1."))
+    return decryptSystemSettingValue("remote-agent.credential", value);
+  const { version } = parseLegacyEnvelope(value);
+  if (env) return decryptLegacyWithEnv(value, version, env);
+  return import("lib/system-settings/server")
+    .then(async ({ systemSettingsService }) => {
+      const [versioned, fallback] =
+        version === "v1"
+          ? ([
+              "legacy.remoteAgentEncryptionKeyV1",
+              "legacy.remoteAgentEncryptionKey",
+            ] as const)
+          : ([
+              "legacy.remoteAgentEncryptionKeyV2",
+              "legacy.remoteAgentEncryptionKey",
+            ] as const);
+      return (
+        (await systemSettingsService.getSecret(versioned)) ??
+        (await systemSettingsService.getSecret(fallback))
+      );
+    })
+    .then((legacy) => {
+      if (!legacy)
+        throw new Error("Legacy remote-agent credential must be replaced");
+      return decryptRemoteAgentSecret(
+        value,
+        version === "v2"
+          ? { REMOTE_AGENT_ENCRYPTION_KEY_V2: legacy }
+          : { REMOTE_AGENT_ENCRYPTION_KEY_V1: legacy },
+      );
+    });
+}
+
+function decryptLegacyWithEnv(
+  value: string,
+  version: "v1" | "v2",
+  env: SecretEnv,
+) {
+  const { iv, tag, payload } = parseLegacyEnvelope(value);
   try {
     const decipher = createDecipheriv(
       ALGORITHM,

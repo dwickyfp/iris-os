@@ -13,6 +13,7 @@ import {
 import logger from "lib/logger";
 import { getTranslations } from "next-intl/server";
 import { getUser } from "lib/user/server";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
 
 export const updateUserRolesAction = validatedActionWithAdminPermission(
   UpdateUserRoleSchema,
@@ -21,7 +22,9 @@ export const updateUserRolesAction = validatedActionWithAdminPermission(
     const tCommon = await getTranslations("User.Profile.common");
     const { userId, role: roleInput } = data;
 
-    const role = roleInput || DEFAULT_USER_ROLE;
+    const role =
+      roleInput ||
+      (String(runtimeSystemSetting("users.defaultRole")) as typeof DEFAULT_USER_ROLE);
     if (userSession.user.id === userId) {
       return {
         success: false,

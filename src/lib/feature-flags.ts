@@ -22,5 +22,13 @@ export function getV2FeatureFlags(
 }
 
 export function isV2FeatureEnabled(feature: keyof V2FeatureFlags) {
-  return getV2FeatureFlags(process.env)[feature];
+  const keys: Record<keyof V2FeatureFlags, Parameters<typeof runtimeSystemSetting>[0]> = {
+    workspaces: "features.workspaces",
+    learning: "features.learning",
+    automation: "features.automation",
+    delegation: "features.delegation",
+    remoteAgents: "features.remoteAgents",
+  };
+  return runtimeSystemSetting(keys[feature]) === true;
 }
+import { runtimeSystemSetting } from "lib/system-settings/runtime";

@@ -30,6 +30,137 @@ afterAll(async () => {
 });
 
 describe("agent run durable external lifecycle", () => {
+  test("steers a root goal and rejects stale completion", async () => {
+    const { listRunInbox, reviseRunGoal } = await import(
+      "lib/ai/runs/run-inbox.server"
+    );
+    const userId = randomUUID();
+    const runId = randomUUID();
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Steer Owner', $2, 'hash')`,
+      [userId, `steer-${randomUUID()}@example.test`],
+    );
+    const goalRequirement = {
+      goal: "Analyze all regions",
+      level: "outcome" as const,
+      requiredArtifactKinds: [],
+      requiredMediaTypes: [],
+      requiredSections: [],
+      requiredCapabilities: [],
+      analysisOnlyAllowed: true,
+    };
+    const running = await repository.createRunning({
+      id: runId,
+      userId,
+      goalRequirement,
+      timeoutMs: 60_000,
+    });
+    await repository.suspendParent(runId, running.leaseToken!, {
+      continuationKind: "goal",
+      goalRound: 2,
+      maxGoalRounds: 3,
+      verificationFeedback: {
+        checks: [{ verified: false, reason: "OUTCOME_EMPTY" }],
+      },
+      delegationToolCallIds: [],
+      responseMessages: [],
+      modelMessages: [],
+      modelConfig: { provider: "test", model: "test" },
+      authorizationRecipe: { threadId: randomUUID() },
+      assistantMessageId: randomUUID(),
+    });
+    const revised = await reviseRunGoal({
+      rootRunId: runId,
+      userId,
+      expectedRevision: 1,
+      requirement: { ...goalRequirement, goal: "Analyze East Java only" },
+      content: { objective: "Analyze East Java only" },
+      idempotencyKey: `steer:${runId}:2`,
+    });
+    expect(revised.revision).toBe(2);
+    expect(revised.item).toMatchObject({ status: "consumed" });
+    expect(await listRunInbox(userId)).toEqual([]);
+    const claimed = await repository.claimParentResume(runId, 30_000);
+    expect(claimed?.run).toMatchObject({
+      goalRevision: 2,
+      goalRequirement: { goal: "Analyze East Java only" },
+    });
+    expect(claimed?.checkpoint.verificationFeedback).toMatchObject({
+      steer: { objective: "Analyze East Java only" },
+      goalRevision: 2,
+    });
+  });
+
+  test("round-trips a canonical goal continuation without delegation joins", async () => {
+    const userId = randomUUID();
+    const runId = randomUUID();
+    const goalRequirement = {
+      goal: "Compare Q2 with Q1 and explain the drivers",
+      level: "outcome" as const,
+      requiredArtifactKinds: [],
+      requiredMediaTypes: [],
+      requiredSections: [],
+      requiredCapabilities: [],
+      analysisOnlyAllowed: true,
+    };
+    await client.query(
+      `INSERT INTO "user" (id, name, email, password)
+       VALUES ($1, 'Goal Continuation Owner', $2, 'hash')`,
+      [userId, `goal-continuation-${randomUUID()}@example.test`],
+    );
+    const running = await repository.createRunning({
+      id: runId,
+      userId,
+      timeoutMs: 60_000,
+      goalRequirement,
+    });
+    expect(running.goalRequirement).toEqual(goalRequirement);
+    const suspended = await repository.suspendParent(
+      runId,
+      running.leaseToken!,
+      {
+        continuationKind: "goal",
+        goalRound: 2,
+        maxGoalRounds: 3,
+        verificationFeedback: {
+          checks: [{ verified: false, reason: "OUTCOME_EMPTY" }],
+        },
+        delegationToolCallIds: [],
+        responseMessages: [],
+        modelMessages: [],
+        modelConfig: { provider: "test", model: "test" },
+        authorizationRecipe: { threadId: randomUUID() },
+        assistantMessageId: randomUUID(),
+      },
+    );
+    expect(suspended?.status).toBe("waiting_external");
+    expect(suspended?.waitingReason).toBe("GOAL_CONTINUATION");
+
+    const claimed = await repository.claimParentResume(runId, 30_000);
+    expect(claimed?.run.goalRequirement).toEqual(goalRequirement);
+    expect(claimed?.checkpoint).toMatchObject({
+      continuationKind: "goal",
+      goalRound: 2,
+      maxGoalRounds: 3,
+      verificationFeedback: {
+        checks: [{ verified: false, reason: "OUTCOME_EMPTY" }],
+      },
+    });
+    const finished = await repository.finishParentResume(
+      runId,
+      claimed!.token,
+      { status: "succeeded", result: { text: "Complete" } },
+    );
+    expect(finished?.status).toBe("succeeded");
+    const dispatch = await client.query(
+      `SELECT count(*)::int AS count
+       FROM agent_run_resume_dispatch WHERE parent_run_id = $1`,
+      [runId],
+    );
+    expect(dispatch.rows[0].count).toBe(0);
+  });
+
   test.each([
     ["succeeded", "DELEGATION_PARENT_TERMINAL"],
     ["budget_exhausted", "DELEGATION_PARENT_TERMINAL"],

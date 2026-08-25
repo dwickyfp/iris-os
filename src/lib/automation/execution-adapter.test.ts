@@ -284,7 +284,7 @@ describe("automation execution adapter", () => {
     });
 
     const orchestration = (generate.mock.calls as any[][])[0][0].orchestration;
-    expect(orchestration.run.spec.context.goalRequirement).toMatchObject({
+    expect(orchestration.run.spec.goalRequirement).toMatchObject({
       level: "artifact",
       requiredMediaTypes: ["application/pdf"],
       requiredPeriod: "Q2",
@@ -380,11 +380,11 @@ describe("automation execution adapter", () => {
 
   test("classifies workflow-created AgentRun budget exhaustion", async () => {
     const manager = {
-      succeed: vi.fn(),
-      fail: vi.fn(),
-      exhaustBudget: vi.fn(),
-      cancel: vi.fn(),
-      timeOut: vi.fn(),
+      succeedWithLease: vi.fn(),
+      failWithLease: vi.fn(),
+      exhaustBudgetWithLease: vi.fn(),
+      cancelWithLease: vi.fn(),
+      timeOutWithLease: vi.fn(),
     };
     const error = new BudgetExhaustedError("maxTokens", {
       steps: 1,
@@ -399,15 +399,17 @@ describe("automation execution adapter", () => {
 
     await finishWorkflowAgentRun(
       "workflow-run",
+      "lease-1",
       { isOk: false, error },
       manager,
     );
 
-    expect(manager.exhaustBudget).toHaveBeenCalledWith(
+    expect(manager.exhaustBudgetWithLease).toHaveBeenCalledWith(
       "workflow-run",
+      "lease-1",
       "Run budget exhausted: maxTokens",
     );
-    expect(manager.fail).not.toHaveBeenCalled();
+    expect(manager.failWithLease).not.toHaveBeenCalled();
     expect(classifyWorkflowFailure(error)).toEqual({
       status: "budget_exhausted",
       message: "Run budget exhausted: maxTokens",
@@ -416,12 +418,13 @@ describe("automation execution adapter", () => {
 
   test("terminalizes a thrown workflow executor failure", async () => {
     const manager = {
-      start: vi.fn(async () => undefined),
-      succeed: vi.fn(),
-      fail: vi.fn(async () => undefined),
-      exhaustBudget: vi.fn(),
-      cancel: vi.fn(),
-      timeOut: vi.fn(),
+      start: vi.fn(async () => ({ leaseToken: "lease-1" })),
+      heartbeat: vi.fn(async () => "active"),
+      succeedWithLease: vi.fn(),
+      failWithLease: vi.fn(async () => ({ status: "failed" })),
+      exhaustBudgetWithLease: vi.fn(),
+      cancelWithLease: vi.fn(),
+      timeOutWithLease: vi.fn(),
     };
     const executor = vi.fn(() => ({
       run: vi.fn(async () => {
@@ -441,19 +444,20 @@ describe("automation execution adapter", () => {
       status: "failed",
       message: "executor exploded",
     });
-    expect(manager.fail).toHaveBeenCalledOnce();
+    expect(manager.failWithLease).toHaveBeenCalledOnce();
   });
 
   test("falls back to failed when terminalization throws", async () => {
     const manager = {
-      start: vi.fn(async () => undefined),
-      succeed: vi.fn(async () => {
+      start: vi.fn(async () => ({ leaseToken: "lease-1" })),
+      heartbeat: vi.fn(async () => "active"),
+      succeedWithLease: vi.fn(async () => {
         throw new Error("terminalization exploded");
       }),
-      fail: vi.fn(async () => undefined),
-      exhaustBudget: vi.fn(),
-      cancel: vi.fn(),
-      timeOut: vi.fn(),
+      failWithLease: vi.fn(async () => undefined),
+      exhaustBudgetWithLease: vi.fn(),
+      cancelWithLease: vi.fn(),
+      timeOutWithLease: vi.fn(),
     };
 
     await expect(
@@ -467,8 +471,8 @@ describe("automation execution adapter", () => {
         resolveBudget: async () => ({ maxTokens: 100 }) as never,
       }),
     ).rejects.toThrow("terminalization exploded");
-    expect(manager.succeed).toHaveBeenCalledOnce();
-    expect(manager.fail).toHaveBeenCalledOnce();
+    expect(manager.succeedWithLease).toHaveBeenCalledOnce();
+    expect(manager.failWithLease).toHaveBeenCalledOnce();
   });
 
   test("classifies exact coded failures without fragile message matching", async () => {

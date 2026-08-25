@@ -9,6 +9,7 @@ import {
 
 import { customModelProvider } from "lib/ai/models";
 
+import type { ActivityEventType } from "app-types/activity";
 import {
   ChatMention,
   ChatMetadata,
@@ -681,8 +682,8 @@ export async function POST(request: Request) {
                   policyAuthority: resolvedPolicy.authority,
                   approvalPolicy,
                   systemPrompt: preparedContext.instructions,
-                  goalRequirement: preparedRun.goalRequirement,
                 },
+                goalRequirement: preparedRun.goalRequirement,
                 allowedTools: Object.keys(vercelAITooles),
                 budget: preparedRun.budget,
               },
@@ -756,72 +757,44 @@ export async function POST(request: Request) {
             updatedAt: new Date(),
           } as any);
         }
-        await Promise.all([
-          indexChatMessage({
-            userId: session.user.id,
-            threadId: thread!.id,
-            message,
-          }),
-          indexChatMessage({
-            userId: session.user.id,
-            threadId: thread!.id,
-            message: responseMessage,
-          }),
-        ]);
-        if (!isAborted && finishReason !== "error")
-          void enqueueMemoryReview({
-            id: `${thread!.id}:${responseMessage.id}`,
-            userId: session.user.id,
-            threadId: thread!.id,
-            workspaceId: workspace?.id,
-            taskId: task?.id,
-            assistantMessageId: responseMessage.id,
-            userMessageId: message.id,
-            agentId: agent?.id,
-          }).catch((error) =>
-            logger.warn("Unable to enqueue memory review", error),
-          );
+        await indexChatMessage({
+          userId: session.user.id,
+          threadId: thread!.id,
+          message,
+        });
         const completedUserText = message.parts
           .filter((part: any) => part.type === "text")
           .map((part: any) => part.text)
           .join(" ")
           .slice(0, 2_000);
-        const chatEventType = delegated
-          ? "chat.completed"
-          : isAborted
-            ? "chat.cancelled"
-            : finishReason === "error"
-              ? "chat.failed"
-              : isChatCorrection(completedUserText)
-                ? "chat.correction"
-                : "chat.completed";
-        void recordActivityEvent(session.user.id, {
-          actorType: agent ? "agent" : "system",
-          actorId: agent?.id,
-          scopeType: task
-            ? "task"
-            : workspace
-              ? "workspace"
-              : agent
-                ? "agent"
-                : "global",
-          scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
-          eventType: chatEventType,
-          subjectType: "thread",
-          subjectId: thread!.id,
-          payload: {
-            userMessageId: message.id,
-            assistantMessageId: responseMessage.id,
-            model: activityModel(chatModel),
-            userText: completedUserText,
-          },
-          requestId,
-          runId,
-          threadId: thread!.id,
-          taskId: task?.id,
-          agentId: agent?.id,
-          idempotencyKey: `${chatEventType}:${responseMessage.id}`,
-        }).catch((error) => logger.warn("Unable to record activity", error));
+        const recordChatTerminal = (chatEventType: ActivityEventType) =>
+          recordActivityEvent(session.user.id, {
+            actorType: agent ? "agent" : "system",
+            actorId: agent?.id,
+            scopeType: task
+              ? "task"
+              : workspace
+                ? "workspace"
+                : agent
+                  ? "agent"
+                  : "global",
+            scopeId: task?.id ?? workspace?.id ?? agent?.id ?? null,
+            eventType: chatEventType,
+            subjectType: "thread",
+            subjectId: thread!.id,
+            payload: {
+              userMessageId: message.id,
+              assistantMessageId: responseMessage.id,
+              model: activityModel(chatModel),
+              userText: completedUserText,
+            },
+            requestId,
+            runId,
+            threadId: thread!.id,
+            taskId: task?.id,
+            agentId: agent?.id,
+            idempotencyKey: `${chatEventType}:${responseMessage.id}`,
+          }).catch((error) => logger.warn("Unable to record activity", error));
         if (delegated) {
           const run = await agentRunRepository.selectById(
             runId,
@@ -829,6 +802,9 @@ export async function POST(request: Request) {
           );
           await harnessStream?.waitForExternal({
             goalRequirement: checkpointGoalRequirement,
+            continuationKind: "delegation",
+            goalRound: 1,
+            maxGoalRounds: 3,
             delegationToolCallIds,
             responseMessages,
             modelMessages: [...checkpointModelMessages, ...responseMessages],
@@ -861,23 +837,97 @@ export async function POST(request: Request) {
             },
             assistantMessageId: responseMessage.id,
           });
-        } else if (isAborted)
+        } else if (isAborted) {
           await harnessStream?.fail({
             error: "Chat stream was aborted",
             errorCode: "ABORTED",
             status: "cancelled",
           });
-        else if (finishReason === "error")
+          void recordChatTerminal("chat.cancelled");
+        } else if (finishReason === "error") {
           await harnessStream?.fail({
             error: streamError ?? "Chat stream finished with an error",
             errorCode: isBudgetExhausted(streamError)
               ? "BUDGET_EXHAUSTED"
               : "STREAM_ERROR",
           });
-        else
-          await harnessStream?.finalize(responseMessage, {
-            assistantMessageId: responseMessage.id,
-          });
+          void recordChatTerminal("chat.failed");
+        } else {
+          const run = await agentRunRepository.selectById(
+            runId,
+            session.user.id,
+          );
+          const finalization = await harnessStream?.finalize(
+            responseMessage,
+            {
+              assistantMessageId: responseMessage.id,
+            },
+            {
+              checkpoint: {
+                goalRequirement: checkpointGoalRequirement,
+                continuationKind: "goal",
+                goalRound: 1,
+                maxGoalRounds: 3,
+                delegationToolCallIds: [],
+                responseMessages,
+                modelMessages: [
+                  ...checkpointModelMessages,
+                  ...responseMessages,
+                ],
+                modelConfig: {
+                  provider: modelConfig.provider,
+                  model: modelConfig.model,
+                },
+                authorizationRecipe: {
+                  userId: session.user.id,
+                  userMessageId: message.id,
+                  threadId: thread!.id,
+                  workspaceId: workspace?.id,
+                  taskId: task?.id,
+                  agentId: agent?.id,
+                  instructions: run?.context.systemPrompt,
+                  toolChoice,
+                  autonomy,
+                  resolvedPolicy: checkpointResolvedPolicy,
+                  allowedMcpServers,
+                  allowedAppDefaultToolkit,
+                  capabilityHints,
+                  routingSnapshot: checkpointPreparationSnapshot.routing,
+                  budgetSnapshot: checkpointPreparationSnapshot.budget,
+                  completionSnapshot: checkpointPreparationSnapshot.completion,
+                  contextSnapshot: checkpointPreparationSnapshot.context,
+                  modelSnapshot: checkpointPreparationSnapshot.model,
+                  driverSnapshot: checkpointPreparationSnapshot.driver,
+                },
+                assistantMessageId: responseMessage.id,
+              },
+            },
+          );
+          if (finalization?.status !== "continued") {
+            await indexChatMessage({
+              userId: session.user.id,
+              threadId: thread!.id,
+              message: responseMessage,
+            });
+            void enqueueMemoryReview({
+              id: `${thread!.id}:${responseMessage.id}`,
+              userId: session.user.id,
+              threadId: thread!.id,
+              workspaceId: workspace?.id,
+              taskId: task?.id,
+              assistantMessageId: responseMessage.id,
+              userMessageId: message.id,
+              agentId: agent?.id,
+            }).catch((error) =>
+              logger.warn("Unable to enqueue memory review", error),
+            );
+            void recordChatTerminal(
+              isChatCorrection(completedUserText)
+                ? "chat.correction"
+                : "chat.completed",
+            );
+          }
+        }
       },
       onError: (error) => {
         streamError = error;

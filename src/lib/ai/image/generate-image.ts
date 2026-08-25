@@ -7,8 +7,9 @@ import {
 import { safe, watchError } from "ts-safe";
 import { getBase64Data } from "lib/file-storage/storage-utils";
 import { serverFileStorage } from "lib/file-storage";
-import { openai } from "@ai-sdk/openai";
-import { xai } from "@ai-sdk/xai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createXai } from "@ai-sdk/xai";
+import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
 
 import { FilePart, ImagePart, ModelMessage, TextPart, generateImage } from "ai";
 import { isString } from "lib/utils";
@@ -32,6 +33,12 @@ export type GeneratedImageResult = {
 export async function generateImageWithOpenAI(
   options: GenerateImageOptions,
 ): Promise<GeneratedImageResult> {
+  const { apiKey, provider } = await resolveConfiguredProviderCredential(
+    "providers.imageProviderId",
+  );
+  if (provider.type !== "openai")
+    throw new Error("Configured image provider must be OpenAI");
+  const openai = createOpenAI({ apiKey, baseURL: provider.baseUrl ?? undefined });
   return generateImage({
     model: openai.image("gpt-image-1-mini"),
     abortSignal: options.abortSignal,
@@ -52,6 +59,12 @@ export async function generateImageWithOpenAI(
 export async function generateImageWithXAI(
   options: GenerateImageOptions,
 ): Promise<GeneratedImageResult> {
+  const { apiKey, provider } = await resolveConfiguredProviderCredential(
+    "providers.imageProviderId",
+  );
+  if (provider.type !== "xai")
+    throw new Error("Configured image provider must be xAI");
+  const xai = createXai({ apiKey, baseURL: provider.baseUrl ?? undefined });
   return generateImage({
     model: xai.image("grok-2-image"),
     abortSignal: options.abortSignal,
@@ -69,10 +82,11 @@ export async function generateImageWithXAI(
 export const generateImageWithNanoBanana = async (
   options: GenerateImageOptions,
 ): Promise<GeneratedImageResult> => {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GOOGLE_GENERATIVE_AI_API_KEY is not set");
-  }
+  const { apiKey, provider } = await resolveConfiguredProviderCredential(
+    "providers.imageProviderId",
+  );
+  if (provider.type !== "google")
+    throw new Error("Configured image provider must be Google");
 
   const ai = new GoogleGenAI({
     apiKey: apiKey,

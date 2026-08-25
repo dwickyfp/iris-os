@@ -19,7 +19,7 @@ implemented.
 [![Self-hostable](https://img.shields.io/badge/Self--hostable-Yes-2563eb)](docs/tips-guides/docker.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[![Deploy with Vercel](https://vercel.com/button)](<https://vercel.com/new/clone?repository-url=https://github.com/dwickyfp/iris-os&env=BETTER_AUTH_SECRET&env=OPENAI_API_KEY&env=GOOGLE_GENERATIVE_AI_API_KEY&env=ANTHROPIC_API_KEY&envDescription=BETTER_AUTH_SECRET+is+required+(enter+any+secret+value).+At+least+one+LLM+provider+API+key+(OpenAI,+Claude,+or+Google)+is+required,+but+you+can+add+all+of+them.+See+the+link+below+for+details.&envLink=https://github.com/dwickyfp/iris-os/blob/main/.env.example&demo-title=Iris+OS&demo-description=The+open+operating+system+for+AI+agents,+tools,+and+workflows.&products=[{"type":"integration","protocol":"storage","productSlug":"neon","integrationSlug":"neon"},{"type":"integration","protocol":"storage","productSlug":"upstash-kv","integrationSlug":"upstash"},{"type":"blob"}]>)
+[![Deploy with Vercel](https://vercel.com/button)](<https://vercel.com/new/clone?repository-url=https://github.com/dwickyfp/iris-os&env=IRIS_ROOT_ENCRYPTION_KEY&envDescription=IRIS_ROOT_ENCRYPTION_KEY+must+be+a+base64-encoded+32-byte+key.&envLink=https://github.com/dwickyfp/iris-os/blob/main/.env.example&demo-title=Iris+OS&demo-description=The+open+operating+system+for+AI+agents,+tools,+and+workflows.&products=[{"type":"integration","protocol":"storage","productSlug":"neon","integrationSlug":"neon"}]>)
 
 ## Implemented Features
 
@@ -305,10 +305,13 @@ tool has the same policy.
 
 ### Credentials and artifacts
 
-- Remote bearer/API-key credentials and resume credentials are encrypted at
-  rest with AES-256-GCM using `REMOTE_AGENT_ENCRYPTION_KEY`.
-- Model-provider settings use the separate
-  `MODEL_SETTINGS_ENCRYPTION_KEY` configuration.
+- Application credentials are encrypted at rest with versioned AES-256-GCM
+  envelopes whose key is derived from `IRIS_ROOT_ENCRYPTION_KEY`. Legacy rows
+  remain readable only when their former key has been imported through
+  `pnpm settings:import-env`.
+- Provider keys, Exa, OAuth secrets, object-storage credentials, Redis, and
+  operations settings are configured in **Admin > Settings**, not environment
+  files.
 - Remote-agent API responses omit encrypted values and expose only
   `hasCredential`.
 - Canonical artifact references contain `artifactId`, `storageKey`, `filename`,
@@ -357,6 +360,8 @@ Authenticated API routes:
 | `POST` | `/api/agent-runs/:id/resume` | Resume an owned input/auth waiting AgentRun with a durable continuation |
 | `DELETE` | `/api/agent-runs/:id` | Request cancellation of the owned AgentRun tree |
 | `POST` | `/api/agent-runs/:id/delegate` | Create a delegated child run; available only when delegation is enabled |
+| `GET` | `/api/run-inbox` | List durable follow-up, steering, and injection items for the authenticated user |
+| `PATCH` | `/api/run-inbox/:id` | Consume or dismiss an owned inbox item |
 
 The direct task endpoints are useful for connection testing. Normal agentic use
 goes through `delegate_agent`, durable child runs, the worker, and the operations
@@ -380,7 +385,7 @@ cd iris-os
 pnpm install
 
 # pnpm install creates .env from .env.example when it does not exist.
-# Set POSTGRES_URL, BETTER_AUTH_SECRET, and at least one provider API key.
+# Set POSTGRES_URL, IRIS_ROOT_ENCRYPTION_KEY, and one provider API key.
 
 # Start the repository's pgvector-enabled PostgreSQL service.
 docker compose -f docker/compose.yml up -d postgres
@@ -421,69 +426,44 @@ Stop the stack with `pnpm docker-compose:down`. See the
 
 Use the deployment button above or follow the
 [Vercel hosting guide](docs/tips-guides/vercel.md). A managed PostgreSQL
-database, authentication secret, and at least one model provider are required.
+database, root encryption key, and at least one model provider are required.
 Background learning, automation, delegation, and A2A polling require a suitable
 long-running Iris worker deployment; the Docker stack includes both workers by
 default.
 
 ## Configuration
 
-[`.env.example`](.env.example) is the source of truth.
-
-| Group | Variables |
-| --- | --- |
-| **Required** | `POSTGRES_URL`, `BETTER_AUTH_SECRET`, and at least one provider API key |
-| **Providers** | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_BASE_URL` |
-| **Tools and MCP** | `EXA_API_KEY`, MCP configuration, OAuth, `NOT_ALLOW_ADD_MCP_SERVERS`, and `MCP_MAX_TOTAL_TIMEOUT` |
-| **Storage** | Vercel Blob or S3-compatible storage settings |
-| **Authentication** | Better Auth URL, sign-up policy, and Google, GitHub, or Microsoft OAuth credentials |
-| **Optional infrastructure** | Redis for features that use shared cache or pub/sub |
-| **Credential encryption** | `MODEL_SETTINGS_ENCRYPTION_KEY`, `REMOTE_AGENT_ENCRYPTION_KEY` |
-| **V2 rollout** | `IRIS_WORKSPACES_V2`, `IRIS_LEARNING_V2`, `IRIS_AUTOMATION_V2`, `IRIS_DELEGATION_V2`, `IRIS_REMOTE_AGENTS_A2A`, `IRIS_MEMORY_CURATOR_MODE`, `IRIS_MEMORY_RECALL_MODE` |
-| **Operations** | `OPERATIONS_METRICS_TOKEN`, `OPERATIONS_READY_TIMEOUT_MS`, `OPERATIONS_QUERY_TIMEOUT_MS`, `IRIS_WORKER_REQUIRED`, `IRIS_WORKER_STALE_AFTER_MS`, `IRIS_WORKER_HEARTBEAT_INTERVAL_MS`, `IRIS_WORKER_MAX_CONSECUTIVE_HEARTBEAT_FAILURES`, `IRIS_WORKER_ID` |
-
-Generate secrets with:
-
-```bash
-npx @better-auth/cli@latest secret
-openssl rand -base64 32  # use separate values for each encryption key
-```
-
-### Feature flags
-
-All boolean V2 flags accept `1` or `true` and default off:
+The application configuration surface is **Admin > Settings**. Values are typed,
+validated, audited, and encrypted when sensitive. The only application bootstrap
+exceptions are:
 
 ```dotenv
-IRIS_WORKSPACES_V2=1
-IRIS_LEARNING_V2=1
-IRIS_AUTOMATION_V2=1
-IRIS_DELEGATION_V2=1
-IRIS_REMOTE_AGENTS_A2A=1
-
-# Keep curation non-mutating until output has been reviewed in your environment.
-IRIS_MEMORY_CURATOR_MODE=shadow
-
-# Memory recall defaults to keyword FTS; set hybrid only when an embedding model is configured.
-IRIS_MEMORY_RECALL_MODE=keyword
-
-# Base64-encoded, independent 32-byte keys.
-MODEL_SETTINGS_ENCRYPTION_KEY=
-REMOTE_AGENT_ENCRYPTION_KEY=
+POSTGRES_URL=postgres://user:password@host:5432/database
+IRIS_ROOT_ENCRYPTION_KEY=<base64-encoded 32-byte key>
 ```
 
-| Flag | Enables | Runtime requirement |
-| --- | --- | --- |
-| `IRIS_WORKSPACES_V2` | Workspace scope, task ledger, and corresponding UI | Web application |
-| `IRIS_LEARNING_V2` | Activity processing, candidates, and learned artifacts | `worker:iris` |
-| `IRIS_AUTOMATION_V2` | Durable schedules, approvals, retries, and run history | `worker:iris` |
-| `IRIS_DELEGATION_V2` | Durable root/child agent runs, local delegation, timeline, resume, and cancellation | Web application + `worker:iris` |
-| `IRIS_REMOTE_AGENTS_A2A` | Remote connection UI/API and A2A peers; effective delegation also requires `IRIS_DELEGATION_V2` | Web application + `worker:iris` |
-| `IRIS_MEMORY_CURATOR_MODE` | `shadow` evaluation or reviewed memory writes | `worker:memory` |
-| `IRIS_MEMORY_RECALL_MODE` | `keyword` FTS-only recall by default; `hybrid` adds optional semantic embeddings | Web application + `worker:memory` |
+Generate the root key once and retain it in secure backups:
+
+```bash
+openssl rand -base64 32
+```
+
+To migrate an existing installation from environment variables, run migrations
+first, keep the old variables available to the one-time importer, then run:
+
+```bash
+pnpm settings:import-env
+```
+
+The importer creates missing settings, never overwrites a value already stored
+in PostgreSQL, imports legacy encryption keys as encrypted settings for old
+ciphertext reads, and can create/activate the first S3-compatible profile. It
+prints dispositions only; it does not print secret values.
 
 ## Migrations and Workers
 
-The latest checked-in migration is `0063_drop_sandbox_subsystem.sql`. Application
+The latest checked-in migration is `0069_durable_jobs.sql`.
+Application
 startup, worker startup, Docker startup, and package installation do not run
 migrations. Apply migrations explicitly as a deployment job, with a dedicated
 migration role, before starting or replacing web and worker processes:
@@ -500,6 +480,10 @@ trajectory sequence allocation added by `0048`, runtime budget states added by
 `0049`, root trajectory identity added by `0051`, durable root-run aggregate
 authority added by `0061`, automation authority snapshots added by `0062`, and
 removal of the retired sandbox subsystem tables and columns by `0063`. Treat the
+reservation-constraint compatibility repair in `0064` as mandatory for databases
+that may already have applied the initial `0063`, durable Intelligence Harness
+goal continuation state added by `0065`, and steering/revision authority added
+by `0066`. Treat the
 complete checked-in migration set, not an older numeric range, as the release
 unit.
 
@@ -749,9 +733,9 @@ not a future-feature list:
 - Repository tests and local evidence cannot establish production capacity,
   external-provider reliability, secret configuration, disaster recovery,
   network policy, or the security posture of an operator’s MCP/A2A peers.
-- The checked-in Linux/gVisor workflow has no retained successful run evidence in
-  the repository. Do not infer gVisor host validation from source or static
-  Compose checks.
+- The retired server-side sandbox and Linux/gVisor workflow are not shipped. The
+  preserved browser code runner and MCP App iframe do not provide server-side
+  workload isolation.
 
 ### Production gates
 

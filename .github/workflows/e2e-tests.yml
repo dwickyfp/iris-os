@@ -16,20 +16,12 @@ jobs:
       POSTGRES_URL: postgresql://testuser:testpass@localhost:5432/better_chatbot_test
 
       # Authentication
-      BETTER_AUTH_SECRET: test-secret-key-for-ci-only-not-for-production-use
+      IRIS_ROOT_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       BETTER_AUTH_URL: http://localhost:3000
 
       # Application
       NEXT_PUBLIC_BASE_URL: http://localhost:3000
-
-      # LLM Provider (OpenRouter with free models)
-      OPENROUTER_API_KEY: ${{ secrets.E2E_OPENROUTER_API_KEY || 'test-key' }}
       E2E_DEFAULT_MODEL: openRouter/gemini-2.0-flash-exp:free
-
-      # Feature flags
-      DISABLE_SIGN_UP: 0
-      DISABLE_EMAIL_SIGN_IN: 0
-      FILE_BASED_MCP_CONFIG: false
 
     services:
       postgres:

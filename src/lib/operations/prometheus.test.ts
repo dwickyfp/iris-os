@@ -34,6 +34,9 @@ describe("Prometheus rendering", () => {
       capabilityHealth: { healthy: 4, degraded: 1 },
       a2a: { agents: { active: 1 }, delegations: { running: 1 } },
       parentJoins: { pending: 1, completed: 2 },
+      intelligence: { "goal.round_started": 2 },
+      jobs: { queued: 1 },
+      runInbox: { open: 1 },
       workers: { active: 1, stale: 0, oldestHeartbeatAgeSeconds: 2 },
       pgBoss: { installed: true, jobs: { created: 5 } },
     } satisfies OperationsSnapshot);
@@ -84,6 +87,9 @@ describe("Prometheus rendering", () => {
       capabilityHealth: {},
       a2a: { agents: {}, delegations: {} },
       parentJoins: { pending: 0, completed: 0 },
+      intelligence: {},
+      jobs: {},
+      runInbox: {},
       workers: { active: 0, stale: 0, oldestHeartbeatAgeSeconds: null },
       pgBoss: { installed: false, jobs: {} },
     } satisfies OperationsSnapshot;

@@ -199,6 +199,32 @@ export const pgWorkflowRepository: WorkflowRepository = {
   },
   async saveStructure({ workflowId, nodes, edges, deleteNodes, deleteEdges }) {
     await pgDb.transaction(async (tx) => {
+      const nodeIds = nodes?.map(({ id }) => id) ?? [];
+      if (nodeIds.length) {
+        const foreignNodes = await tx
+          .select({ id: WorkflowNodeDataTable.id })
+          .from(WorkflowNodeDataTable)
+          .where(
+            and(
+              inArray(WorkflowNodeDataTable.id, nodeIds),
+              not(eq(WorkflowNodeDataTable.workflowId, workflowId)),
+            ),
+          );
+        if (foreignNodes.length) throw new Error("WORKFLOW_NODE_ID_CONFLICT");
+      }
+      const edgeIds = edges?.map(({ id }) => id) ?? [];
+      if (edgeIds.length) {
+        const foreignEdges = await tx
+          .select({ id: WorkflowEdgeTable.id })
+          .from(WorkflowEdgeTable)
+          .where(
+            and(
+              inArray(WorkflowEdgeTable.id, edgeIds),
+              not(eq(WorkflowEdgeTable.workflowId, workflowId)),
+            ),
+          );
+        if (foreignEdges.length) throw new Error("WORKFLOW_EDGE_ID_CONFLICT");
+      }
       const deletePromises: Promise<any>[] = [];
       if (deleteNodes?.length) {
         const deleteNodePromises = tx
@@ -274,10 +300,16 @@ export const pgWorkflowRepository: WorkflowRepository = {
       .from(WorkflowEdgeTable)
       .where(eq(WorkflowEdgeTable.workflowId, id));
     const [nodes, edges] = await Promise.all([nodePromises, edgePromises]);
+    const executableEdges = opt?.ignoreNote
+      ? edges.filter((edge) => {
+          const nodeIds = new Set(nodes.map((node) => node.id));
+          return nodeIds.has(edge.source) && nodeIds.has(edge.target);
+        })
+      : edges;
     return {
       ...(workflow as DBWorkflow),
       nodes: nodes as DBNode[],
-      edges: edges as DBEdge[],
+      edges: executableEdges as DBEdge[],
     };
   },
 };

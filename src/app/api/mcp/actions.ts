@@ -1,6 +1,7 @@
 "use server";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 import { z } from "zod";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
 
 import { McpServerTable } from "lib/db/pg/schema.pg";
 import { mcpOAuthRepository, mcpRepository } from "lib/db/repository";
@@ -57,7 +58,7 @@ export async function selectMcpClientAction(id: string) {
 export async function saveMcpClientAction(
   server: typeof McpServerTable.$inferInsert,
 ) {
-  if (process.env.NOT_ALLOW_ADD_MCP_SERVERS) {
+  if (runtimeSystemSetting("mcp.allowUserServers") !== true) {
     throw new Error("Not allowed to add MCP servers");
   }
 

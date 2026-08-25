@@ -1,6 +1,6 @@
 import type { ModelMessage, UIMessage } from "ai";
-import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { RuntimeToolMode } from "../agent/runtime-context";
+import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { RunPreparationSnapshot } from "../runtime/run-preparer";
 import type { ClaimedParentRun, ParentRunCheckpoint } from "./types";
 
@@ -14,13 +14,20 @@ export type ParentResumeGeneration = {
   signal: AbortSignal;
   assertActive(): void;
   fail(error: unknown): Promise<unknown>;
-  finalize(result: Record<string, unknown>, value?: unknown): Promise<unknown>;
+  finalize(
+    result: Record<string, unknown>,
+    value?: unknown,
+    checkpoint?: ParentRunCheckpoint,
+  ): Promise<unknown>;
   checkpoint(checkpoint: ParentRunCheckpoint): Promise<unknown>;
 };
 
 export type ParentResumeExecutorDependencies = {
   claim(parentRunId: string): Promise<ClaimedParentRun | null>;
-  resolve(claimed: ClaimedParentRun, messages: ModelMessage[]): Promise<{
+  resolve(
+    claimed: ClaimedParentRun,
+    messages: ModelMessage[],
+  ): Promise<{
     preparationSnapshot?: RunPreparationSnapshot;
     generate(messages: ModelMessage[]): Promise<ParentResumeGeneration>;
   }>;
@@ -29,6 +36,12 @@ export type ParentResumeExecutorDependencies = {
     messageId: string;
     parts: UIMessage["parts"];
     modelConfig: Record<string, unknown>;
+  }): Promise<void>;
+  complete?(input: {
+    claimed: ClaimedParentRun;
+    threadId: string;
+    messageId: string;
+    parts: UIMessage["parts"];
   }): Promise<void>;
   fail(claimed: ClaimedParentRun, error: unknown): Promise<void>;
 };
@@ -120,7 +133,8 @@ export function successfulDelegationToolCallIds(
 ) {
   const calls = new Set<string>();
   for (const message of messages) {
-    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    if (message.role !== "assistant" || !Array.isArray(message.content))
+      continue;
     for (const part of message.content as any[]) {
       if (
         part.type === "tool-call" &&
@@ -134,7 +148,8 @@ export function successfulDelegationToolCallIds(
   for (const message of messages) {
     if (message.role !== "tool" || !Array.isArray(message.content)) continue;
     for (const part of message.content as any[]) {
-      const value = part.output?.type === "json" ? part.output.value : part.output;
+      const value =
+        part.output?.type === "json" ? part.output.value : part.output;
       if (
         part.type === "tool-result" &&
         part.toolName === "delegate_agent" &&
@@ -176,10 +191,13 @@ export function createParentResumeExecutor(
       const recipe = claimed.checkpoint.authorizationRecipe;
       const threadId = String(recipe.threadId ?? "");
       if (!threadId) throw new Error("PARENT_RESUME_THREAD_REQUIRED");
+      const assistantMessageId = claimed.checkpoint.assistantMessageId;
+      if (!assistantMessageId)
+        throw new Error("PARENT_RESUME_ASSISTANT_MESSAGE_REQUIRED");
       generated.assertActive();
       await dependencies.saveAssistant({
         threadId,
-        messageId: claimed.checkpoint.assistantMessageId,
+        messageId: assistantMessageId,
         parts: responseMessagesToUIParts(responseMessages),
         modelConfig: claimed.checkpoint.modelConfig,
       });
@@ -188,9 +206,11 @@ export function createParentResumeExecutor(
         generated.responseMessages,
       );
       if (delegationToolCallIds.length) {
-        terminalAttempted = true;
         await generated.checkpoint({
           goalRequirement: claimed.checkpoint.goalRequirement,
+          continuationKind: "delegation",
+          goalRound: claimed.checkpoint.goalRound ?? 1,
+          maxGoalRounds: claimed.checkpoint.maxGoalRounds ?? 3,
           delegationToolCallIds,
           responseMessages,
           modelMessages: [...messages, ...generated.responseMessages],
@@ -211,18 +231,56 @@ export function createParentResumeExecutor(
             driverSnapshot:
               runtime.preparationSnapshot?.driver ?? recipe.driverSnapshot,
           },
-          assistantMessageId: claimed.checkpoint.assistantMessageId,
+          assistantMessageId,
         });
+        terminalAttempted = true;
         return;
       }
-      terminalAttempted = true;
-      await generated.finalize(
+      const finalization = await generated.finalize(
         {
-          assistantMessageId: claimed.checkpoint.assistantMessageId,
+          assistantMessageId,
           totalTokens: generated.usage?.totalTokens,
         },
         responseMessages,
+        {
+          continuationKind: "goal",
+          goalRound: claimed.checkpoint.goalRound ?? 1,
+          maxGoalRounds: claimed.checkpoint.maxGoalRounds ?? 3,
+          delegationToolCallIds: [],
+          responseMessages,
+          modelMessages: [...messages, ...generated.responseMessages],
+          modelConfig: claimed.checkpoint.modelConfig,
+          authorizationRecipe: {
+            ...recipe,
+            routingSnapshot:
+              runtime.preparationSnapshot?.routing ?? recipe.routingSnapshot,
+            budgetSnapshot:
+              runtime.preparationSnapshot?.budget ?? recipe.budgetSnapshot,
+            completionSnapshot:
+              runtime.preparationSnapshot?.completion ??
+              recipe.completionSnapshot,
+            contextSnapshot:
+              runtime.preparationSnapshot?.context ?? recipe.contextSnapshot,
+            modelSnapshot:
+              runtime.preparationSnapshot?.model ?? recipe.modelSnapshot,
+            driverSnapshot:
+              runtime.preparationSnapshot?.driver ?? recipe.driverSnapshot,
+          },
+          assistantMessageId,
+        },
       );
+      terminalAttempted = true;
+      if (
+        !(finalization as { status?: string } | undefined)?.status?.includes(
+          "continued",
+        )
+      )
+        await dependencies.complete?.({
+          claimed,
+          threadId,
+          messageId: assistantMessageId,
+          parts: responseMessagesToUIParts(responseMessages),
+        });
     } catch (error) {
       if (!terminalAttempted) {
         if (generated) await generated.fail(error);

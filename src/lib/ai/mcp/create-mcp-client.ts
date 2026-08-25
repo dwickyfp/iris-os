@@ -1,33 +1,32 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
-  type MCPServerInfo,
   MCPRemoteConfigZodSchema,
-  MCPStdioConfigZodSchema,
   type MCPServerConfig,
+  type MCPServerInfo,
+  MCPStdioConfigZodSchema,
   type MCPToolInfo,
 } from "app-types/mcp";
-
-import { isMaybeRemoteConfig, isMaybeStdioConfig } from "./is-mcp-config";
-import logger from "logger";
 import type { ConsolaInstance } from "consola";
 import { colorize } from "consola/utils";
 import {
+  Locker,
   createDebounce,
   errorToString,
   generateUUID,
   isNull,
-  Locker,
   withTimeout,
 } from "lib/utils";
+import logger from "logger";
+import { isMaybeRemoteConfig, isMaybeStdioConfig } from "./is-mcp-config";
 
-import { safe } from "ts-safe";
-import { BASE_URL, IS_MCP_SERVER_REMOTE_ONLY, IS_VERCEL_ENV } from "lib/const";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { PgOAuthClientProvider } from "./pg-oauth-provider";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { BASE_URL, IS_MCP_SERVER_REMOTE_ONLY, IS_VERCEL_ENV } from "lib/const";
+import { safe } from "ts-safe";
+import { PgOAuthClientProvider } from "./pg-oauth-provider";
 
 type ClientOptions = {
   autoDisconnectSeconds?: number;
@@ -37,9 +36,40 @@ type ClientOptions = {
 };
 
 const CONNET_TIMEOUT = IS_VERCEL_ENV ? 30000 : 120000;
-const MCP_MAX_TOTAL_TIMEOUT = process.env.MCP_MAX_TOTAL_TIMEOUT
-  ? parseInt(process.env.MCP_MAX_TOTAL_TIMEOUT, 10)
-  : undefined;
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
+
+const mcpMaxTotalTimeout = () => {
+  const value = runtimeSystemSetting("mcp.maxTotalTimeoutMs");
+  return typeof value === "number" ? value : undefined;
+};
+
+const MCP_STDIO_INHERITED_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+] as const;
+
+function createStdioEnvironment(
+  configuredEnv?: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of MCP_STDIO_INHERITED_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...configuredEnv };
+}
 
 /**
  * Client class for Model Context Protocol (MCP) server connections
@@ -215,22 +245,13 @@ export class MCPClient {
         this.transport = new StdioClientTransport({
           command: config.command,
           args: config.args,
-          // Merge process.env with config.env, ensuring PATH is preserved and filtering out undefined values
-          env: Object.entries({ ...process.env, ...config.env }).reduce(
-            (acc, [key, value]) => {
-              if (value !== undefined) {
-                acc[key] = value;
-              }
-              return acc;
-            },
-            {} as Record<string, string>,
-          ),
+          env: createStdioEnvironment(config.env),
           cwd: process.cwd(),
         });
 
         await withTimeout(
           client.connect(this.transport, {
-            maxTotalTimeout: MCP_MAX_TOTAL_TIMEOUT,
+            maxTotalTimeout: mcpMaxTotalTimeout(),
           }),
           CONNET_TIMEOUT,
         );
@@ -248,7 +269,7 @@ export class MCPClient {
           });
           await withTimeout(
             client.connect(this.transport, {
-              maxTotalTimeout: MCP_MAX_TOTAL_TIMEOUT,
+              maxTotalTimeout: mcpMaxTotalTimeout(),
             }),
             CONNET_TIMEOUT,
           );
@@ -280,7 +301,7 @@ export class MCPClient {
             try {
               await withTimeout(
                 client.connect(this.transport, {
-                  maxTotalTimeout: MCP_MAX_TOTAL_TIMEOUT,
+                  maxTotalTimeout: mcpMaxTotalTimeout(),
                 }),
                 CONNET_TIMEOUT,
               );

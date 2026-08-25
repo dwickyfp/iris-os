@@ -199,7 +199,7 @@ try {
     POSTGRES_URL: postgresUrl,
     NEXT_PUBLIC_BASE_URL: baseURL,
     BETTER_AUTH_URL: baseURL,
-    BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
+    IRIS_ROOT_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
     OPERATIONS_METRICS_TOKEN: randomBytes(32).toString("hex"),
     PLAYWRIGHT_BROWSERS_PATH: playwrightBrowsersPath(process.env.HOME),
     NO_HTTPS: "1",

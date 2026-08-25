@@ -3,6 +3,7 @@ import { IS_VERCEL_ENV } from "lib/const";
 import { getTranslations } from "next-intl/server";
 import { getSession } from "auth/server";
 import { redirect } from "next/navigation";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
 
 // Force dynamic rendering to avoid static generation issues with session
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export default async function Page() {
     return redirect("/login");
   }
 
-  const isAddingDisabled = process.env.NOT_ALLOW_ADD_MCP_SERVERS;
+  const isAddingDisabled = !runtimeSystemSetting("mcp.allowUserServers");
 
   const t = await getTranslations("Info");
   let message: string | undefined;

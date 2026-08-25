@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { RunInboxDashboard } from "@/components/os/run-inbox-dashboard";
 
 export default function OsDashboardPage() {
-  redirect("/");
+  return <RunInboxDashboard />;
 }

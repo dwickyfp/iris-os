@@ -1,6 +1,8 @@
 # S3 Storage Setup
 
-This app supports S3 for file uploads (dev/prod). Development can rely on presigned PUTs directly from the browser, while production should keep the bucket private and serve via CDN (CloudFront + Origin Access Control) or signed GET URLs.
+S3-compatible buckets are configured in **Admin > Settings**, not environment
+variables. See [file storage](../tips-guides/file-storage.md) for the operator
+workflow.
 
 ## Buckets
 - Pick a region (e.g., `us-east-2`)
@@ -36,26 +38,16 @@ Least privilege for app role/user:
 - Actions: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:HeadObject`
 - Resources: `arn:aws:s3:::<bucket-name>/uploads/*`
 
-## Env configuration
-- Dev/local:
-  - `FILE_STORAGE_TYPE=s3`
-  - `FILE_STORAGE_PREFIX=uploads`
-  - `FILE_STORAGE_S3_BUCKET=iris-os-dev`
-  - `FILE_STORAGE_S3_REGION=us-east-2` (or set `AWS_REGION`)
-  - Use AWS SSO/profile or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-- Prod:
-  - `FILE_STORAGE_S3_BUCKET=iris-os-prod`
-  - Prefer CloudFront; set `FILE_STORAGE_S3_PUBLIC_BASE_URL=https://<cdn-domain>`
+## Credentials
 
-## Verify locally
-- Ensure `aws sso login --profile <your_profile>` (or credentials are already available).
-- Test presign script:
-```
-AWS_PROFILE=<your_profile> \
-FILE_STORAGE_TYPE=s3 \
-FILE_STORAGE_S3_BUCKET=iris-os-dev \
-FILE_STORAGE_S3_REGION=us-east-2 \
-pnpm tsx scripts/verify-s3-upload-url.ts
-```
-- You should get `{ directUploadSupported: true, url, key, method: PUT }`.
-- Upload with curl (optional): `curl -X PUT -H "Content-Type: image/png" --data-binary @file.png "<url>"`.
+Enter a least-privileged access key pair in Admin > Settings. It needs
+`s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, and `s3:HeadObject` on the
+configured prefix. For AWS workloads where workload identity is available,
+prefer a runtime role over long-lived static keys; this application currently
+activates explicit profiles for portable self-hosted and MinIO deployments.
+
+## Verification
+
+Use **Test** on the storage profile. The probe performs put, head, get,
+byte comparison, and delete against the configured bucket. Activation is a
+separate explicit action and does not run automatically after a successful test.

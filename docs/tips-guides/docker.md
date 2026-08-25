@@ -22,8 +22,9 @@ Docker provides a streamlined and efficient method for managing containerized ap
     Run `pnpm initial:env` to generate the `.env` file.  
     Then, enter the API keys only for the LLM providers you plan to use.
 
-    You can generate an authentication secret (`BETTER_AUTH_SECRET`) with the command:  
-    `pnpx auth secret`
+    Generate `IRIS_ROOT_ENCRYPTION_KEY` with `openssl rand -base64 32` and
+    keep it stable. Authentication derives its own purpose-specific secret from
+    this root key.
 
     For the database, Docker will handle all necessary configuration automatically,  
     so the default `docker/.env` file is sufficient.

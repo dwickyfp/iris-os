@@ -23,4 +23,13 @@ describe("iris worker maintenance", () => {
     expect(source).toContain("clearInterval(artifactCleanupReaper)");
     expect(source).toContain(".reapCleanup()");
   });
+
+  test("registers the durable job worker", async () => {
+    const source = await readFile(
+      new URL("./iris-worker.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("registerDurableJobWorkers(boss, workerId)");
+  });
 });

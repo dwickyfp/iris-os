@@ -1,6 +1,7 @@
 import type { ActivityEventInput } from "app-types/activity";
 import type { StartRunInput } from "../runs/types";
 import type { ParentRunCheckpoint } from "../runs/types";
+import type { RunBudget } from "./budget";
 import type {
   ContextDiagnostics,
   ContextProvenance,
@@ -12,7 +13,6 @@ import type {
   PolicyDecision,
 } from "./policy-engine";
 import type { CompletionRequirement, VerificationResult } from "./verification";
-import type { RunBudget } from "./budget";
 
 export type HarnessIdentity = {
   userId: string;
@@ -70,8 +70,13 @@ export type HarnessFailure = {
 };
 
 export type HarnessFinalization = {
+  status?: "succeeded" | "continued";
   result?: Record<string, unknown>;
   verification?: VerificationResult[];
+};
+
+export type GoalContinuationOptions = {
+  checkpoint: ParentRunCheckpoint;
 };
 
 export type HarnessStreamResult<Native> = {
@@ -80,6 +85,7 @@ export type HarnessStreamResult<Native> = {
   finalize(
     value?: unknown,
     result?: Record<string, unknown>,
+    options?: GoalContinuationOptions,
   ): Promise<HarnessFinalization>;
   fail(failure: HarnessFailure | unknown): Promise<void>;
   waitForExternal(checkpoint: ParentRunCheckpoint): Promise<void>;

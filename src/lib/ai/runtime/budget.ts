@@ -94,10 +94,19 @@ export class BudgetGuard {
   }
   beforeTool() {
     this.assert("maxToolCalls", 1, "toolCalls");
-    this.assert("maxParallel", 1, "parallel");
+    this.assertParallel();
     this.current.toolCalls++;
     this.active++;
     this.current.parallel = Math.max(this.current.parallel, this.active);
+  }
+  private assertParallel() {
+    if (
+      this.budget.maxParallel !== undefined &&
+      this.active + 1 > this.budget.maxParallel
+    )
+      throw new BudgetExhaustedError("maxParallel", this.usage);
+    this.parent?.assertParallel();
+    this.assertDuration();
   }
   afterTool() {
     this.active = Math.max(0, this.active - 1);

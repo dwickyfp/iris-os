@@ -1,7 +1,7 @@
 import type { AgentRunTable, DelegationRunTable } from "lib/db/pg/schema.pg";
-import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { RuntimeToolMode } from "../agent/runtime-context";
 import type { RunBudget } from "../runtime/budget";
+import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { NormalizedGoalRequirement } from "../runtime/goal-requirement-resolver";
 import type { RunPreparationSnapshot } from "../runtime/run-preparer";
 
@@ -30,6 +30,7 @@ export type StartRunInput = {
   depth?: number;
   tokenBudget?: number;
   budget?: RunBudget;
+  goalRequirement?: NormalizedGoalRequirement;
 };
 
 export type QueueDelegatedRunInput = {
@@ -55,7 +56,12 @@ export type QueueDelegatedRunInput = {
 };
 
 export type ParentRunCheckpoint = {
+  /** Legacy checkpoint compatibility; new reads use AgentRun.goalRequirement. */
   goalRequirement?: NormalizedGoalRequirement;
+  continuationKind?: "delegation" | "goal";
+  goalRound?: number;
+  maxGoalRounds?: number;
+  verificationFeedback?: Record<string, unknown>;
   delegationToolCallIds: string[];
   responseMessages: unknown[];
   modelMessages: unknown[];
@@ -71,7 +77,7 @@ export type ParentRunCheckpoint = {
     modelSnapshot?: RunPreparationSnapshot["model"];
     driverSnapshot?: RunPreparationSnapshot["driver"];
   };
-  assistantMessageId: string;
+  assistantMessageId?: string;
 };
 
 export type ClaimedParentRun = {

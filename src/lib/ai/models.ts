@@ -284,9 +284,9 @@ export async function getSystemModelEngineSettings() {
   }));
 }
 
-function createLanguageModel(config: ConfiguredModel): LanguageModel {
+async function createLanguageModel(config: ConfiguredModel): Promise<LanguageModel> {
   const apiKey = config.encryptedApiKey
-    ? decryptSecret(config.encryptedApiKey)
+    ? await decryptSecret(config.encryptedApiKey)
     : undefined;
   const options = {
     apiKey,
@@ -331,9 +331,9 @@ function createLanguageModel(config: ConfiguredModel): LanguageModel {
   }
 }
 
-function createEmbeddingModel(config: ConfiguredModel): EmbeddingModel {
+async function createEmbeddingModel(config: ConfiguredModel): Promise<EmbeddingModel> {
   const apiKey = config.encryptedApiKey
-    ? decryptSecret(config.encryptedApiKey)
+    ? await decryptSecret(config.encryptedApiKey)
     : undefined;
   const options = {
     apiKey,
@@ -381,7 +381,7 @@ export const customModelProvider = {
     const config = await getEmbeddingModelConfiguration();
     if (!config) return undefined;
     return {
-      model: createEmbeddingModel(config),
+      model: await createEmbeddingModel(config),
       modelId: config.apiModelId,
       dimensions: config.embeddingDimensions,
     };

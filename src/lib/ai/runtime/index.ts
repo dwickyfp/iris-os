@@ -8,6 +8,7 @@ export type {
   HarnessEventRecorder,
   HarnessFailure,
   HarnessFinalization,
+  GoalContinuationOptions,
   HarnessIdentity,
   HarnessOrchestration,
   HarnessRunSpec,
@@ -36,6 +37,8 @@ export {
   capabilityResultVerifier,
   toolResultVerifier,
   nonEmptyStructuredOutput,
+  isRecoverableVerificationFailure,
+  VerificationRequiredError,
 } from "./verification";
 export {
   ArtifactRequirement,
@@ -77,3 +80,108 @@ export type {
   ActivityDatabase,
   EventRecorderDependencies,
 } from "./event-recorder";
+export {
+  CapabilityInvocationError,
+  createCapabilityInvoker,
+  evaluateCapabilityPolicy,
+} from "./capability-invoker";
+export type {
+  CapabilityInvocation,
+  CapabilityInvocationEvent,
+  CapabilityInvocationResult,
+  CapabilityInvokerOptions,
+  CapabilityPolicyResolver,
+  DurableCapabilityBudget,
+} from "./capability-invoker";
+export {
+  ContextPressureManager,
+  estimateContextTokens,
+  retryContextOverflow,
+} from "./context-pressure";
+export type {
+  ContextOverflowRecoveryAction,
+  ContextOverflowRecoveryInput,
+  ContextPressureAction,
+  ContextPressureCategories,
+  ContextPressureComponent,
+  ContextPressureContext,
+  ContextPressureDiagnostics,
+  ContextPressureInput,
+  ContextPressureManagerOptions,
+  ContextPressureResult,
+} from "./context-pressure";
+export { ResultSurfaceManager } from "./result-surface";
+export type {
+  ResultOwnership,
+  ResultProvenance,
+  ResultRef,
+  ResultSource,
+  ResultStoreLocation,
+  ResultSurface,
+  ResultSurfaceManagerOptions,
+  ResultSurfaceMode,
+  ResultSurfaceStore,
+  ResultSurfaceThresholds,
+  ResultThreshold,
+  ResultTrust,
+  StructuredJsonSample,
+  StructuredResultSummary,
+} from "./result-surface";
+export {
+  CapabilityScheduler,
+  CapabilitySchedulerSession,
+} from "./capability-scheduler";
+export type {
+  CapabilityConcurrency,
+  CapabilityScheduleMetadata,
+  CapabilityScheduleOptions,
+  CapabilityScheduleRequest,
+  CapabilityScheduleResult,
+  CapabilitySchedulerAdmission,
+} from "./capability-scheduler";
+export {
+  fingerprintStrategyAttempt,
+  stableHash,
+  stableNormalize,
+  StrategyGuard,
+  strategyGuard,
+} from "./strategy-guard";
+export {
+  executeCapabilityOrchestrationPlan,
+  parseCapabilityOrchestrationPlan,
+} from "./orchestration-plan";
+export type {
+  CapabilityOrchestrationPlan,
+  OrchestrationPlanCall,
+  OrchestrationPlanCallResult,
+  OrchestrationPlanStep,
+} from "./orchestration-plan";
+export {
+  aggregateIntelligenceEvalMetrics,
+  compareIntelligenceEvalRuns,
+  evaluateIntelligenceScenarios,
+  measureIntelligenceEvalRun,
+} from "./intelligence-eval";
+export type {
+  IntelligenceEvalMetrics,
+  IntelligenceEvalReport,
+  IntelligenceEvalRun,
+  IntelligenceEvalScenario,
+} from "./intelligence-eval";
+export {
+  aggregateIntelligenceTelemetry,
+  projectIntelligenceMetrics,
+} from "./intelligence-telemetry";
+export type {
+  IntelligenceMetric,
+  IntelligenceTelemetryAggregate,
+  IntelligenceTelemetryObservation,
+} from "./intelligence-telemetry";
+export type {
+  StrategyGuardAttempt,
+  StrategyGuardDecision,
+  StrategyGuardFingerprint,
+  StrategyGuardInput,
+  StrategyGuardLevel,
+  StrategyGuardReason,
+} from "./strategy-guard";

@@ -1,21 +1,24 @@
 import "load-env";
 import { hostname } from "node:os";
-import { isV2FeatureEnabled } from "lib/feature-flags";
 import { ArtifactService } from "lib/ai/artifacts";
 import { serverBudgetAuthority } from "lib/ai/runtime/server-budget-authority";
-import { parseOperationsConfig } from "lib/operations/config";
-import { startWorkerHeartbeat } from "lib/operations/heartbeat";
 import { artifactRepository } from "lib/db/repository";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 import { serverFileStorage } from "lib/file-storage";
+import { loadOperationsConfig } from "lib/operations/config";
+import { startWorkerHeartbeat } from "lib/operations/heartbeat";
+import { startRuntimeSystemSettingsRefresh } from "lib/system-settings/runtime";
 import PgBoss from "pg-boss";
 import packageJson from "../package.json" with { type: "json" };
 import { registerActivityWorkers } from "./workers/activity-worker";
 import { registerAutomationWorkers } from "./workers/automation-worker";
 import { registerDelegationWorkers } from "./workers/delegation-worker";
+import { registerDurableJobWorkers } from "./workers/durable-job-worker";
 import { registerLearningWorkers } from "./workers/learning-worker";
 import { registerParentResumeWorkers } from "./workers/parent-resume-worker";
 
-const config = parseOperationsConfig(process.env);
+await startRuntimeSystemSettingsRefresh();
+const config = await loadOperationsConfig();
 const workerId =
   config.IRIS_WORKER_ID ??
   `${hostname()}:${process.pid}:${crypto.randomUUID()}`;
@@ -23,6 +26,7 @@ const workerId =
 const boss = new PgBoss({ connectionString: config.POSTGRES_URL });
 await boss.start();
 const artifacts = new ArtifactService(serverFileStorage, artifactRepository);
+await registerDurableJobWorkers(boss, workerId);
 await serverBudgetAuthority.reconcileExpiredReservations();
 if (isV2FeatureEnabled("learning")) {
   await registerActivityWorkers(boss);

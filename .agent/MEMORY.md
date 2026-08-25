@@ -26,8 +26,25 @@ skills, visual workflows, voice, file storage, and persistent user memory.
 - The server-side sandbox subsystem (SandboxManager, Docker/gVisor runner,
   `python_compute`/`sandbox_exec` tools, and workflow compute nodes) was fully
   removed; migration `0063_drop_sandbox_subsystem.sql` drops its tables and
-  budget columns. Client-side JS/Python execution and the shared
+  budget columns only after provider inventory and execution settlement are
+  acknowledged as drained. Retired or unknown workflow node kinds fail closed;
+  historical `python_compute` results remain read-only. Client-side JS/Python
+  execution and the shared
   `ArtifactService` (with worker-driven cleanup reaping) remain.
+- Intelligence Harness extends the existing AgentRun checkpoint/resume path:
+  migration 0065 persists canonical goal requirements and bounded goal rounds;
+  0066 adds root goal revision authority and durable RunInbox attention state.
+  Strategy, result-surface, scheduler, context-pressure, composition, jobs,
+  projection, telemetry, and evaluation remain domain-neutral primitives and do
+  not create a parallel runtime or restore arbitrary code execution.
+- Application configuration now lives in Admin > Settings and encrypted
+  PostgreSQL tables. Only `POSTGRES_URL`, `IRIS_ROOT_ENCRYPTION_KEY`, process
+  platform values, and external tooling inputs remain environment-owned.
+  S3-compatible object storage uses immutable database profiles with encrypted
+  credentials, profile-aware artifacts/cleanup, owner-scoped uploads, and an
+  explicit activation/test workflow. Durable jobs use bounded targets,
+  at-most-once orchestration, lease fencing, revision guards, and a completion
+  outbox.
 
 ## Stable constraints
 

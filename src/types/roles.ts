@@ -7,13 +7,7 @@ export type UserRoleNames = (typeof USER_ROLES)[keyof typeof USER_ROLES];
 
 // Default user role is "editor" which matches the current user capabilities
 
-export const DEFAULT_USER_ROLE: UserRoleNames =
-  process.env.DEFAULT_USER_ROLE &&
-  Object.values(USER_ROLES).includes(
-    process.env.DEFAULT_USER_ROLE as UserRoleNames,
-  )
-    ? (process.env.DEFAULT_USER_ROLE as UserRoleNames)
-    : USER_ROLES.EDITOR;
+export const DEFAULT_USER_ROLE: UserRoleNames = USER_ROLES.EDITOR;
 
 export type UserRolesInfo = Record<
   UserRoleNames,

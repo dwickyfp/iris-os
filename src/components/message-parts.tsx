@@ -923,6 +923,69 @@ export const ToolMessagePart = memo(
         );
       }
 
+      // Keep completed legacy results readable after retiring server execution.
+      if (toolName === "python_compute" && state === "output-available") {
+        const legacyResult = result as {
+          exitCode?: number;
+          stdout?: string;
+          stderr?: string;
+          durationMs?: number;
+          artifacts?: Array<{
+            artifactId: string;
+            filename: string;
+            size: number;
+            relativePath: string;
+          }>;
+        };
+        const artifacts = legacyResult?.artifacts ?? [];
+        return (
+          <div className="flex flex-col gap-2 rounded-lg border bg-card p-4 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">Legacy Python compute result</span>
+              <Badge variant="outline">
+                exit {legacyResult?.exitCode ?? "?"} ·{" "}
+                {Math.round((legacyResult?.durationMs ?? 0) / 100) / 10}s
+              </Badge>
+            </div>
+            {artifacts.map((artifact) => (
+              <div
+                key={artifact.artifactId}
+                className="flex items-center gap-3 rounded-md bg-muted/50 p-2"
+              >
+                <FileIcon className="size-4 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <a
+                    href={`/api/artifacts/${artifact.artifactId}`}
+                    download={artifact.filename}
+                    className="block truncate font-medium hover:text-primary hover:underline"
+                  >
+                    {artifact.filename}
+                  </a>
+                  <p className="truncate text-muted-foreground">
+                    {artifact.relativePath} · {(artifact.size / 1024).toFixed(1)}
+                    {" KB"}
+                  </p>
+                </div>
+                <Button asChild size="sm" variant="outline">
+                  <a
+                    href={`/api/artifacts/${artifact.artifactId}`}
+                    download={artifact.filename}
+                  >
+                    Download
+                  </a>
+                </Button>
+              </div>
+            ))}
+            {(legacyResult?.stdout || legacyResult?.stderr) && (
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words">
+                {legacyResult.stdout}
+                {legacyResult.stderr}
+              </pre>
+            )}
+          </div>
+        );
+      }
+
       if (state === "output-available") {
         switch (toolName) {
           case DefaultToolName.CreatePieChart:

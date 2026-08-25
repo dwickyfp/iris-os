@@ -7,6 +7,7 @@ export const ArtifactReferenceSchema = z.object({
   mediaType: z.string().min(1),
   size: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  storageProfileId: z.string().uuid().optional(),
 });
 
 export type ArtifactReference = z.infer<typeof ArtifactReferenceSchema>;
@@ -32,6 +33,7 @@ export type ArtifactCleanupRecord = {
   cleanupId: string;
   artifactId?: string;
   storageKey: string;
+  storageProfileId?: string;
   status: "pending" | "processing" | "retrying" | "completed" | "failed";
   attempts: number;
   nextAttemptAt: Date;

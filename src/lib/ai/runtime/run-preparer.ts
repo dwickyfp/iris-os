@@ -1,6 +1,10 @@
 import type { UIMessage } from "ai";
 import type { AgentRuntimeContext } from "../agent/runtime-context";
 import type { RunBudget } from "./budget";
+import {
+  ContextPressureManager,
+  type ContextPressureDiagnostics,
+} from "./context-pressure";
 import type { ContextEngine, ResolvedContext } from "./context-engine";
 import type { ResolvedPolicySnapshot } from "./contracts";
 import {
@@ -21,7 +25,7 @@ export type RunPreparationSnapshot = {
     | "trustBoundaries"
     | "provenance"
     | "diagnostics"
-  >;
+  > & { pressure?: ContextPressureDiagnostics };
   routing?: unknown;
   budget?: RunBudget;
   completion?: unknown;
@@ -94,6 +98,8 @@ export type PreparedRun<Capabilities = unknown, Model = unknown> = {
 
 /** Shared context/budget preparation for foreground, automation, and resume runs. */
 export class RunPreparer<Capabilities = unknown, Model = unknown> {
+  private readonly contextPressure = new ContextPressureManager();
+
   constructor(
     private readonly contextEngine: Pick<ContextEngine, "resolve">,
     private readonly dependencies: RunPreparationDependencies<
@@ -132,6 +138,13 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
       policy,
       capabilities: capabilities?.value,
     });
+    const pressure = this.contextPressure.assess({
+      context,
+      contextWindow: input.contextWindow ?? 12_000,
+      reservedOutputTokens: Math.min(4_000, input.contextWindow ?? 12_000),
+    });
+    if (pressure.action === "reject")
+      throw new Error("CONTEXT_PRESSURE_REJECTED");
     const restoredRequirement = input.restore?.completion as
       | Partial<PersistedGoalRequirement>
       | undefined;
@@ -168,6 +181,7 @@ export class RunPreparer<Capabilities = unknown, Model = unknown> {
         ...context.provenance,
       ],
       diagnostics: context.diagnostics,
+      pressure: pressure.diagnostics,
     };
     return {
       context,

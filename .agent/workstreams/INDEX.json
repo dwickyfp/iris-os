@@ -8,11 +8,18 @@
       "updated_at": "2026-08-14T11:26:35.000000+00:00"
     },
     {
-      "id": "sandbox-control-plane",
-      "title": "Sandbox domain and control plane",
+      "id": "sandbox-removal-audit",
+      "title": "Sandbox removal audit remediation",
       "status": "active",
-      "path": ".agent/workstreams/active/sandbox-control-plane",
-      "updated_at": "2026-08-20T00:00:00.000000+00:00"
+      "path": ".agent/workstreams/active/sandbox-removal-audit",
+      "updated_at": "2026-08-24T00:00:00.000000+00:00"
+    },
+    {
+      "id": "intelligence-harness",
+      "title": "Intelligence Harness",
+      "status": "active",
+      "path": ".agent/workstreams/active/intelligence-harness",
+      "updated_at": "2026-08-24T12:00:00.000000+00:00"
     }
   ]
 }

@@ -61,12 +61,17 @@ pnpm docker-compose:down
 curl http://127.0.0.1:3000/api/health/live
 curl http://127.0.0.1:3000/api/health/ready
 
-# Scrape Prometheus metrics (requires OPERATIONS_METRICS_TOKEN)
-curl -H "Authorization: Bearer $OPERATIONS_METRICS_TOKEN" http://127.0.0.1:3000/api/metrics
+# Configure provider keys, OAuth, features, operations, and MinIO/S3 in
+# Admin > Settings after signing in. The minimum bootstrap environment is only
+# POSTGRES_URL and IRIS_ROOT_ENCRYPTION_KEY.
 
-# Minimum required environment
-# POSTGRES_URL, BETTER_AUTH_SECRET, at least one provider API key
-# See .env.example for all variables
+# Scrape Prometheus metrics using the token configured in Admin > Settings
+curl -H "Authorization: Bearer <operations-metrics-token>" \
+  http://127.0.0.1:3000/api/metrics
+
+# One-time migration from an older environment-variable installation
+pnpm db:migrate
+pnpm settings:import-env
 
 # Runtime contract notes
 # Chat and headless Automation use the canonical serverRunPreparer.

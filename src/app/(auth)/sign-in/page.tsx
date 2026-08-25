@@ -1,5 +1,5 @@
 import SignIn from "@/components/auth/sign-in";
-import { getAuthConfig } from "lib/auth/config";
+import { getDatabaseAuthConfig } from "lib/auth/config.server";
 import { getIsFirstUser } from "lib/auth/server";
 
 export default async function SignInPage() {
@@ -8,7 +8,7 @@ export default async function SignInPage() {
     emailAndPasswordEnabled,
     signUpEnabled,
     socialAuthenticationProviders,
-  } = getAuthConfig();
+  } = await getDatabaseAuthConfig();
   const enabledProviders = (
     Object.keys(
       socialAuthenticationProviders,

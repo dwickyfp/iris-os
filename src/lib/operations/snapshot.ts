@@ -49,6 +49,9 @@ const snapshotSchema = z.object({
     pending: z.coerce.number(),
     completed: z.coerce.number(),
   }),
+  intelligence: countMap,
+  jobs: countMap,
+  runInbox: countMap,
   workers: z.object({
     active: z.coerce.number(),
     stale: z.coerce.number(),
@@ -193,6 +196,20 @@ SELECT jsonb_build_object(
     'pending', count(*) FILTER (WHERE completed_at IS NULL),
     'completed', count(*) FILTER (WHERE completed_at IS NOT NULL)
   ) FROM agent_run_join),
+  'intelligence', COALESCE((SELECT jsonb_object_agg(event_type, count) FROM (
+    SELECT event_type, count(*)::int AS count
+    FROM iris_activity_event
+    WHERE event_type LIKE 'goal.%' OR event_type LIKE 'strategy.%'
+       OR event_type LIKE 'scheduler.%' OR event_type LIKE 'result_surface.%'
+       OR event_type LIKE 'context.%' OR event_type LIKE 'composition.%'
+    GROUP BY event_type
+  ) counts), '{}'::jsonb),
+  'jobs', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
+    SELECT status, count(*)::int AS count FROM durable_job GROUP BY status
+  ) counts), '{}'::jsonb),
+  'runInbox', COALESCE((SELECT jsonb_object_agg(status, count) FROM (
+    SELECT status, count(*)::int AS count FROM run_inbox GROUP BY status
+  ) counts), '{}'::jsonb),
   'workers', (SELECT jsonb_build_object(
     'active', count(*) FILTER (WHERE last_heartbeat_at > CURRENT_TIMESTAMP - ($1::int * interval '1 millisecond')),
     'stale', count(*) FILTER (WHERE last_heartbeat_at <= CURRENT_TIMESTAMP - ($1::int * interval '1 millisecond')),

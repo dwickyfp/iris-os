@@ -21,6 +21,7 @@ import globalLogger from "lib/logger";
 import { colorize } from "consola/utils";
 import { getUserPreferences } from "lib/user/server";
 import { ChatMention } from "app-types/chat";
+import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
 
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `OpenAI Realtime API: `),
@@ -28,14 +29,14 @@ const logger = globalLogger.withDefaults({
 
 export async function POST(request: NextRequest) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "OPENAI_API_KEY is not set" }),
-        {
-          status: 500,
-        },
+    const { apiKey, provider } = await resolveConfiguredProviderCredential(
+      "providers.realtimeProviderId",
+    );
+    if (provider.type !== "openai")
+      return Response.json(
+        { error: "Configured realtime provider must be OpenAI" },
+        { status: 400 },
       );
-    }
 
     const session = await getSession();
 
@@ -94,10 +95,14 @@ export async function POST(request: NextRequest) {
 
     const bindingTools = [...openAITools, ...DEFAULT_VOICE_TOOLS];
 
-    const r = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    const endpoint = new URL(
+      "realtime/sessions",
+      `${provider.baseUrl ?? "https://api.openai.com/v1"}/`,
+    );
+    const r = await fetch(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
 

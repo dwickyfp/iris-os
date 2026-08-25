@@ -1,7 +1,15 @@
 import "server-only";
 
 import type { Tool } from "ai";
+import { configureExaSettingsResolver } from "lib/ai/tools/web/web-search";
+import { systemSettingsService } from "lib/system-settings/server";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import type { Agent } from "app-types/agent";
+
+configureExaSettingsResolver(async () => ({
+  apiKey: await systemSettingsService.getSecret("exa.apiKey"),
+  baseUrl: String(await systemSettingsService.getPlain("exa.baseUrl")),
+}));
 import type { CapabilityHints, CapabilityRef } from "app-types/chat";
 import type { VercelAIMcpTool } from "app-types/mcp";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
@@ -203,22 +211,14 @@ function emptySkillsRuntime(): SkillsRuntime {
 
 function capabilityRouterConfig() {
   return {
-    threshold: configuredNumber("CAPABILITY_ROUTER_THRESHOLD", 20),
-    topN: configuredNumber("CAPABILITY_ROUTER_TOP_N", 12),
-    minScore: configuredNumber("CAPABILITY_ROUTER_MIN_SCORE", 0.15),
-    timeoutMs: configuredNumber("CAPABILITY_ROUTER_TIMEOUT_MS", 25),
-    fallbackHardCap: configuredNumber(
-      "CAPABILITY_ROUTER_FALLBACK_HARD_CAP",
-      100,
+    threshold: Number(runtimeSystemSetting("capabilityRouter.threshold")),
+    topN: Number(runtimeSystemSetting("capabilityRouter.topN")),
+    minScore: Number(runtimeSystemSetting("capabilityRouter.minScore")),
+    timeoutMs: Number(runtimeSystemSetting("capabilityRouter.timeoutMs")),
+    fallbackHardCap: Number(
+      runtimeSystemSetting("capabilityRouter.fallbackHardCap"),
     ),
   };
-}
-
-function configuredNumber(name: string, fallback: number) {
-  const value = Number(process.env[name]);
-  return process.env[name] !== undefined && Number.isFinite(value)
-    ? value
-    : fallback;
 }
 
 export async function resolveServerCapabilities(input: {

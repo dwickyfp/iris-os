@@ -19,7 +19,6 @@ const inheritedHarnessVariables = [
 ] as const;
 
 const generatedHarnessVariables = new Set([
-  "BETTER_AUTH_SECRET",
   "BETTER_AUTH_URL",
   "E2E_DISABLE_AUTH_RATE_LIMIT",
   "HARNESS_AUTH_FILE",
@@ -28,6 +27,7 @@ const generatedHarnessVariables = new Set([
   "HOME",
   "IRIS_DELEGATION_V2",
   "IRIS_DISABLE_ENV_FILE_LOADING",
+  "IRIS_ROOT_ENCRYPTION_KEY",
   "IRIS_REMOTE_AGENTS_A2A",
   "NEXT_PUBLIC_BASE_URL",
   "NO_HTTPS",

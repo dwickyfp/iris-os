@@ -68,7 +68,7 @@ export const getContentTypeFromFilename = (filename: string): string => {
 };
 
 export const resolveStoragePrefix = () => {
-  const raw = process.env.FILE_STORAGE_PREFIX ?? "uploads";
+  const raw = "uploads";
 
   return raw.replace(/^\/+|\/+$|\.+/g, "").trim();
 };

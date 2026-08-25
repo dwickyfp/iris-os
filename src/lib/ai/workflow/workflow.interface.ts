@@ -25,6 +25,33 @@ export enum NodeKind {
   Output = "output", // Exit point of workflow - produces final result
 }
 
+export const executableWorkflowNodeKinds = new Set<string>([
+  NodeKind.Input,
+  NodeKind.LLM,
+  NodeKind.Condition,
+  NodeKind.Tool,
+  NodeKind.Http,
+  NodeKind.Template,
+  NodeKind.Output,
+]);
+
+export const persistedWorkflowNodeKinds = new Set<string>([
+  ...executableWorkflowNodeKinds,
+  NodeKind.Note,
+]);
+
+export function assertSupportedWorkflowNodeKind(
+  kind: string,
+  options?: { allowNote?: boolean },
+) {
+  const supported = options?.allowNote
+    ? persistedWorkflowNodeKinds
+    : executableWorkflowNodeKinds;
+  if (!supported.has(kind)) {
+    throw new Error(`UNSUPPORTED_WORKFLOW_NODE_KIND:${kind}`);
+  }
+}
+
 /**
  * Base interface for all workflow node data.
  * Every node must have these common properties.

@@ -38,6 +38,17 @@ describe("BudgetGuard", () => {
     guard.afterTool();
     guard.afterTool();
   });
+
+  test("allows sequential tools after reaching the parallel peak", () => {
+    const guard = new BudgetGuard({ maxParallel: 1, maxToolCalls: 2 });
+
+    guard.beforeTool();
+    guard.afterTool();
+    expect(() => guard.beforeTool()).not.toThrow();
+    guard.afterTool();
+
+    expect(guard.usage).toMatchObject({ toolCalls: 2, parallel: 1 });
+  });
 });
 
 describe("isBudgetExhausted", () => {

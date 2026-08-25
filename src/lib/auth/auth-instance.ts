@@ -1,33 +1,61 @@
 // Base auth instance without "server-only" - can be used in seed scripts
-import { betterAuth, type BetterAuthOptions } from "better-auth";
+import { USER_ROLES } from "app-types/roles";
+import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { admin as adminPlugin } from "better-auth/plugins";
 import { pgDb } from "lib/db/pg/db.pg";
-import { headers } from "next/headers";
+import { pgUserRepository as userRepository } from "lib/db/pg/repositories/user-repository.pg";
 import {
   AccountTable,
   SessionTable,
   UserTable,
   VerificationTable,
 } from "lib/db/pg/schema.pg";
-import { getAuthConfig } from "./config";
+import { deriveBootstrapSecret } from "lib/security/bootstrap-secrets";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { systemSettingsService } from "lib/system-settings/server";
 import logger from "logger";
-import { pgUserRepository as userRepository } from "lib/db/pg/repositories/user-repository.pg";
-import { DEFAULT_USER_ROLE, USER_ROLES } from "app-types/roles";
-import { admin, editor, user, ac } from "./roles";
+import { headers } from "next/headers";
+import { getDatabaseAuthConfig } from "./config.server";
+import { getRuntimeAuthConfig } from "./config.runtime";
+import { ac, admin, editor, user } from "./roles";
 
 const {
   emailAndPasswordEnabled,
   signUpEnabled,
   socialAuthenticationProviders,
-} = getAuthConfig();
+} =
+  process.env.NODE_ENV === "test" ||
+  process.env.NEXT_PHASE === "phase-production-build"
+    ? getRuntimeAuthConfig()
+    : await getDatabaseAuthConfig();
+const configuredDefaultRole = String(
+  process.env.NODE_ENV === "test" ||
+    process.env.NEXT_PHASE === "phase-production-build"
+    ? runtimeSystemSetting("users.defaultRole")
+    : await systemSettingsService.getPlain("users.defaultRole"),
+) as (typeof USER_ROLES)[keyof typeof USER_ROLES];
+const configuredBaseUrl =
+  process.env.NODE_ENV === "test" ||
+  process.env.NEXT_PHASE === "phase-production-build"
+    ? runtimeSystemSetting("auth.baseUrl")
+    : await systemSettingsService.getPlain("auth.baseUrl");
+const rootEncryptionKey = process.env.IRIS_ROOT_ENCRYPTION_KEY;
+const authSecret = rootEncryptionKey
+  ? deriveBootstrapSecret(rootEncryptionKey, "iris-os:better-auth:secret:v1")
+  : process.env.NODE_ENV === "test" ||
+      process.env.NEXT_PHASE === "phase-production-build"
+    ? "iris-non-production-build-and-test-secret"
+    : (() => {
+        throw new Error("IRIS_ROOT_ENCRYPTION_KEY is required");
+      })();
 
 const options = {
-  secret: process.env.BETTER_AUTH_SECRET!,
+  secret: authSecret,
   plugins: [
     adminPlugin({
-      defaultRole: DEFAULT_USER_ROLE,
+      defaultRole: configuredDefaultRole,
       adminRoles: [USER_ROLES.ADMIN],
       ac,
       roles: {
@@ -38,7 +66,7 @@ const options = {
     }),
     nextCookies(),
   ],
-  baseURL: process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_BASE_URL,
+  baseURL: typeof configuredBaseUrl === "string" ? configuredBaseUrl : undefined,
   user: {
     changeEmail: {
       enabled: true,
@@ -65,7 +93,7 @@ const options = {
           const isFirstUser = await getIsFirstUser();
 
           // Set role based on whether this is the first user
-          const role = isFirstUser ? USER_ROLES.ADMIN : DEFAULT_USER_ROLE;
+          const role = isFirstUser ? USER_ROLES.ADMIN : configuredDefaultRole;
 
           logger.info(
             `User creation hook: ${user.email} will get role: ${role} (isFirstUser: ${isFirstUser})`,

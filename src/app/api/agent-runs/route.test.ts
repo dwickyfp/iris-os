@@ -42,6 +42,7 @@ function queueResults(...results: unknown[][]) {
     const result = results[index++] ?? [];
     const query = {
       from: vi.fn(() => query),
+      innerJoin: vi.fn(() => query),
       where: vi.fn(() => query),
       orderBy: vi.fn(() => query),
       limit: vi.fn(() => query),

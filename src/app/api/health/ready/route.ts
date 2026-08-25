@@ -1,7 +1,4 @@
-import {
-  parseOperationsConfig,
-  validateOperationsConfig,
-} from "lib/operations/config";
+import { loadOperationsConfig, type OperationsConfig } from "lib/operations/config";
 import {
   evaluateReadiness,
   unavailableReadiness,
@@ -14,11 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const parsed = validateOperationsConfig(process.env);
-  if (!parsed.success) return response(unavailableReadiness("config"), 503);
-
   try {
-    const config = parseOperationsConfig(process.env);
+    const config = await loadOperationsConfig();
     const result = await Promise.race([
       getSnapshotAfterMigrationCheck(config),
       timeout(config.OPERATIONS_READY_TIMEOUT_MS),
@@ -40,7 +34,7 @@ export async function GET() {
 }
 
 async function getSnapshotAfterMigrationCheck(
-  config: ReturnType<typeof parseOperationsConfig>,
+  config: OperationsConfig,
 ) {
   if (!(await getOperationsMigrationStatus(config))) return null;
   return getOperationsSnapshot(config);

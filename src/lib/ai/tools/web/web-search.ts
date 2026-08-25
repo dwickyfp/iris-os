@@ -3,6 +3,16 @@ import { JSONSchema7 } from "json-schema";
 import { jsonSchemaToZod } from "lib/json-schema-to-zod";
 import { safe } from "ts-safe";
 
+type ExaSettingsResolver = () => Promise<{
+  apiKey: string | null;
+  baseUrl: string;
+}>;
+let resolveExaSettings: ExaSettingsResolver | undefined;
+
+export function configureExaSettingsResolver(resolver: ExaSettingsResolver) {
+  resolveExaSettings = resolver;
+}
+
 // Exa API Types
 export interface ExaSearchRequest {
   query: string;
@@ -151,19 +161,50 @@ export const exaContentsSchema: JSONSchema7 = {
   required: ["urls"],
 };
 
-const API_KEY = process.env.EXA_API_KEY;
-const BASE_URL = "https://api.exa.ai";
+const MAX_BASE_URL_LENGTH = 2048;
+
+const resolveExaBaseUrl = (value: unknown): string => {
+  const baseUrl = typeof value === "string" ? value.trim() : "";
+
+  if (!baseUrl || baseUrl.length > MAX_BASE_URL_LENGTH) {
+    throw new Error("Exa API base URL is invalid");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("Exa API base URL is invalid");
+  }
+
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Exa API base URL is invalid");
+  }
+
+  return url.href.replace(/\/$/, "");
+};
 
 const fetchExa = async (endpoint: string, body: any): Promise<any> => {
-  if (!API_KEY) {
+  if (!resolveExaSettings) throw new Error("Exa settings resolver is unavailable");
+  const { apiKey, baseUrl: baseUrlSetting } = await resolveExaSettings();
+
+  if (!apiKey) {
     throw new Error("EXA_API_KEY is not configured");
   }
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
+  const baseUrl = resolveExaBaseUrl(baseUrlSetting);
+
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": API_KEY,
+      "x-api-key": apiKey,
     },
     body: JSON.stringify(body),
   });

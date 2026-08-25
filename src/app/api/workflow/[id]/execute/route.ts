@@ -1,12 +1,12 @@
 import { getSession } from "auth/server";
-import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
-import { workflowRepository } from "lib/db/repository";
-import { encodeWorkflowEvent } from "lib/ai/workflow/shared.workflow";
-import logger from "logger";
 import { colorize } from "consola/utils";
+import { runManager } from "lib/ai/runs/server";
+import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
+import { encodeWorkflowEvent } from "lib/ai/workflow/shared.workflow";
+import { workflowRepository } from "lib/db/repository";
 import { safeJSONParse, toAny } from "lib/utils";
 import { generateUUID } from "lib/utils";
-import { runManager } from "lib/ai/runs/server";
+import logger from "logger";
 
 export async function POST(
   request: Request,
@@ -22,7 +22,9 @@ export async function POST(
   if (!hasAccess) {
     return new Response("Unauthorized", { status: 401 });
   }
-  const workflow = await workflowRepository.selectStructureById(id);
+  const workflow = await workflowRepository.selectStructureById(id, {
+    ignoreNote: true,
+  });
   if (!workflow) {
     return new Response("Workflow not found", { status: 404 });
   }
@@ -31,12 +33,7 @@ export async function POST(
     message: colorize("cyan", `WORKFLOW '${workflow.name}' `),
   });
   const runId = generateUUID();
-  await runManager.start({
-    id: runId,
-    userId: session.user.id,
-    context: { executionSource: "workflow", workflowId: id },
-    timeoutMs: 1000 * 60 * 5,
-  });
+  const executionController = new AbortController();
   const app = createWorkflowExecutor({
     edges: workflow.edges,
     nodes: workflow.nodes,
@@ -44,9 +41,27 @@ export async function POST(
     context: {
       runId,
       userId: session.user.id,
-      signal: request.signal,
+      signal: executionController.signal,
     },
   });
+  const started = await runManager.start({
+    id: runId,
+    userId: session.user.id,
+    context: { executionSource: "workflow", workflowId: id },
+    timeoutMs: 1000 * 60 * 5,
+  });
+  if (!started.leaseToken) throw new Error("WORKFLOW_RUN_LEASE_REQUIRED");
+  const heartbeat = setInterval(
+    () =>
+      void runManager
+        .heartbeat(runId, started.leaseToken!, 30_000)
+        .then((state) => {
+          if (state !== "active") executionController.abort(new Error(state));
+        })
+        .catch((error) => executionController.abort(error)),
+    10_000,
+  );
+  heartbeat.unref?.();
 
   const encoder = new TextEncoder();
 
@@ -73,10 +88,6 @@ export async function POST(
           // Use custom encoding instead of SSE format
           const data = encodeWorkflowEvent(evt);
           controller.enqueue(encoder.encode(data));
-          // Close stream when workflow ends
-          if (evt.eventType === "WORKFLOW_END") {
-            controller.close();
-          }
         } catch (error) {
           logger.error("Stream write error:", error);
           controller.error(error);
@@ -86,8 +97,15 @@ export async function POST(
       // Handle client disconnection
       request.signal.addEventListener("abort", async () => {
         isAborted = true;
+        executionController.abort(request.signal.reason);
         void app.exit();
-        void runManager.cancel(runId, "Workflow request aborted", "CANCELLED");
+        clearInterval(heartbeat);
+        void runManager.cancelWithLease(
+          runId,
+          started.leaseToken!,
+          "Workflow request aborted",
+          "CANCELLED",
+        );
         controller.close();
       });
 
@@ -100,17 +118,45 @@ export async function POST(
             timeout: 1000 * 60 * 5,
           },
         )
-        .then((result) => {
+        .then(async (result) => {
           if (!result.isOk) {
+            clearInterval(heartbeat);
             logger.error("Workflow execution error:", result.error);
-            void runManager.fail(
+            const terminal = await runManager.failWithLease(
               runId,
+              started.leaseToken!,
               String(result.error),
               "WORKFLOW_FAILED",
             );
+            if (!terminal) throw new Error("WORKFLOW_RUN_LEASE_LOST");
           } else {
-            void runManager.succeed(runId, { workflowId: id });
+            clearInterval(heartbeat);
+            const terminal = await runManager.succeedWithLease(
+              runId,
+              started.leaseToken!,
+              {
+                workflowId: id,
+              },
+            );
+            if (!terminal) throw new Error("WORKFLOW_RUN_LEASE_LOST");
           }
+          if (!isAborted) controller.close();
+        })
+        .catch(async (error) => {
+          clearInterval(heartbeat);
+          const terminal = await runManager.failWithLease(
+            runId,
+            started.leaseToken!,
+            error instanceof Error ? error.message : String(error),
+            "WORKFLOW_FAILED",
+          );
+          if (
+            !terminal &&
+            error instanceof Error &&
+            error.message !== "WORKFLOW_RUN_LEASE_LOST"
+          )
+            throw new Error("WORKFLOW_RUN_LEASE_LOST");
+          if (!isAborted) controller.error(error);
         });
     },
   });

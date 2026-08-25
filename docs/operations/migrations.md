@@ -7,6 +7,17 @@ Application startup and package installation never run migrations. Production
 migrations must run as an explicit `pnpm db:migrate` deployment job using a
 dedicated migration database role before web and worker processes start.
 
+Migration `0063_drop_sandbox_subsystem.sql` is a contract migration and must not
+run during a rolling mixed-version deployment. First disable sandbox creation on
+the previous release, stop web and worker processes, destroy every provider
+instance, verify the external provider inventory is empty, clear
+`sandbox_session.provider_instance_id` only as the durable acknowledgement of
+that verification, and settle every execution including terminal rows whose
+`charged_at` is still null. The migration fails with
+`SANDBOX_DRAIN_REQUIRED` while durable state indicates an undestroyed instance or
+unsettled execution. Retain a reviewed pre-0063 backup if historical sandbox
+execution, accounting, or artifact provenance is subject to audit retention.
+
 ## Safety Model
 
 - Allowed target kinds are `disposable` and `staging-snapshot` only.

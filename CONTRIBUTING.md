@@ -83,7 +83,7 @@ If you are fixing a bug, please add tests to prevent the same bug from happening
 
    - PostgreSQL database (use `pnpm docker:pg` for quick setup)
    - At least one LLM provider API key (OpenAI, Anthropic, or Google)
-   - `BETTER_AUTH_SECRET` environment variable set
+   - `IRIS_ROOT_ENCRYPTION_KEY` set to a base64-encoded 32-byte key
 
 ---
 

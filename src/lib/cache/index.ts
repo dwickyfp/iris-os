@@ -10,7 +10,7 @@ declare global {
 }
 
 const createCache = () => {
-  const redisUrl = process.env.REDIS_URL;
+  const redisUrl = undefined;
 
   if (IS_DEV) {
     logger.info("Using MemoryCache for development");

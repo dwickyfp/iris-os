@@ -1,24 +1,21 @@
 import { type Tool, ToolLoopAgent, hasToolCall, isStepCount } from "ai";
 import type { LanguageModel } from "ai";
 import type { Agent } from "app-types/agent";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import logger from "logger";
 import type { BudgetGuard } from "../runtime/budget";
-import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import {
-  type PolicyEvaluationDecision,
-  destinationFromArgs,
-  policyEngine,
-} from "../runtime/policy-engine";
+  type DurableCapabilityBudget,
+  createCapabilityInvoker,
+  evaluateCapabilityPolicy,
+} from "../runtime/capability-invoker";
+import type { ResolvedPolicySnapshot } from "../runtime/contracts";
+import type { PolicyEvaluationDecision } from "../runtime/policy-engine";
+import { StrategyGuard } from "../runtime/strategy-guard";
 import { isReadOnlyTool } from "./approval-policy";
 import type { AgentRuntimeContext } from "./runtime-context";
 
-export type DurableBudgetAuthority = {
-  charge(
-    token: string,
-    kind: "steps" | "tokens" | "tool_calls",
-    amount: number,
-  ): Promise<unknown>;
-};
+export type DurableBudgetAuthority = DurableCapabilityBudget;
 
 const DEFAULT_AGENT_TIMEOUTS = {
   totalMs: 90_000,
@@ -27,10 +24,11 @@ const DEFAULT_AGENT_TIMEOUTS = {
   toolMs: 30_000,
 } as const;
 
-export function configuredAgentTimeouts(
-  environment: NodeJS.ProcessEnv = process.env,
-) {
-  const stepMs = Number.parseInt(environment.AI_STEP_TIMEOUT_MS ?? "", 10);
+export function configuredAgentTimeouts(environment?: NodeJS.ProcessEnv) {
+  const configured = environment
+    ? environment.AI_STEP_TIMEOUT_MS
+    : runtimeSystemSetting("ai.stepTimeoutMs");
+  const stepMs = Number.parseInt(String(configured ?? ""), 10);
   if (!Number.isFinite(stepMs)) return DEFAULT_AGENT_TIMEOUTS;
   if (stepMs < 30_000 || stepMs > 300_000) {
     throw new RangeError("AI_STEP_TIMEOUT_MS must be between 30000 and 300000");
@@ -67,11 +65,14 @@ export type ToolLoopAgentConfig = {
       | "tool.started"
       | "tool.completed"
       | "tool.failed"
-      | "tool.cancelled",
+      | "tool.cancelled"
+      | "strategy.stalled",
     payload: Record<string, unknown>,
   ) => Promise<void> | void;
   budget?: BudgetGuard;
   durableBudget?: DurableBudgetAuthority;
+  strategyGuard?: StrategyGuard;
+  projectCapabilityResult?: Parameters<typeof createCapabilityInvoker>[0]["projectResult"];
 };
 
 export function runtimeEventCallbacks(
@@ -186,31 +187,11 @@ export function evaluateToolCallPolicy(input: {
   runtimeContext: AgentRuntimeContext;
   resolvedPolicy?: ResolvedPolicySnapshot;
 }): PolicyEvaluationDecision {
-  const { toolName, args, runtimeContext, resolvedPolicy } = input;
-  const legacy = policyEngine.evaluateTool(toolName);
-  return policyEngine.evaluate({
-    actor: {
-      type: runtimeContext.agentType === "custom" ? "agent" : "system",
-      id: runtimeContext.agentId,
-      userId: runtimeContext.userId,
-    },
-    capability: resolvedPolicy?.capabilities?.[toolName] ?? {
-      id: `tool:${toolName}`,
-      key: toolName,
-      risks: legacy.readOnly ? ["read"] : undefined,
-    },
-    action: legacy.readOnly ? "read" : "execute",
-    resource: `tool:${toolName}`,
-    args,
-    destination: destinationFromArgs(args),
-    runtime: {
-      kind: runtimeContext.parentRunId ? "local_delegation" : "foreground",
-      approvalPolicy:
-        resolvedPolicy?.approvalPolicy ?? runtimeContext.approvalPolicy,
-      runId: runtimeContext.runId,
-      parentRunId: runtimeContext.parentRunId,
-      authority: resolvedPolicy?.authority,
-    },
+  return evaluateCapabilityPolicy({
+    capabilityId: input.toolName,
+    args: input.args,
+    runtimeContext: input.runtimeContext,
+    resolvedPolicy: input.resolvedPolicy,
   });
 }
 
@@ -224,10 +205,14 @@ export function createToolLoopAgent({
   onRuntimeEvent,
   budget,
   durableBudget,
+  strategyGuard = new StrategyGuard(),
+  projectCapabilityResult,
 }: ToolLoopAgentConfig) {
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
+  const agentTimeouts = configuredAgentTimeouts();
   const eventCallbacks = runtimeEventCallbacks(onRuntimeEvent);
   const terminalToolCalls = new Set<string>();
+  const policyDecisions = new Map<string, PolicyEvaluationDecision>();
   const approvalToolCalls = new Map<
     string,
     { toolName: string; requestedAt: number }
@@ -244,13 +229,17 @@ export function createToolLoopAgent({
   const recordApprovalResponses = async (messages: any[] | undefined) => {
     const approvalIds = new Map<string, string>();
     for (const message of messages ?? []) {
-      for (const part of Array.isArray(message.content) ? message.content : []) {
+      for (const part of Array.isArray(message.content)
+        ? message.content
+        : []) {
         if (part?.type === "tool-approval-request")
           approvalIds.set(part.approvalId, part.toolCall?.toolCallId);
       }
     }
     for (const message of messages ?? []) {
-      for (const part of Array.isArray(message.content) ? message.content : []) {
+      for (const part of Array.isArray(message.content)
+        ? message.content
+        : []) {
         if (part?.type !== "tool-approval-response" || part.approved) continue;
         const toolCallId =
           part.toolCall?.toolCallId ??
@@ -275,6 +264,45 @@ export function createToolLoopAgent({
     }
   };
   let accountedTokens = 0;
+  const invokeCapability = createCapabilityInvoker({
+    runtimeContext,
+    resolvedPolicy,
+    budget,
+    durableBudget,
+    strategyGuard,
+    maxParallel: budget?.budget.maxParallel,
+    projectResult: projectCapabilityResult,
+    onEvent: async (type, payload) => {
+      const toolPayload = {
+        ...payload,
+        toolCallId: payload.invocationId,
+        toolName: payload.capabilityId,
+      };
+      if (type === "strategy.stalled") {
+        await onRuntimeEvent?.(type, toolPayload);
+        return;
+      }
+      const eventType = type.replace("capability.", "tool.") as
+        | "tool.requested"
+        | "tool.started"
+        | "tool.completed"
+        | "tool.failed"
+        | "tool.cancelled";
+      if (
+        eventType === "tool.completed" ||
+        eventType === "tool.failed" ||
+        eventType === "tool.cancelled"
+      ) {
+        await emitToolTerminal(
+          eventType,
+          String(payload.invocationId),
+          toolPayload,
+        );
+      } else {
+        await onRuntimeEvent?.(eventType, toolPayload);
+      }
+    },
+  });
   const guardedTools = Object.fromEntries(
     Object.entries(tools).map(([name, candidate]) => {
       if (typeof (candidate as any).execute !== "function")
@@ -288,46 +316,39 @@ export function createToolLoopAgent({
             const toolCallId = options?.toolCallId ?? options?.callId ?? name;
             const approval = approvalToolCalls.get(toolCallId);
             if (approval) {
-              await onRuntimeEvent?.("tool.approved", { toolCallId, toolName: name });
-              approvalToolCalls.delete(toolCallId);
-            }
-            budget?.beforeTool();
-            await durableBudget?.charge(`tool:${toolCallId}`, "tool_calls", 1);
-            const startedAt = Date.now();
-            await onRuntimeEvent?.("tool.started", {
-              toolCallId,
-              toolName: name,
-              startedAt: new Date(startedAt).toISOString(),
-            });
-            try {
-              const result = await original.execute(args, options);
-              const completedAt = Date.now();
-              await emitToolTerminal("tool.completed", toolCallId, {
+              await onRuntimeEvent?.("tool.approved", {
                 toolCallId,
                 toolName: name,
-                startedAt: new Date(startedAt).toISOString(),
-                completedAt: new Date(completedAt).toISOString(),
-                durationMs: Math.max(0, completedAt - startedAt),
               });
-              return result;
-            } catch (error) {
-              const completedAt = Date.now();
-              const cancelled = options?.abortSignal?.aborted === true;
-              await emitToolTerminal(
-                cancelled ? "tool.cancelled" : "tool.failed",
-                toolCallId,
-                {
-                  toolCallId,
-                  toolName: name,
-                  startedAt: new Date(startedAt).toISOString(),
-                  completedAt: new Date(completedAt).toISOString(),
-                  durationMs: Math.max(0, completedAt - startedAt),
-                  message: error instanceof Error ? error.message : String(error),
-                },
-              );
-              throw error;
+              approvalToolCalls.delete(toolCallId);
+            }
+            try {
+              const result = await invokeCapability({
+                capabilityId: name,
+                args,
+                invocationId: toolCallId,
+                signal: options?.abortSignal,
+                policyDecision:
+                  policyDecisions.get(toolCallId) ??
+                  evaluateToolCallPolicy({
+                    toolName: name,
+                    args,
+                    runtimeContext,
+                    resolvedPolicy,
+                  }),
+                preapproved: true,
+                emitRequested: false,
+                execute: (signal) =>
+                  original.execute(args, {
+                    ...options,
+                    abortSignal: signal ?? options?.abortSignal,
+                  }),
+              });
+              if (result.status === "blocked")
+                throw new Error("APPROVAL_REQUIRED");
+              return result.value;
             } finally {
-              budget?.afterTool();
+              policyDecisions.delete(toolCallId);
             }
           },
         },
@@ -343,7 +364,7 @@ export function createToolLoopAgent({
       isStepCount(Math.min(10, budget?.budget.maxSteps ?? 10)),
       hasToolCall("delegate_agent"),
     ],
-    timeout: { ...AGENT_TIMEOUTS, tools: getAgentToolTimeouts(tools) },
+    timeout: { ...agentTimeouts, tools: getAgentToolTimeouts(tools) },
     runtimeContext,
     telemetry: {
       functionId:
@@ -374,6 +395,7 @@ export function createToolLoopAgent({
         runtimeContext,
         resolvedPolicy,
       });
+      policyDecisions.set(toolCall.toolCallId, decision);
       logger.info("policy decision", decision);
       if (decision.result === "deny") {
         await emitToolTerminal("tool.failed", toolCall.toolCallId, {

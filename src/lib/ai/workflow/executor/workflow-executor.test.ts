@@ -56,6 +56,7 @@ vi.mock("./node-executor", async (importOriginal) => {
         answer: "mock llm response",
       },
     }),
+    templateNodeExecutor: vi.fn().mockReturnValue({ input: {}, output: {} }),
     // Keep conditionNodeExecutor as real implementation for proper testing
     conditionNodeExecutor: actual.conditionNodeExecutor,
     // Export function to set test input data
@@ -84,7 +85,7 @@ describe("createWorkflowExecutor", () => {
   // Helper functions to create test nodes and edges
   const createNode = (
     id: string,
-    kind: NodeKind | "NOOP",
+    kind: NodeKind,
     name: string = `Node ${id}`,
     additionalConfig: Record<string, any> = {},
   ): DBNode => ({
@@ -150,10 +151,23 @@ describe("createWorkflowExecutor", () => {
     vi.clearAllMocks();
   });
 
-  it("1. should execute a simple linear workflow: start -> noop -> end", async () => {
+  it("rejects retired workflow nodes before execution", () => {
+    expect(() =>
+      createWorkflowExecutor({
+        nodes: [
+          createNode("start", NodeKind.Input),
+          createNode("compute", "compute" as never),
+          createNode("end", NodeKind.Output),
+        ],
+        edges: [],
+      }),
+    ).toThrow("UNSUPPORTED_WORKFLOW_NODE_KIND:compute");
+  });
+
+  it("1. should execute a simple linear workflow", async () => {
     const nodes: DBNode[] = [
       createNode("start", NodeKind.Input, "Start Node"),
-      createNode("noop", "NOOP", "No Operation"),
+      createNode("noop", NodeKind.Template, "No Operation"),
       createNode("end", NodeKind.Output, "End Node"),
     ];
 
@@ -219,8 +233,8 @@ describe("createWorkflowExecutor", () => {
           },
         },
       }),
-      createNode("true-path", "NOOP", "True Path Node"),
-      createNode("false-path", "NOOP", "False Path Node"),
+      createNode("true-path", NodeKind.Template, "True Path Node"),
+      createNode("false-path", NodeKind.Template, "False Path Node"),
       createNode("end", NodeKind.Output, "End Node"),
     ];
 
@@ -310,8 +324,8 @@ describe("createWorkflowExecutor", () => {
           },
         },
       }),
-      createNode("admin-path", "NOOP", "Admin Path Node"),
-      createNode("user-path", "NOOP", "User Path Node"),
+      createNode("admin-path", NodeKind.Template, "Admin Path Node"),
+      createNode("user-path", NodeKind.Template, "User Path Node"),
       createNode("end", NodeKind.Output, "End Node"),
     ];
 
@@ -379,10 +393,10 @@ describe("createWorkflowExecutor", () => {
   it("4. should handle REAL parallel execution with proper synchronization", async () => {
     const nodes: DBNode[] = [
       createNode("start", NodeKind.Input, "Start Node"),
-      createNode("parallel1", "NOOP", "Parallel Node 1"),
-      createNode("parallel2", "NOOP", "Parallel Node 2"),
-      createNode("parallel3", "NOOP", "Parallel Node 3"),
-      createNode("join", "NOOP", "Join Node"),
+      createNode("parallel1", NodeKind.Template, "Parallel Node 1"),
+      createNode("parallel2", NodeKind.Template, "Parallel Node 2"),
+      createNode("parallel3", NodeKind.Template, "Parallel Node 3"),
+      createNode("join", NodeKind.Template, "Join Node"),
       createNode("end", NodeKind.Output, "End Node"),
     ];
 
@@ -489,9 +503,9 @@ describe("createWorkflowExecutor", () => {
         },
       }),
       // Parallel branch node (simplified to single node)
-      createNode("parallel1", "NOOP", "Parallel 1"),
+      createNode("parallel1", NodeKind.Template, "Parallel 1"),
       // Single branch node
-      createNode("single-path", "NOOP", "Single Path"),
+      createNode("single-path", NodeKind.Template, "Single Path"),
       createNode("end", NodeKind.Output, "End"),
     ];
 
@@ -561,7 +575,7 @@ describe("createWorkflowExecutor", () => {
   it("6. should properly handle workflow execution events and state", async () => {
     const nodes: DBNode[] = [
       createNode("start", NodeKind.Input, "Start"),
-      createNode("middle", "NOOP", "Middle"),
+      createNode("middle", NodeKind.Template, "Middle"),
       createNode("end", NodeKind.Output, "End"),
     ];
 

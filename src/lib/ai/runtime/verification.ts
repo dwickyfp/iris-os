@@ -47,7 +47,52 @@ export type VerificationResult =
       verified: false;
       verificationKind?: "capability" | "outcome" | "artifact";
       reason: string;
+      details?: Record<string, unknown>;
     };
+
+const RECOVERABLE_VERIFICATION_REASONS = new Set([
+  "OUTCOME_EMPTY",
+  "REQUIRED_CAPABILITY_NOT_EXECUTED",
+  "CAPABILITY_EXECUTION_FAILED",
+  "REQUIRED_ARTIFACT_MISSING",
+  "REQUIRED_MEDIA_TYPE_MISSING",
+  "REQUIRED_ARTIFACT_KIND_MISSING",
+  "REQUIRED_TITLE_MISSING",
+  "REQUIRED_PERIOD_MISSING",
+  "REQUIRED_SECTION_MISSING",
+  "ARTIFACT_REFERENCE_INVALID",
+  "ARTIFACT_NOT_FOUND",
+  "ARTIFACT_HASH_MISMATCH",
+]);
+
+export class VerificationRequiredError extends Error {
+  readonly code = "VERIFICATION_REQUIRED";
+
+  constructor(readonly checks: VerificationResult[]) {
+    const failed = checks.find((check) => !check.verified);
+    super(
+      `VERIFICATION_REQUIRED:${
+        failed && !failed.verified ? failed.reason : "UNKNOWN"
+      }`,
+    );
+  }
+}
+
+export function isRecoverableVerificationFailure(
+  checks: readonly VerificationResult[],
+) {
+  const expanded = checks.flatMap((check) => {
+    const nested = check.details?.checks;
+    return Array.isArray(nested)
+      ? [check, ...(nested as VerificationResult[])]
+      : [check];
+  });
+  const failed = expanded.filter((check) => !check.verified);
+  return (
+    failed.length > 0 &&
+    failed.every((check) => RECOVERABLE_VERIFICATION_REASONS.has(check.reason))
+  );
+}
 
 export interface Verifier {
   supports(target: VerificationTarget): boolean;
@@ -139,8 +184,7 @@ export function nonEmptyStructuredOutput(value: unknown): boolean {
         "input",
         "usage",
         "finishReason",
-      ].includes(key) &&
-      nonEmptyStructuredOutput(item),
+      ].includes(key) && nonEmptyStructuredOutput(item),
   );
 }
 
@@ -159,7 +203,9 @@ export class VerificationEngine {
 export class AllRequirements implements CompletionRequirement {
   readonly kind = "all" as const;
 
-  constructor(private readonly requirements: readonly CompletionRequirement[]) {}
+  constructor(
+    private readonly requirements: readonly CompletionRequirement[],
+  ) {}
 
   async verifyCompletion(
     value: unknown,
@@ -169,8 +215,11 @@ export class AllRequirements implements CompletionRequirement {
     for (const requirement of this.requirements) {
       const result = await requirement.verifyCompletion(value, expected);
       checks.push(result);
-      if (!result.verified) return result;
+      if (!result.verified) continue;
     }
-    return { verified: true, details: { checks } };
+    const failed = checks.find((check) => !check.verified);
+    return failed
+      ? { ...failed, details: { checks } }
+      : { verified: true, details: { checks } };
   }
 }

@@ -63,6 +63,7 @@ function provider() {
 
 beforeEach(() => {
   process.env.REMOTE_AGENT_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  process.env.IRIS_ROOT_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 });
 
 describe("remote agent service", () => {

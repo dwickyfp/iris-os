@@ -1,9 +1,11 @@
 import type { ActivityEventInput } from "app-types/activity";
 import { hasArtifactClaims } from "../artifacts";
 import type { RunManager } from "../runs/run-manager";
-import type { RunLeaseState, RunOutcome } from "../runs/types";
 import { isTerminalAgentRunStatus } from "../runs/status";
+import type { RunLeaseState, RunOutcome } from "../runs/types";
+import { isBudgetExhausted } from "./budget";
 import type {
+  GoalContinuationOptions,
   HarnessEventRecorder,
   HarnessFailure,
   HarnessFinalization,
@@ -15,8 +17,12 @@ import type {
   DriverStreamInput,
   ExecutionDriver,
 } from "./execution-driver";
-import type { CompletionRequirement, VerificationResult } from "./verification";
-import { isBudgetExhausted } from "./budget";
+import {
+  type CompletionRequirement,
+  VerificationRequiredError,
+  type VerificationResult,
+  isRecoverableVerificationFailure,
+} from "./verification";
 
 const FOREGROUND_LEASE_MS = 30_000;
 const FOREGROUND_HEARTBEAT_MS = 10_000;
@@ -73,12 +79,21 @@ export class IrisHarness {
   > {
     this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
+    const controller = new AbortController();
+    const callerSignal = input.execution.abortSignal;
+    const abortFromCaller = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) abortFromCaller();
+    else
+      callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
       await this.recordRouting(input.orchestration);
-      lease = await this.start(input.orchestration);
-      const native = await this.driver.stream(
-        this.withEventRecording(input, input.orchestration),
+      lease = await this.start(input.orchestration, controller, () =>
+        callerSignal?.removeEventListener("abort", abortFromCaller),
       );
+      const native = await this.driver.stream({
+        ...this.withEventRecording(input, input.orchestration),
+        execution: { ...input.execution, abortSignal: controller.signal },
+      });
       return this.lifecycle(native, input.orchestration, lease);
     } catch (error) {
       try {
@@ -97,12 +112,21 @@ export class IrisHarness {
   async generate(input: DriverGenerateInput) {
     this.assertOrchestration(input.orchestration);
     let lease: ExecutionLease | undefined;
+    const controller = new AbortController();
+    const callerSignal = input.execution.abortSignal;
+    const abortFromCaller = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) abortFromCaller();
+    else
+      callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
       await this.recordRouting(input.orchestration);
-      lease = await this.start(input.orchestration);
-      const native = await this.driver.generate(
-        this.withEventRecording(input, input.orchestration),
+      lease = await this.start(input.orchestration, controller, () =>
+        callerSignal?.removeEventListener("abort", abortFromCaller),
       );
+      const native = await this.driver.generate({
+        ...this.withEventRecording(input, input.orchestration),
+        execution: { ...input.execution, abortSignal: controller.signal },
+      });
       await this.finalize(input.orchestration, native, {}, lease);
       return native;
     } catch (error) {
@@ -159,7 +183,11 @@ export class IrisHarness {
       native,
       signal: lease.signal!,
       assertActive: () => lease.assertActive(),
-      finalize: (result: Record<string, unknown>, value: unknown = native) => {
+      finalize: (
+        result: Record<string, unknown>,
+        value: unknown = native,
+        options?: GoalContinuationOptions,
+      ) => {
         if (!terminal) {
           let finished = false;
           terminal = Promise.resolve()
@@ -187,6 +215,20 @@ export class IrisHarness {
             })
             .catch(async (error) => {
               if (finished || isLeaseLost(error)) throw error;
+              if (
+                error instanceof VerificationRequiredError &&
+                options &&
+                isRecoverableVerificationFailure(error.checks)
+              ) {
+                const continued = await this.continueClaimedGoal(
+                  orchestration,
+                  claimToken,
+                  options.checkpoint,
+                  error.checks,
+                  lease,
+                );
+                if (continued) return continued;
+              }
               await this.finishClaimedFailure(
                 orchestration,
                 claimToken,
@@ -261,9 +303,9 @@ export class IrisHarness {
     let terminal: Promise<HarnessFinalization> | undefined;
     return {
       native,
-      finalize: (value, result) => {
+      finalize: (value, result, options) => {
         if (!terminal) {
-          terminal = this.finalize(orchestration, value, result, lease)
+          terminal = this.finalize(orchestration, value, result, lease, options)
             .catch(async (error) => {
               if (!isLeaseLost(error)) {
                 await this.fail(orchestration, { error }, lease);
@@ -295,6 +337,8 @@ export class IrisHarness {
 
   private async start(
     orchestration: HarnessOrchestration,
+    controller?: AbortController,
+    cleanup?: () => void,
   ): Promise<ExecutionLease | undefined> {
     const { identity, run, context, policy } = orchestration;
     let lease: ExecutionLease | undefined;
@@ -319,7 +363,12 @@ export class IrisHarness {
         },
       });
       if (!started.leaseToken) throw leaseLost();
-      lease = this.heartbeat(identity.runId, started.leaseToken);
+      lease = this.heartbeat(
+        identity.runId,
+        started.leaseToken,
+        controller,
+        cleanup,
+      );
     }
     if (run.mode === "create") {
       await this.record(orchestration, "trajectory.started", {
@@ -409,14 +458,13 @@ export class IrisHarness {
     if (leaseState === "lease_lost") throw leaseLost();
     const message = error instanceof Error ? error.message : String(error);
     const exhausted = isBudgetExhausted(error);
-    const outcome: RunOutcome =
-      exhausted
-        ? {
-            status: "budget_exhausted",
-            error: message,
-            errorCode: "BUDGET_EXHAUSTED",
-          }
-        : leaseState === "cancelled"
+    const outcome: RunOutcome = exhausted
+      ? {
+          status: "budget_exhausted",
+          error: message,
+          errorCode: "BUDGET_EXHAUSTED",
+        }
+      : leaseState === "cancelled"
         ? { status: "cancelled", error: message, errorCode: "CANCELLED" }
         : leaseState === "timed_out"
           ? { status: "timed_out", error: message, errorCode: "TIMED_OUT" }
@@ -448,13 +496,15 @@ export class IrisHarness {
     errorCode?: string,
   ) {
     if (status === "succeeded") {
-      await this.record(orchestration, "trajectory.completed", {
+      await this.recordBestEffort(orchestration, "trajectory.completed", {
         toStatus: status,
       });
-      await this.record(orchestration, "run.completed", { toStatus: status });
+      await this.recordBestEffort(orchestration, "run.completed", {
+        toStatus: status,
+      });
       return;
     }
-    await this.record(
+    await this.recordBestEffort(
       orchestration,
       status === "cancelled" ? "trajectory.cancelled" : "trajectory.failed",
       {
@@ -464,23 +514,23 @@ export class IrisHarness {
             ? "CANCELLED"
             : status === "timed_out"
               ? "TIMED_OUT"
-               : status === "budget_exhausted"
-                 ? "BUDGET_EXHAUSTED"
-                 : errorCode,
+              : status === "budget_exhausted"
+                ? "BUDGET_EXHAUSTED"
+                : errorCode,
       },
     );
-    await this.record(
+    await this.recordBestEffort(
       orchestration,
       status === "cancelled"
         ? "run.cancelled"
         : status === "budget_exhausted"
           ? "run.budget_exhausted"
           : "run.failed",
-       {
-         toStatus: status,
-         errorCode:
-           status === "budget_exhausted" ? "BUDGET_EXHAUSTED" : errorCode,
-       },
+      {
+        toStatus: status,
+        errorCode:
+          status === "budget_exhausted" ? "BUDGET_EXHAUSTED" : errorCode,
+      },
     );
   }
 
@@ -489,8 +539,28 @@ export class IrisHarness {
     value: unknown,
     result: Record<string, unknown> = {},
     lease?: ExecutionLease,
+    continuation?: GoalContinuationOptions,
   ): Promise<HarnessFinalization> {
-    const verification = await this.verify(value, orchestration);
+    let verification: VerificationResult[];
+    try {
+      verification = await this.verify(value, orchestration);
+    } catch (error) {
+      if (
+        error instanceof VerificationRequiredError &&
+        continuation &&
+        lease &&
+        isRecoverableVerificationFailure(error.checks)
+      ) {
+        const continued = await this.continueCreatedGoal(
+          orchestration,
+          continuation.checkpoint,
+          error.checks,
+          lease,
+        );
+        if (continued) return continued;
+      }
+      throw error;
+    }
     if (orchestration.run.mode === "create") {
       if (!lease) throw leaseLost();
       lease.assertActive();
@@ -502,14 +572,14 @@ export class IrisHarness {
       if (!run) throw leaseLost();
     }
     if (orchestration.run.mode === "create") {
-      await this.record(orchestration, "trajectory.completed", {
+      await this.recordBestEffort(orchestration, "trajectory.completed", {
         toStatus: "succeeded",
       });
-      await this.record(orchestration, "run.completed", {
+      await this.recordBestEffort(orchestration, "run.completed", {
         toStatus: "succeeded",
       });
     }
-    return { result, verification };
+    return { status: "succeeded", result, verification };
   }
 
   private async verify(
@@ -541,7 +611,7 @@ export class IrisHarness {
           checkIndex: verification.length - 1,
           toStatus: "failed",
         });
-        throw new Error(`VERIFICATION_REQUIRED:${outcome.reason}`);
+        throw new VerificationRequiredError(verification);
       }
     }
     await this.record(orchestration, "verification.completed", {
@@ -573,7 +643,7 @@ export class IrisHarness {
     const errorCode = exhausted ? "BUDGET_EXHAUSTED" : failure.errorCode;
     if (orchestration.run.mode === "create") {
       if (!lease) throw leaseLost();
-      lease.assertActive();
+      if (lease.state() === "lease_lost") throw leaseLost();
       let run;
       if (status === "cancelled") {
         run = await this.runs?.cancelWithLease(
@@ -672,6 +742,71 @@ export class IrisHarness {
     });
   }
 
+  private goalCheckpoint(
+    checkpoint: Parameters<RunManager["suspendParent"]>[2],
+    checks: VerificationResult[],
+  ) {
+    const currentRound = checkpoint.goalRound ?? 1;
+    const maxGoalRounds = checkpoint.maxGoalRounds ?? 3;
+    if (currentRound >= maxGoalRounds) return null;
+    return {
+      ...checkpoint,
+      continuationKind: "goal" as const,
+      goalRound: currentRound + 1,
+      maxGoalRounds,
+      verificationFeedback: { checks },
+      delegationToolCallIds: [],
+    };
+  }
+
+  private async continueCreatedGoal(
+    orchestration: HarnessOrchestration,
+    checkpoint: Parameters<RunManager["suspendParent"]>[2],
+    checks: VerificationResult[],
+    lease: ExecutionLease,
+  ): Promise<HarnessFinalization | null> {
+    const next = this.goalCheckpoint(checkpoint, checks);
+    if (!next || orchestration.run.mode !== "create" || !this.runs) return null;
+    lease.assertActive();
+    const run = await this.runs.suspendParent(
+      orchestration.identity.runId,
+      lease.token,
+      next,
+    );
+    if (!run || run.status !== "waiting_external") return null;
+    await this.recordBestEffort(orchestration, "goal.round_requested", {
+      round: next.goalRound,
+      maxRounds: next.maxGoalRounds,
+      toStatus: "waiting_external",
+    });
+    return { status: "continued", verification: checks };
+  }
+
+  private async continueClaimedGoal(
+    orchestration: HarnessOrchestration,
+    claimToken: string,
+    checkpoint: Parameters<RunManager["checkpointParentAgain"]>[2],
+    checks: VerificationResult[],
+    lease: ExecutionLease,
+  ): Promise<HarnessFinalization | null> {
+    const next = this.goalCheckpoint(checkpoint, checks);
+    if (!next || !this.runs) return null;
+    lease.assertActive();
+    const run = await this.runs.checkpointParentAgain(
+      orchestration.identity.runId,
+      claimToken,
+      next,
+    );
+    if (!run || run.status !== "waiting_external") return null;
+    lease.stop();
+    await this.recordBestEffort(orchestration, "goal.round_requested", {
+      round: next.goalRound,
+      maxRounds: next.maxGoalRounds,
+      toStatus: "waiting_external",
+    });
+    return { status: "continued", verification: checks };
+  }
+
   private async requirementsFor(
     value: unknown,
     requirement?: CompletionRequirement,
@@ -717,6 +852,18 @@ export class IrisHarness {
       taskId: identity.taskId,
       agentId: identity.agentId,
     });
+  }
+
+  private async recordBestEffort(
+    orchestration: HarnessOrchestration,
+    eventType: ActivityEventInput["eventType"],
+    payload: Record<string, unknown>,
+  ) {
+    try {
+      await this.record(orchestration, eventType, payload);
+    } catch {
+      // Authoritative run/checkpoint state has already committed.
+    }
   }
 
   private recordRouting(orchestration: HarnessOrchestration) {

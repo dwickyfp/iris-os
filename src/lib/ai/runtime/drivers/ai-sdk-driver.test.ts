@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
 import { createToolLoopAgent } from "../../agent/create-tool-loop-agent";
 import { AiSdkExecutionDriver } from "./ai-sdk-driver";
 

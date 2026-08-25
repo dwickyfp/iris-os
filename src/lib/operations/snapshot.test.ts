@@ -13,13 +13,13 @@ describe("operations migration readiness", () => {
     const sql = await readFile(
       join(
         process.cwd(),
-        "src/lib/db/migrations/pg/0063_drop_sandbox_subsystem.sql",
+        "src/lib/db/migrations/pg/0069_durable_jobs.sql",
       ),
       "utf8",
     );
 
     expect(expected).toEqual({
-      createdAt: 1787503827249,
+      createdAt: 1787576851460,
       hash: createHash("sha256").update(sql).digest("hex"),
     });
   });

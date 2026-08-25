@@ -11,6 +11,7 @@ import {
   ToolNodeData,
   HttpNodeData,
   TemplateNodeData,
+  assertSupportedWorkflowNodeKind,
 } from "lib/ai/workflow/workflow.interface";
 import { cleanVariableName } from "lib/utils";
 import { safe } from "ts-safe";
@@ -88,6 +89,7 @@ export const nodeValidate: NodeValidate<WorkflowNodeData> = ({
   nodes,
   edges,
 }) => {
+  assertSupportedWorkflowNodeKind(node.kind, { allowNote: true });
   if (
     node.kind != NodeKind.Note &&
     nodes.filter((n) => n.data.name === node.name).length > 1
@@ -109,6 +111,8 @@ export const nodeValidate: NodeValidate<WorkflowNodeData> = ({
       return httpNodeValidate({ node, nodes, edges });
     case NodeKind.Template:
       return templateNodeValidate({ node, nodes, edges });
+    case NodeKind.Note:
+      return;
   }
 };
 

@@ -63,8 +63,8 @@ Tests require these environment variables:
 # Database (required)
 POSTGRES_URL=postgres://user:password@localhost:5432/database
 
-# Authentication (required)
-BETTER_AUTH_SECRET=your-secret-here
+# Root key for authentication secret derivation (required)
+IRIS_ROOT_ENCRYPTION_KEY=your-base64-encoded-32-byte-key
 
 # At least one LLM provider (required)
 OPENAI_API_KEY=your-openai-key
@@ -243,7 +243,7 @@ console.log(`Found ${agents.length} agents`);
 
 **Authentication failures:**
 
-- Verify `BETTER_AUTH_SECRET` is set
+- Verify `IRIS_ROOT_ENCRYPTION_KEY` is set to a base64-encoded 32-byte key
 - Check PostgreSQL connection
 - Ensure auth setup completes successfully
 

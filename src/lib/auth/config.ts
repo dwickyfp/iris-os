@@ -22,19 +22,19 @@ try {
 }
 import { parseEnvBoolean } from "../utils";
 
-function parseSocialAuthConfigs() {
+function parseSocialAuthConfigs(env: Record<string, string | undefined>) {
   const configs: {
     github?: GitHubConfig;
     google?: GoogleConfig;
     microsoft?: MicrosoftConfig;
   } = {};
   // DISABLE_SIGN_UP only applies to OAuth signups, not email signups
-  const disableSignUp = parseEnvBoolean(process.env.DISABLE_SIGN_UP);
+  const disableSignUp = parseEnvBoolean(env.DISABLE_SIGN_UP);
 
-  if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
     const githubResult = GitHubConfigSchema.safeParse({
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
       disableSignUp,
     });
     if (githubResult.success) {
@@ -47,14 +47,14 @@ function parseSocialAuthConfigs() {
     }
   }
 
-  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
     const forceAccountSelection = parseEnvBoolean(
-      process.env.GOOGLE_FORCE_ACCOUNT_SELECTION,
+      env.GOOGLE_FORCE_ACCOUNT_SELECTION,
     );
 
     const googleConfig: GoogleConfig = {
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
       ...(forceAccountSelection && { prompt: "select_account" as const }),
       disableSignUp,
     };
@@ -70,15 +70,15 @@ function parseSocialAuthConfigs() {
     }
   }
 
-  if (process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET) {
+  if (env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET) {
     const forceAccountSelection = parseEnvBoolean(
-      process.env.MICROSOFT_FORCE_ACCOUNT_SELECTION,
+      env.MICROSOFT_FORCE_ACCOUNT_SELECTION,
     );
-    const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
+    const tenantId = env.MICROSOFT_TENANT_ID || "common";
 
     const microsoftConfig: MicrosoftConfig = {
-      clientId: process.env.MICROSOFT_CLIENT_ID,
-      clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+      clientId: env.MICROSOFT_CLIENT_ID,
+      clientSecret: env.MICROSOFT_CLIENT_SECRET,
       tenantId,
       ...(forceAccountSelection && { prompt: "select_account" as const }),
       disableSignUp,
@@ -98,17 +98,17 @@ function parseSocialAuthConfigs() {
   return configs;
 }
 
-export function getAuthConfig(): AuthConfig {
+export function getAuthConfig(env: Record<string, string | undefined> = {}): AuthConfig {
   const rawConfig = {
-    emailAndPasswordEnabled: process.env.DISABLE_EMAIL_SIGN_IN
-      ? !parseEnvBoolean(process.env.DISABLE_EMAIL_SIGN_IN)
+    emailAndPasswordEnabled: env.DISABLE_EMAIL_SIGN_IN
+      ? !parseEnvBoolean(env.DISABLE_EMAIL_SIGN_IN)
       : true,
     // signUpEnabled now only applies to email signups
     // OAuth signups are controlled separately via DISABLE_SIGN_UP in parseSocialAuthConfigs
-    signUpEnabled: process.env.DISABLE_EMAIL_SIGN_UP
-      ? !parseEnvBoolean(process.env.DISABLE_EMAIL_SIGN_UP)
+    signUpEnabled: env.DISABLE_EMAIL_SIGN_UP
+      ? !parseEnvBoolean(env.DISABLE_EMAIL_SIGN_UP)
       : true,
-    socialAuthenticationProviders: parseSocialAuthConfigs(),
+    socialAuthenticationProviders: parseSocialAuthConfigs(env),
   };
 
   const result = AuthConfigSchema.safeParse(rawConfig);

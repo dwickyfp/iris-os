@@ -1,9 +1,9 @@
 import "server-only";
-import { getSession } from "./auth-instance";
 import { getIsUserAdmin } from "lib/user/utils";
+import { getSession } from "./auth-instance";
 import { admin, editor, user as userRole } from "./roles";
 import type { BetterAuthRole } from "./types";
-import { parseRoleString, isBetterAuthRole } from "./types";
+import { isBetterAuthRole, parseRoleString } from "./types";
 
 /**
  * Simple permission helpers that wrap Better Auth's role system
@@ -77,6 +77,14 @@ export async function requireAdminPermission(
   if (!hasPermission) {
     throw new Error(`Unauthorized: Admin access required to ${action}`);
   }
+}
+
+export async function requireAdminActor(): Promise<{ id: string }> {
+  const session = await getSession();
+  if (!session?.user || !getIsUserAdmin(session.user)) {
+    throw new Error("Unauthorized: Admin access required");
+  }
+  return { id: session.user.id };
 }
 
 /**

@@ -1,7 +1,7 @@
 import { getSession } from "auth/server";
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { serverFileStorage } from "lib/file-storage";
+import { serverFileStorage, withProfile } from "lib/file-storage";
 import { artifactRepository } from "lib/db/repository";
 
 export async function GET(
@@ -27,7 +27,10 @@ export async function GET(
       return NextResponse.json({ error: "Artifact is not available" }, { status: 410 });
     }
 
-    const bytes = await serverFileStorage.download(artifact.storageKey);
+    const storage = artifact.storageProfileId
+      ? withProfile(artifact.storageProfileId)
+      : serverFileStorage;
+    const bytes = await storage.download(artifact.storageKey);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     if (bytes.byteLength !== artifact.size || sha256 !== artifact.sha256) {
       return NextResponse.json({ error: "Artifact integrity check failed" }, { status: 409 });
