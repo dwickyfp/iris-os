@@ -68,3 +68,7 @@ public/uploads
 
 # python bytecode
 *.pyc
+
+# local agent tool artifacts
+/.codegraph/
+/.zcode/
