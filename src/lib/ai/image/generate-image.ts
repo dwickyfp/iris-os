@@ -1,15 +1,15 @@
 "use server";
-import {
-  GoogleGenAI,
-  Part as GeminiPart,
-  Content as GeminiMessage,
-} from "@google/genai";
-import { safe, watchError } from "ts-safe";
-import { getBase64Data } from "lib/file-storage/storage-utils";
-import { serverFileStorage } from "lib/file-storage";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
+import {
+  Content as GeminiMessage,
+  Part as GeminiPart,
+  GoogleGenAI,
+} from "@google/genai";
 import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
+import { serverFileStorage } from "lib/file-storage";
+import { getBase64Data } from "lib/file-storage/storage-utils";
+import { safe, watchError } from "ts-safe";
 
 import { FilePart, ImagePart, ModelMessage, TextPart, generateImage } from "ai";
 import { isString } from "lib/utils";
@@ -38,7 +38,10 @@ export async function generateImageWithOpenAI(
   );
   if (provider.type !== "openai")
     throw new Error("Configured image provider must be OpenAI");
-  const openai = createOpenAI({ apiKey, baseURL: provider.baseUrl ?? undefined });
+  const openai = createOpenAI({
+    apiKey,
+    baseURL: provider.baseUrl ?? undefined,
+  });
   return generateImage({
     model: openai.image("gpt-image-1-mini"),
     abortSignal: options.abortSignal,

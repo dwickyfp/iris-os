@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
-import { workflowRepository } from "lib/db/repository";
 import { persistedWorkflowNodeKinds } from "lib/ai/workflow/workflow.interface";
+import { workflowRepository } from "lib/db/repository";
 import { z } from "zod";
 
 const structureSchema = z.object({
@@ -9,9 +9,11 @@ const structureSchema = z.object({
       .object({
         id: z.string().uuid(),
         name: z.string().min(1),
-        kind: z.string().refine((kind) => persistedWorkflowNodeKinds.has(kind), {
-          message: "Unsupported workflow node kind",
-        }),
+        kind: z
+          .string()
+          .refine((kind) => persistedWorkflowNodeKinds.has(kind), {
+            message: "Unsupported workflow node kind",
+          }),
         nodeConfig: z.record(z.string(), z.unknown()),
         uiConfig: z.record(z.string(), z.unknown()),
       })

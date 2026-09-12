@@ -1,14 +1,11 @@
-import PgBoss from "pg-boss";
+import { getStartedPgBoss } from "lib/jobs/pg-boss";
 
 export const PARENT_RESUME_QUEUE = "agent-parent-resume";
 export const PARENT_RESUME_SWEEP_QUEUE = "agent-parent-resume-sweep";
 
-let boss: PgBoss | undefined;
-
 export async function enqueueParentResume(parentRunId: string) {
-  if (!process.env.POSTGRES_URL) return false;
-  boss ??= new PgBoss({ connectionString: process.env.POSTGRES_URL });
-  await boss.start();
+  const boss = await getStartedPgBoss();
+  if (!boss) return false;
   await boss.createQueue(PARENT_RESUME_QUEUE);
   await boss.send(
     PARENT_RESUME_QUEUE,

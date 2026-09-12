@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
 import { getSession } from "auth/server";
+import { colorize } from "consola/utils";
 import { storageDriver } from "lib/file-storage";
 import globalLogger from "lib/logger";
-import { colorize } from "consola/utils";
+import { NextResponse } from "next/server";
 import { checkStorageAction } from "../actions";
 
 const logger = globalLogger.withDefaults({
@@ -25,7 +25,6 @@ function createFallbackResponse(): FallbackResponse {
     message: "Use multipart/form-data upload to fallbackUrl",
   };
 }
-
 
 /**
  * Upload URL endpoint.

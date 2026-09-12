@@ -1,5 +1,38 @@
-import { describe, it, expect } from "vitest";
-import { formatCsvPreviewText, parseCsvPreview } from "./csv";
+import { describe, expect, it } from "vitest";
+import {
+  formatCsvPreviewText,
+  neutralizeCsvCell,
+  parseCsvPreview,
+} from "./csv";
+
+describe("neutralizeCsvCell", () => {
+  it("prefixes formula-triggering cells", () => {
+    for (const dangerous of ["=cmd()", "+1", "-1+1", "@SUM(A1)", "\tTAB"]) {
+      expect(neutralizeCsvCell(dangerous)).toBe(`'${dangerous}`);
+    }
+  });
+
+  it("leaves safe cells untouched", () => {
+    expect(neutralizeCsvCell("plain value")).toBe("plain value");
+    expect(neutralizeCsvCell(undefined)).toBe("");
+  });
+});
+
+describe("parseCsvPreview byte cap", () => {
+  it("stops parsing at maxBytes", () => {
+    const big = Buffer.from(
+      Array.from({ length: 10_000 }, (_, i) => `row${i},x\n`).join(""),
+    );
+    const preview = parseCsvPreview(big, { maxBytes: 512 });
+    expect(preview.totalRows).toBeLessThan(10_000);
+  });
+
+  it("neutralizes formula cells in the markdown preview", () => {
+    const csv = Buffer.from("name,cmd\nok,=1+1\n");
+    const preview = parseCsvPreview(csv);
+    expect(preview.markdownTable).toContain("'=1+1");
+  });
+});
 
 describe("parseCsvPreview", () => {
   it("parses simple CSV and limits rows/cols", () => {

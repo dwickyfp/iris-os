@@ -131,7 +131,8 @@ function constrainCapabilities<Value>(
     ? new Set(authority.capabilityIds)
     : undefined;
   const allowedKeys =
-    (profile.surface === "automation" && profile.allowedToolKeys !== undefined) ||
+    (profile.surface === "automation" &&
+      profile.allowedToolKeys !== undefined) ||
     profile.surface === "delegation"
       ? new Set(profile.allowedToolKeys)
       : undefined;

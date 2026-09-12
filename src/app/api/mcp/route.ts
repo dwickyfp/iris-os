@@ -1,9 +1,8 @@
 import { getSession } from "auth/server";
-import { McpServerTable } from "lib/db/pg/schema.pg";
-import { NextResponse } from "next/server";
-import { saveMcpClientAction } from "./actions";
-import { canCreateMCP } from "lib/auth/permissions";
 import { logger } from "better-auth";
+import { canCreateMCP } from "lib/auth/permissions";
+import { NextResponse } from "next/server";
+import { mcpServerUpsertSchema, saveMcpClientAction } from "./actions";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -20,10 +19,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const json = (await request.json()) as typeof McpServerTable.$inferInsert;
+  let body: import("zod").infer<typeof mcpServerUpsertSchema>;
+  try {
+    body = mcpServerUpsertSchema.parse(await request.json());
+  } catch (error: any) {
+    return NextResponse.json(
+      { message: "Invalid MCP server payload", details: error.issues },
+      { status: 400 },
+    );
+  }
 
   try {
-    const result = await saveMcpClientAction(json);
+    const result = await saveMcpClientAction(body);
 
     return NextResponse.json({ success: true, id: result.client.getInfo().id });
   } catch (error: any) {

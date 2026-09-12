@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { ActivityEventType } from "app-types/activity";
 import type { MemoryScopeType } from "app-types/memory";
+import {
+  isSafeMemoryContent,
+  sanitizeMemoryContent,
+} from "lib/ai/memory/guardrails";
 
 export type LearningCandidateType = "memory" | "skill" | "automation";
 
@@ -62,15 +66,20 @@ export function extractLearningSignal(input: {
     .slice(0, 2_000);
   if (!text || !["chat.completed", "chat.correction"].includes(input.eventType))
     return null;
-  const normalizedPattern = normalizePattern(text);
+  // Observations persist user text: apply the same guardrails as memory —
+  // sensitive content is rejected outright, the rest is redacted.
+  if (!isSafeMemoryContent(text)) return null;
+  const clean = sanitizeMemoryContent(text);
+  const normalizedPattern = normalizePattern(clean);
   // Time patterns are intentionally telemetry-only. Background learning must
   // never turn an inferred schedule into an executable automation.
-  if (/\b(setiap|tiap|harian|mingguan|bulanan|every)\b/i.test(text)) return null;
-  if (/\b(langkah|prosedur|workflow|selalu lakukan|cara untuk)\b/i.test(text))
+  if (/\b(setiap|tiap|harian|mingguan|bulanan|every)\b/i.test(clean))
+    return null;
+  if (/\b(langkah|prosedur|workflow|selalu lakukan|cara untuk)\b/i.test(clean))
     return {
       candidateType: "skill",
       observationType: "procedure_pattern",
-      summary: text,
+      summary: clean,
       normalizedPattern,
       threshold: 3,
     };

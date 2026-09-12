@@ -1,9 +1,7 @@
 import "server-only";
 
 import type { ActivityEventInput } from "app-types/activity";
-import {
-  type ActivityDatabase,
-} from "lib/ai/runtime/event-recorder";
+import { type ActivityDatabase } from "lib/ai/runtime/event-recorder";
 import { eventRecorder } from "lib/ai/runtime/event-recorder.server";
 
 export async function insertActivityEvent(

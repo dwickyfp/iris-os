@@ -20,10 +20,7 @@ function encryptionKey(value: string | undefined, name: string) {
   return key;
 }
 
-export function encryptRemoteAgentSecret(
-  value: string,
-  env?: SecretEnv,
-) {
+export function encryptRemoteAgentSecret(value: string, env?: SecretEnv) {
   if (!env) return encryptSystemSettingValue("remote-agent.credential", value);
   const iv = randomBytes(12);
   const cipher = createCipheriv(

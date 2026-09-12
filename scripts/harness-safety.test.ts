@@ -56,7 +56,9 @@ describe("Harness environment safety", () => {
     expect(playwrightBrowsersPath("/Users/example")).toBe(
       "/Users/example/Library/Caches/ms-playwright",
     );
-    expect(() => playwrightBrowsersPath(undefined)).toThrow("absolute host home");
+    expect(() => playwrightBrowsersPath(undefined)).toThrow(
+      "absolute host home",
+    );
   });
 
   it("refuses variables outside the runner-generated allowlist", () => {

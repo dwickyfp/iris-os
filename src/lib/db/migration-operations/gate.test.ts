@@ -139,7 +139,9 @@ describe("migration rollout gate", () => {
       snapshotBindingHash: snapshotA,
       targetKind: "staging-snapshot",
     });
-    expect((await evaluateRolloutGate(directory, "staging")).passed).toBe(false);
+    expect((await evaluateRolloutGate(directory, "staging")).passed).toBe(
+      false,
+    );
 
     await Promise.all([
       evidence("integrity", true, { snapshotBindingHash: snapshotA }),

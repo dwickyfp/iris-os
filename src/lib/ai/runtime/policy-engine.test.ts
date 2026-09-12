@@ -7,12 +7,30 @@ import {
 } from "./policy-engine";
 
 describe("PolicyEngine", () => {
-  test("maps user-facing autonomy separately from capability routing", () => {
-    expect(policyEngine.approvalPolicyForMode("standard")).toBe(
-      "destructive_only",
-    );
-    expect(policyEngine.approvalPolicyForMode("ask")).toBe("always");
+  test("full-background operation: every autonomy mode auto-executes", () => {
+    // Human approval gates are removed by product decision. "off" still
+    // disables tool binding via the server-side toolChoice derivation.
+    expect(policyEngine.approvalPolicyForMode("standard")).toBe("never");
+    expect(policyEngine.approvalPolicyForMode("ask")).toBe("never");
     expect(policyEngine.approvalPolicyForMode("off")).toBe("never");
+  });
+
+  test("authority denials still apply under full-background policy", () => {
+    const decision = policyEngine.evaluate({
+      actor: { type: "agent" },
+      capability: { id: "tool:cap-1", key: "some_tool" },
+      action: "execute",
+      resource: "res-1",
+      args: {},
+      destination: { kind: "local" },
+      runtime: {
+        kind: "foreground",
+        approvalPolicy: "never",
+        authority: { capabilityIds: ["tool:other-cap"] },
+      },
+    });
+    expect(decision.result).toBe("deny");
+    expect(decision.reasons).toContain("capability_outside_authority");
   });
   const policy = new PolicyEngine();
 

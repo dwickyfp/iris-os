@@ -184,11 +184,25 @@ function raceWithSignal<T>(operation: PromiseLike<T>, signal: AbortSignal) {
   });
 }
 
-export async function secureJsonFetch(
+export type SecureResponse = {
+  status: number;
+  ok: boolean;
+  statusText: string;
+  headers: Record<string, string>;
+  url: string;
+  body: string;
+};
+
+/**
+ * Core SSRF-guarded request loop: validates the URL (DNS-pinned public-IP
+ * check), follows only same-origin redirects within the configured cap, and
+ * reads a bounded body. Non-2xx statuses are returned, not thrown.
+ */
+async function secureRequest(
   input: string | URL,
   init: RequestInit = {},
   options: SecureFetchOptions = {},
-): Promise<unknown> {
+): Promise<SecureResponse> {
   const fetcher = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_OUTBOUND_TIMEOUT_MS;
   const maxBytes = options.maxBodyBytes ?? DEFAULT_OUTBOUND_BODY_BYTES;
@@ -256,7 +270,7 @@ export async function secureJsonFetch(
           if (!location) throw new Error("Remote redirect is missing Location");
           const redirectUrl = new URL(location, url);
           if (redirectUrl.origin !== url.origin) {
-            throw new Error("Cross-origin remote redirects are not allowed");
+            throw new Error("Cross-origin redirects are not allowed");
           }
           url = redirectUrl;
           continue;
@@ -265,22 +279,18 @@ export async function secureJsonFetch(
           readBoundedBody(response, maxBytes, controller.signal),
           controller.signal,
         );
-        if (!response.ok) {
-          throw new Error(`Remote request failed with HTTP ${response.status}`);
-        }
-        const contentType = response.headers
-          .get("content-type")
-          ?.split(";", 1)[0]
-          .trim()
-          .toLowerCase();
-        if (!contentType || !JSON_CONTENT_TYPES.includes(contentType)) {
-          throw new Error("Remote response Content-Type is not JSON");
-        }
-        try {
-          return JSON.parse(text);
-        } catch {
-          throw new Error("Remote response is not valid JSON");
-        }
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        return {
+          status: response.status,
+          ok: response.ok,
+          statusText: response.statusText,
+          headers,
+          url: response.url || url.toString(),
+          body: text,
+        };
       } finally {
         if (dispatcher) {
           if (controller.signal.aborted) {
@@ -302,5 +312,41 @@ export async function secureJsonFetch(
   } finally {
     clearTimeout(timer);
     callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+/**
+ * SSRF-guarded fetch returning the raw bounded response (status, headers,
+ * body text). Unlike secureJsonFetch it does not require JSON responses and
+ * does not throw on non-2xx statuses.
+ */
+export async function secureFetchResponse(
+  input: string | URL,
+  init: RequestInit = {},
+  options: SecureFetchOptions = {},
+): Promise<SecureResponse> {
+  return secureRequest(input, init, options);
+}
+
+export async function secureJsonFetch(
+  input: string | URL,
+  init: RequestInit = {},
+  options: SecureFetchOptions = {},
+): Promise<unknown> {
+  const response = await secureRequest(input, init, options);
+  if (!response.ok) {
+    throw new Error(`Remote request failed with HTTP ${response.status}`);
+  }
+  const contentType = response.headers["content-type"]
+    ?.split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (!contentType || !JSON_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("Remote response Content-Type is not JSON");
+  }
+  try {
+    return JSON.parse(response.body);
+  } catch {
+    throw new Error("Remote response is not valid JSON");
   }
 }

@@ -16,9 +16,7 @@ function terms(value: string) {
   );
 }
 
-function scopeRank(
-  scopeType: "global" | "workspace" | "task" | "agent",
-) {
+function scopeRank(scopeType: "global" | "workspace" | "task" | "agent") {
   return scopeType === "task"
     ? 4
     : scopeType === "agent"

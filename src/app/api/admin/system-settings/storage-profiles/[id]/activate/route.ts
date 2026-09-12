@@ -11,14 +11,20 @@ export async function POST(
   try {
     actor = await requireAdminActor();
   } catch {
-    return Response.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE });
+    return Response.json(
+      { error: "Forbidden" },
+      { status: 403, headers: NO_STORE },
+    );
   }
   const { id } = await params;
   const body = (await request.json().catch(() => ({}))) as {
     adoptLegacyObjects?: boolean;
   };
   if (!(await pgStorageProfileRepository.getById(id)))
-    return Response.json({ error: "Profile not found" }, { status: 404, headers: NO_STORE });
+    return Response.json(
+      { error: "Profile not found" },
+      { status: 404, headers: NO_STORE },
+    );
   await pgStorageProfileRepository.activate(id, actor.id, {
     adoptLegacyObjects: body.adoptLegacyObjects === true,
   });

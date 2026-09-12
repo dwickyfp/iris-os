@@ -24,6 +24,18 @@ const autonomyByToolChoice: Record<LegacyToolChoice, ChatAutonomy> = {
   none: "off",
 };
 
+/**
+ * Server-side derivation of the effective tool choice: when the client sends
+ * an autonomy mode it overrides any requested tool choice, so a client cannot
+ * request both bound tools ("auto") and a disabled approval policy ("off").
+ */
+export function resolveChatToolChoice(
+  autonomy?: ChatAutonomy,
+  requested?: LegacyToolChoice,
+): LegacyToolChoice {
+  return autonomy ? toolChoiceByAutonomy[autonomy] : (requested ?? "auto");
+}
+
 function capabilityKey(capability: ChatMention) {
   switch (capability.type) {
     case "mcpTool":

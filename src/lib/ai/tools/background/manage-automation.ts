@@ -1,5 +1,4 @@
 import { tool } from "ai";
-import { z } from "zod";
 import {
   AutomationCreateSchema,
   AutomationUpdateSchema,
@@ -10,6 +9,7 @@ import {
   triggerManagedAutomation,
   updateManagedAutomation,
 } from "lib/automation/management";
+import { z } from "zod";
 import { hasExplicitAutomationIntent } from "./intent";
 export { MANAGE_AUTOMATION_TOOL_NAME } from "./names";
 
@@ -70,7 +70,12 @@ export function createManageAutomationTool(context: {
             input.automationId,
           ),
         };
-      const status = input.action === "update" ? undefined : input.action === "pause" ? "paused" : "archived";
+      const status =
+        input.action === "update"
+          ? undefined
+          : input.action === "pause"
+            ? "paused"
+            : "archived";
       return {
         ok: true,
         automation: await updateManagedAutomation(

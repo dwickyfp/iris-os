@@ -12,11 +12,17 @@ export async function POST(
   try {
     await requireAdminActor();
   } catch {
-    return Response.json({ error: "Forbidden" }, { status: 403, headers: NO_STORE });
+    return Response.json(
+      { error: "Forbidden" },
+      { status: 403, headers: NO_STORE },
+    );
   }
   const profile = await pgStorageProfileRepository.getById((await params).id);
   if (!profile)
-    return Response.json({ error: "Profile not found" }, { status: 404, headers: NO_STORE });
+    return Response.json(
+      { error: "Profile not found" },
+      { status: 404, headers: NO_STORE },
+    );
   const storage = createProfileStorage(profile);
   const key = `iris-health/${randomUUID()}.txt`;
   try {
@@ -31,7 +37,10 @@ export async function POST(
       throw new Error("Storage verification failed");
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch {
-    return Response.json({ error: "Storage connection test failed" }, { status: 400, headers: NO_STORE });
+    return Response.json(
+      { error: "Storage connection test failed" },
+      { status: 400, headers: NO_STORE },
+    );
   } finally {
     await storage.delete(key).catch(() => undefined);
   }

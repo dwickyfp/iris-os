@@ -49,7 +49,8 @@
     "close": "关闭",
     "loading": "加载中...",
     "file": "文件",
-    "files": "文件"
+    "files": "文件",
+    "retry": "重试"
   },
   "Auth": {
     "SignIn": {

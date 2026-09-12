@@ -23,8 +23,10 @@ export class ArtifactService {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const storageKey = `artifacts/${randomUUID()}-${path.posix.basename(input.filename)}`;
     const storageProfileId = await this.storage.getProfileId?.();
-    const uploadCleanupId =
-      await this.repository.scheduleUploadCleanup(storageKey, storageProfileId);
+    const uploadCleanupId = await this.repository.scheduleUploadCleanup(
+      storageKey,
+      storageProfileId,
+    );
     const uploaded = await this.storage.upload(bytes, {
       key: storageKey,
       filename: input.filename,
@@ -52,9 +54,14 @@ export class ArtifactService {
       });
     } catch (error) {
       try {
-        const storage = reference.storageProfileId && "withProfile" in this.storage
-          ? (this.storage as FileStorage & { withProfile(id: string): FileStorage }).withProfile(reference.storageProfileId)
-          : this.storage;
+        const storage =
+          reference.storageProfileId && "withProfile" in this.storage
+            ? (
+                this.storage as FileStorage & {
+                  withProfile(id: string): FileStorage;
+                }
+              ).withProfile(reference.storageProfileId)
+            : this.storage;
         await storage.delete(uploaded.key);
         await this.repository.completeCleanup(uploadCleanupId, new Date());
       } catch {
@@ -68,9 +75,14 @@ export class ArtifactService {
   async discard(reference: ArtifactReference): Promise<void> {
     const cleanupId = await this.repository.scheduleCleanup(reference);
     try {
-      const storage = reference.storageProfileId && "withProfile" in this.storage
-        ? (this.storage as FileStorage & { withProfile(id: string): FileStorage }).withProfile(reference.storageProfileId)
-        : this.storage;
+      const storage =
+        reference.storageProfileId && "withProfile" in this.storage
+          ? (
+              this.storage as FileStorage & {
+                withProfile(id: string): FileStorage;
+              }
+            ).withProfile(reference.storageProfileId)
+          : this.storage;
       await storage.delete(reference.storageKey);
       await this.repository.completeCleanup(cleanupId, new Date());
     } catch {
@@ -88,9 +100,14 @@ export class ArtifactService {
     });
     for (const job of jobs) {
       try {
-        const storage = job.storageProfileId && "withProfile" in this.storage
-          ? (this.storage as FileStorage & { withProfile(id: string): FileStorage }).withProfile(job.storageProfileId)
-          : this.storage;
+        const storage =
+          job.storageProfileId && "withProfile" in this.storage
+            ? (
+                this.storage as FileStorage & {
+                  withProfile(id: string): FileStorage;
+                }
+              ).withProfile(job.storageProfileId)
+            : this.storage;
         await storage.delete(job.storageKey);
         await this.repository.completeCleanup(job.cleanupId, new Date());
       } catch (error) {

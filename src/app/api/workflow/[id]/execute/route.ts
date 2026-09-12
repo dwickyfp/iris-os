@@ -4,6 +4,7 @@ import { runManager } from "lib/ai/runs/server";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import { encodeWorkflowEvent } from "lib/ai/workflow/shared.workflow";
 import { workflowRepository } from "lib/db/repository";
+import { checkRateLimit, rateLimitResponse } from "lib/security/rate-limit";
 import { safeJSONParse, toAny } from "lib/utils";
 import { generateUUID } from "lib/utils";
 import logger from "logger";
@@ -15,9 +16,16 @@ export async function POST(
   const { id } = await params;
   const { query } = await request.json();
   const session = await getSession();
-  if (!session) {
+  if (!session?.user?.id) {
     return new Response("Unauthorized", { status: 401 });
   }
+  const limiter = checkRateLimit(
+    "workflow-execute",
+    session.user.id,
+    20,
+    60000,
+  );
+  if (!limiter.allowed) return rateLimitResponse(limiter.retryAfterMs);
   const hasAccess = await workflowRepository.checkAccess(id, session.user.id);
   if (!hasAccess) {
     return new Response("Unauthorized", { status: 401 });

@@ -17,8 +17,8 @@ import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import { systemSettingsService } from "lib/system-settings/server";
 import logger from "logger";
 import { headers } from "next/headers";
-import { getDatabaseAuthConfig } from "./config.server";
 import { getRuntimeAuthConfig } from "./config.runtime";
+import { getDatabaseAuthConfig } from "./config.server";
 import { ac, admin, editor, user } from "./roles";
 
 const {
@@ -66,7 +66,8 @@ const options = {
     }),
     nextCookies(),
   ],
-  baseURL: typeof configuredBaseUrl === "string" ? configuredBaseUrl : undefined,
+  baseURL:
+    typeof configuredBaseUrl === "string" ? configuredBaseUrl : undefined,
   user: {
     changeEmail: {
       enabled: true,

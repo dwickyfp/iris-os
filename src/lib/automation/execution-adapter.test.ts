@@ -1,6 +1,6 @@
 import { customModelProvider } from "lib/ai/models";
-import { BudgetExhaustedError } from "lib/ai/runtime/budget";
 import type { AgentRun } from "lib/ai/runs/types";
+import { BudgetExhaustedError } from "lib/ai/runtime/budget";
 import { createDelegationWorkerExecutor } from "lib/delegation/worker-executor";
 import { describe, expect, test, vi } from "vitest";
 import {
@@ -33,6 +33,9 @@ vi.mock("lib/db/repository", () => ({
   },
   workflowRepository: {
     selectExecuteAbility: vi.fn(async () => []),
+  },
+  mcpRepository: {
+    selectAllForUser: vi.fn(async () => []),
   },
   skillRepository: {
     selectSkillSummariesByAgentId: vi.fn(async () => []),

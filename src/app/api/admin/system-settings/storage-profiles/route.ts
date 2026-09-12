@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { requireAdminActor } from "auth/permissions";
 import { pgStorageProfileRepository } from "lib/db/pg/repositories/storage-profile-repository.pg";
 import { encryptSystemSettingValue } from "lib/security/encrypted-value";
+import { z } from "zod";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
 const httpUrl = z
@@ -48,7 +48,9 @@ export async function POST(request: Request) {
   } catch {
     return error("Forbidden", 403);
   }
-  const parsed = ProfileSchema.safeParse(await request.json().catch(() => null));
+  const parsed = ProfileSchema.safeParse(
+    await request.json().catch(() => null),
+  );
   if (!parsed.success)
     return error(parsed.error.issues[0]?.message ?? "Invalid profile", 400);
   const value = parsed.data;
@@ -68,8 +70,7 @@ export async function POST(request: Request) {
       bucket: value.bucket,
       accessKeyId: value.accessKeyId,
       secretAccessKey: value.secretAccessKey,
-      forcePathStyle:
-        value.driver === "minio" ? true : value.forcePathStyle,
+      forcePathStyle: value.driver === "minio" ? true : value.forcePathStyle,
       publicBaseUrl: value.publicBaseUrl,
       prefix: value.prefix,
     },

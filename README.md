@@ -89,9 +89,11 @@ run without interruption:
   peers. `Prefer` pins requested capabilities while deterministic lexical
   routing selects a bounded relevant set. `Only` narrows routing to requested
   capabilities.
-- **Standard autonomy:** tools are available and policy requires approval for
-  destructive or unclassified operations.
-- **Ask first:** all tool execution requires approval.
+- **Standard autonomy:** tools are available and execute without human
+  approval (full-background operation); authority, budgets, and the server
+  capability set still bound what can run.
+- **Ask first:** each tool call waits for an explicit confirmation click in
+  the thread (opt-in per chat, not a background gate).
 - **Off:** model tool calls are disabled for that response.
 
 The browser sends routing hints, but the server rebuilds the eligible capability

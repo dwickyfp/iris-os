@@ -14,6 +14,8 @@ jobs:
     env:
       # Database
       POSTGRES_URL: postgresql://testuser:testpass@localhost:5432/better_chatbot_test
+      # Dedicated database for the integration suite (it recreates schemas).
+      TEST_POSTGRES_URL: postgresql://testuser:testpass@localhost:5432/iris_integration_test
 
       # Authentication
       IRIS_ROOT_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -74,8 +76,16 @@ jobs:
           # Create minimal .env for Playwright (only non-runtime vars if needed)
           touch .env
 
+      - name: Prepare integration test database
+        run: |
+          psql "postgresql://testuser:testpass@localhost:5432/better_chatbot_test" -c "CREATE DATABASE iris_integration_test;" || true
+          psql "$TEST_POSTGRES_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" || true
+
       - name: Run database migrations
         run: pnpm db:migrate
+
+      - name: Run database integration tests
+        run: pnpm test:integration:db:run
 
       - name: Seed test users once before all tests
         run: pnpm test:e2e:seed

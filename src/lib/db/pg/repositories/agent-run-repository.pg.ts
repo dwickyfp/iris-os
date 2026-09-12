@@ -485,7 +485,12 @@ export function createPgAgentRunRepository(
               eq(AgentRunTable.id, id),
               eq(AgentRunTable.status, candidate.status),
               candidate.status === "running"
-                ? eq(AgentRunTable.leaseToken, candidate.leaseToken!)
+                ? // Re-check expiry inside the UPDATE predicate: a heartbeat
+                  // that fired between the read and this write must win.
+                  and(
+                    eq(AgentRunTable.leaseToken, candidate.leaseToken!),
+                    lte(AgentRunTable.leaseExpiresAt, now),
+                  )
                 : isNull(AgentRunTable.leaseToken),
             ),
           )
@@ -1681,6 +1686,104 @@ export function createPgAgentRunRepository(
         });
       }
       return missingEvents;
+    },
+
+    /**
+     * Force-terminalizes root runs whose executor process died: status
+     * "running" with an expired lease and no delegation row (delegated runs
+     * are recovered by reconcileTerminalDelegatedRuns). Waiting states are
+     * intentionally left alone — they are resumable and hold no lease.
+     */
+    async reapStaleForegroundRuns(limit) {
+      const now = new Date();
+      const candidates = await db
+        .select({ id: AgentRunTable.id, rootRunId: AgentRunTable.rootRunId })
+        .from(AgentRunTable)
+        .where(
+          and(
+            eq(AgentRunTable.status, "running"),
+            eq(AgentRunTable.depth, 0),
+            lte(AgentRunTable.leaseExpiresAt, now),
+            sql`NOT EXISTS (
+              SELECT 1 FROM delegation_run delegated
+              WHERE delegated.child_run_id = ${AgentRunTable.id}
+            )`,
+          ),
+        )
+        .limit(limit);
+      const reaped: AgentRun[] = [];
+      for (const candidate of candidates) {
+        const reapedRun = await db.transaction(async (tx) => {
+          await lockRootBudget(tx, candidate.rootRunId);
+          await lockAgentRuns(tx, [candidate.id]);
+          const [run] = await tx
+            .select()
+            .from(AgentRunTable)
+            .where(eq(AgentRunTable.id, candidate.id))
+            .for("update");
+          if (!run || run.status !== "running") return null;
+          if (run.leaseExpiresAt && run.leaseExpiresAt > now) return null;
+          const [terminal] = await tx
+            .update(AgentRunTable)
+            .set({
+              status: "timed_out",
+              completedAt: now,
+              errorCode: "LEASE_EXPIRED",
+              error:
+                "Run lease expired without a terminal transition (executor lost)",
+              waitingReason: null,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            })
+            .where(
+              and(
+                eq(AgentRunTable.id, run.id),
+                eq(AgentRunTable.status, "running"),
+                lte(AgentRunTable.leaseExpiresAt, now),
+              ),
+            )
+            .returning();
+          if (!terminal) return null;
+          await tx
+            .delete(AgentRunDispatchTable)
+            .where(eq(AgentRunDispatchTable.runId, run.id));
+          await tx
+            .update(AgentRunCheckpointTable)
+            .set({
+              completedAt: now,
+              claimToken: null,
+              claimExpiresAt: null,
+              updatedAt: now,
+            })
+            .where(eq(AgentRunCheckpointTable.parentRunId, run.id));
+          await tx
+            .delete(AgentRunResumeDispatchTable)
+            .where(eq(AgentRunResumeDispatchTable.parentRunId, run.id));
+          await tx
+            .delete(AgentRunContinuationTable)
+            .where(
+              and(
+                eq(AgentRunContinuationTable.runId, run.id),
+                eq(AgentRunContinuationTable.kind, "credential"),
+              ),
+            );
+          const [event] = await tx
+            .select({ id: IrisActivityEventTable.id })
+            .from(IrisActivityEventTable)
+            .where(
+              and(
+                eq(IrisActivityEventTable.userId, terminal.userId),
+                eq(
+                  IrisActivityEventTable.idempotencyKey,
+                  `run-terminal:${terminal.id}`,
+                ),
+              ),
+            );
+          return event ? null : terminal;
+        });
+        if (reapedRun) reaped.push(reapedRun);
+      }
+      return reaped;
     },
 
     async listPendingDispatchRunIds(limit) {

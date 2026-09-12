@@ -32,7 +32,8 @@ export async function getDatabaseAuthConfig(): Promise<AuthConfig> {
     systemSettingsService.getPlain("oauth.microsoft.tenantId"),
     systemSettingsService.getPlain("oauth.microsoft.forceAccountSelection"),
   ]);
-  const socialAuthenticationProviders: AuthConfig["socialAuthenticationProviders"] = {};
+  const socialAuthenticationProviders: AuthConfig["socialAuthenticationProviders"] =
+    {};
   if (typeof githubClientId === "string" && githubClientSecret)
     socialAuthenticationProviders.github = {
       clientId: githubClientId,
@@ -43,7 +44,9 @@ export async function getDatabaseAuthConfig(): Promise<AuthConfig> {
     socialAuthenticationProviders.google = {
       clientId: googleClientId,
       clientSecret: googleClientSecret,
-      ...(googleForceAccountSelection ? { prompt: "select_account" as const } : {}),
+      ...(googleForceAccountSelection
+        ? { prompt: "select_account" as const }
+        : {}),
       disableSignUp: !oauthSignUpEnabled,
     };
   if (typeof microsoftClientId === "string" && microsoftClientSecret)
@@ -51,7 +54,9 @@ export async function getDatabaseAuthConfig(): Promise<AuthConfig> {
       clientId: microsoftClientId,
       clientSecret: microsoftClientSecret,
       tenantId: String(microsoftTenantId || "common"),
-      ...(microsoftForceAccountSelection ? { prompt: "select_account" as const } : {}),
+      ...(microsoftForceAccountSelection
+        ? { prompt: "select_account" as const }
+        : {}),
       disableSignUp: !oauthSignUpEnabled,
     };
   return AuthConfigSchema.parse({

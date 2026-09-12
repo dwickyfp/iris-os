@@ -8,7 +8,9 @@ if (!connectionString) throw new Error("TEST_POSTGRES_URL is required");
 process.env.POSTGRES_URL = connectionString;
 
 const client = new Client({ connectionString });
-let repository: typeof import("lib/db/pg/repositories/memory-review-repository.pg").pgMemoryReviewRepository;
+let repository: typeof import(
+  "lib/db/pg/repositories/memory-review-repository.pg"
+).pgMemoryReviewRepository;
 let userId: string;
 let threadId: string;
 

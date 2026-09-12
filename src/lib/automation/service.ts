@@ -4,20 +4,21 @@ import { eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable, type AutomationTable } from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
+import { resolveAutomationAuthority } from "./authority";
 import { automationRunKey } from "./idempotency";
 import { enqueueAutomationRun } from "./queue";
-import { resolveAutomationAuthority } from "./authority";
 
 export async function createDurableAutomationRun(input: {
   automation: typeof AutomationTable.$inferSelect;
   scheduledFor: Date;
   approvedBy?: string;
 }) {
-  // Until every workflow node exposes a trusted read-only classification,
-  // destructive_only remains fail-closed and requires a durable grant.
-  const requiresApproval = input.automation.approvalPolicy !== "never";
-  const approved = requiresApproval && Boolean(input.approvedBy);
-  const authorized = !requiresApproval || approved;
+  // Full-background operation: automation runs never wait for a human
+  // approval. Authority is still resolved server-side at creation from the
+  // automation target and user ownership.
+  const requiresApproval = false;
+  const approved = false;
+  const authorized = true;
   const authorizationContext = authorized
     ? await resolveAutomationAuthority({
         targetType: input.automation.targetType,

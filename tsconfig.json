@@ -67,6 +67,7 @@
     ".harness/a841bb905d15/next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "tools"
   ]
 }

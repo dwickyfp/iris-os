@@ -30,5 +30,8 @@ jobs:
       - name: Run standard checks
         run: pnpm check
 
+      - name: Run unit tests with coverage
+        run: pnpm test:coverage
+
       - name: Enforce capability-routing release thresholds
         run: pnpm eval:capability-routing

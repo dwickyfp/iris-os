@@ -48,7 +48,8 @@
     "close": "閉じる",
     "loading": "読み込み中...",
     "file": "ファイル",
-    "files": "ファイル"
+    "files": "ファイル",
+    "retry": "再試行"
   },
   "Auth": {
     "SignIn": {
@@ -177,7 +178,6 @@
     },
     "Thread": {
       "chat": "チャット",
-
       "renameChat": "名前を変更",
       "deleteChat": "チャットを削除",
       "deleteUnarchivedChats": "アーカイブされていないチャットをすべて削除",
@@ -197,7 +197,6 @@
       "createLink": "リンクを作成",
       "linkCopied": "リンクがコピーされました"
     },
-
     "ChatPreferences": {
       "title": "チャット設定",
       "whatShouldWeCallYou": "何とお呼びすればよろしいですか？",

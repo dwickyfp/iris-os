@@ -41,7 +41,11 @@ describe("system settings and storage profiles", () => {
       userId,
       0,
     );
-    expect(created).toMatchObject({ configured: true, redacted: true, revision: 1 });
+    expect(created).toMatchObject({
+      configured: true,
+      redacted: true,
+      revision: 1,
+    });
     await expect(service.getSecret("exa.apiKey")).resolves.toBe("secret-value");
     await expect(
       service.mutate(

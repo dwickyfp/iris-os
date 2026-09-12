@@ -9,19 +9,22 @@ import {
 
 describe("operations migration readiness", () => {
   it("derives the expected timestamp and hash from the latest Drizzle migration", async () => {
+    const journal = JSON.parse(
+      await readFile(
+        join(process.cwd(), "src/lib/db/migrations/pg/meta/_journal.json"),
+        "utf8",
+      ),
+    );
+    const newest = journal.entries.at(-1);
     const expected = getExpectedLatestMigration();
     const sql = await readFile(
-      join(
-        process.cwd(),
-        "src/lib/db/migrations/pg/0069_durable_jobs.sql",
-      ),
+      join(process.cwd(), "src/lib/db/migrations/pg", `${newest.tag}.sql`),
       "utf8",
     );
 
-    expect(expected).toEqual({
-      createdAt: 1787576851460,
-      hash: createHash("sha256").update(sql).digest("hex"),
-    });
+    expect(expected.hash).toBe(createHash("sha256").update(sql).digest("hex"));
+    // The timestamp must come from the newest journal entry, not a hardcode.
+    expect(expected.createdAt).toBe(newest.when);
   });
 
   it("checks the latest journal row against both expected fields", () => {

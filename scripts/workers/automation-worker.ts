@@ -1,6 +1,6 @@
-import type PgBoss from "pg-boss";
 import { and, eq, inArray } from "drizzle-orm";
 import { recordActivityEvent } from "lib/activity/service";
+import { resolveAutomationAuthority } from "lib/automation/authority";
 import {
   createAutomationExecutionAdapter,
   projectAutomationExecutionResult,
@@ -11,6 +11,10 @@ import {
   enqueueAutomationRun,
 } from "lib/automation/queue";
 import { createDurableAutomationRun } from "lib/automation/service";
+import {
+  buildAutomationWorkerRequest,
+  resolveWorkerAutomationAuthority,
+} from "lib/automation/worker-context";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   AutomationRunAttemptTable,
@@ -18,11 +22,7 @@ import {
   AutomationTable,
 } from "lib/db/pg/schema.pg";
 import { generateUUID } from "lib/utils";
-import { resolveAutomationAuthority } from "lib/automation/authority";
-import {
-  buildAutomationWorkerRequest,
-  resolveWorkerAutomationAuthority,
-} from "lib/automation/worker-context";
+import type PgBoss from "pg-boss";
 
 const executeTarget = createAutomationExecutionAdapter();
 
@@ -155,9 +155,7 @@ async function execute(runId: string) {
   const { retryable, error, errorCode, output } = projection;
   const retry = retryable && attempt <= automation.retryLimit;
   const delaySeconds = Math.min(3_600, 30 * 2 ** Math.max(0, attempt - 1));
-  const status = retry
-    ? "retry_scheduled"
-    : projection.status;
+  const status = retry ? "retry_scheduled" : projection.status;
 
   await pgDb.transaction(async (tx) => {
     await tx
@@ -193,9 +191,9 @@ async function execute(runId: string) {
       ? "automation.completed"
       : result.status === "budget_exhausted"
         ? "automation.budget_exhausted"
-      : result.status === "cancelled"
-        ? "automation.cancelled"
-        : "automation.failed";
+        : result.status === "cancelled"
+          ? "automation.cancelled"
+          : "automation.failed";
   await recordActivityEvent(automation.userId, {
     actorType: "system",
     scopeType: automation.workspaceId ? "workspace" : "global",
@@ -222,7 +220,7 @@ export async function registerAutomationWorkers(boss: PgBoss) {
     AUTOMATION_EXECUTE_QUEUE,
     { batchSize: 4 },
     async (jobs) => {
-      for (const job of jobs) await execute(job.data.runId);
+      await Promise.all(jobs.map((job) => execute(job.data.runId)));
     },
   );
   const registered = new Set<string>();
@@ -255,11 +253,26 @@ export async function registerAutomationWorkers(boss: PgBoss) {
       queueName,
       { includeMetadata: true },
       async (jobs) => {
-        for (const job of jobs)
+        for (const job of jobs) {
+          // Re-read on every tick: another worker's refresh cannot update
+          // this process's captured snapshot, so the row is the only
+          // trustworthy source for timeout/policy changes.
+          const [current] = await pgDb
+            .select()
+            .from(AutomationTable)
+            .where(eq(AutomationTable.id, automationId));
+          if (
+            !current ||
+            current.status !== "active" ||
+            current.triggerType !== "schedule"
+          ) {
+            continue;
+          }
           await createDurableAutomationRun({
-            automation,
+            automation: current,
             scheduledFor: job.createdOn,
           });
+        }
       },
     );
     registered.add(queueName);

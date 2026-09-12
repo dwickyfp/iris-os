@@ -1,6 +1,21 @@
 import { chatApiSchemaRequestBodySchema } from "app-types/chat";
 import { describe, expect, it } from "vitest";
-import { normalizeChatRequest } from "./normalize";
+import { normalizeChatRequest, resolveChatToolChoice } from "./normalize";
+
+describe("resolveChatToolChoice", () => {
+  it("autonomy overrides a conflicting client tool choice", () => {
+    // This is the server-side floor: a client cannot request both bound
+    // tools ("auto") and a disabled approval policy ("off").
+    expect(resolveChatToolChoice("off", "auto")).toBe("none");
+    expect(resolveChatToolChoice("ask", "auto")).toBe("manual");
+    expect(resolveChatToolChoice("standard", "manual")).toBe("auto");
+  });
+
+  it("falls back to the requested tool choice without autonomy", () => {
+    expect(resolveChatToolChoice(undefined, "manual")).toBe("manual");
+    expect(resolveChatToolChoice(undefined, undefined)).toBe("auto");
+  });
+});
 
 describe("normalizeChatRequest", () => {
   it("normalizes a legacy primary agent and tool mentions", () => {

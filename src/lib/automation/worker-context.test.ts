@@ -63,7 +63,9 @@ describe("automation worker authority", () => {
         capabilityIds: ["mcp:warehouse:query"],
       },
     });
-    expect(JSON.stringify(snapshot)).not.toMatch(/secret|token|header|credential/i);
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /secret|token|header|credential/i,
+    );
   });
 
   test("passes the exact persisted effective grant to the adapter", () => {

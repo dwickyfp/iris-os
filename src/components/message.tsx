@@ -1,23 +1,23 @@
 "use client";
 
-import { isToolUIPart, type UIMessage } from "ai";
-import { memo, useMemo, useState } from "react";
+import { type UIMessage, isToolUIPart } from "ai";
 import equal from "lib/equal";
+import { memo, useMemo, useState } from "react";
 
-import { cn, truncateString } from "lib/utils";
 import type { UseChatHelpers } from "@ai-sdk/react";
-import {
-  UserMessagePart,
-  AssistMessagePart,
-  ToolMessagePart,
-  ReasoningPart,
-  FileMessagePart,
-  SourceUrlMessagePart,
-} from "./message-parts";
-import { ChevronDown, ChevronUp, TriangleAlertIcon } from "lucide-react";
-import { Button } from "ui/button";
-import { useTranslations } from "next-intl";
 import { ChatMetadata } from "app-types/chat";
+import { cn, truncateString } from "lib/utils";
+import { ChevronDown, ChevronUp, TriangleAlertIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { Button } from "ui/button";
+import {
+  AssistMessagePart,
+  FileMessagePart,
+  ReasoningPart,
+  SourceUrlMessagePart,
+  ToolMessagePart,
+  UserMessagePart,
+} from "./message-parts";
 
 interface Props {
   message: UIMessage;
@@ -206,9 +206,11 @@ export const PreviewMessage = memo(
 
 export const ErrorMessage = ({
   error,
+  onRetry,
 }: {
   error: Error;
   message?: UIMessage;
+  onRetry?: () => void;
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const maxLength = 200;
@@ -249,9 +251,16 @@ export const ErrorMessage = ({
                     )}
                   </Button>
                 )}
-                <p className="text-xs text-muted-foreground mt-3 italic">
-                  {t("Chat.thisMessageWasNotSavedPleaseTryTheChatAgain")}
-                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  {onRetry && (
+                    <Button size="sm" variant="outline" onClick={onRetry}>
+                      {t("Common.retry")}
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground italic">
+                    {t("Chat.thisMessageWasNotSavedPleaseTryTheChatAgain")}
+                  </p>
+                </div>
               </div>
             </div>
           </div>

@@ -49,7 +49,8 @@
     "close": "Close",
     "loading": "Loading...",
     "file": "File",
-    "files": "Files"
+    "files": "Files",
+    "retry": "Retry"
   },
   "Error": {},
   "Info": {

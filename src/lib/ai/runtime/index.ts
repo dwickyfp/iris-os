@@ -156,27 +156,6 @@ export type {
   OrchestrationPlanCallResult,
   OrchestrationPlanStep,
 } from "./orchestration-plan";
-export {
-  aggregateIntelligenceEvalMetrics,
-  compareIntelligenceEvalRuns,
-  evaluateIntelligenceScenarios,
-  measureIntelligenceEvalRun,
-} from "./intelligence-eval";
-export type {
-  IntelligenceEvalMetrics,
-  IntelligenceEvalReport,
-  IntelligenceEvalRun,
-  IntelligenceEvalScenario,
-} from "./intelligence-eval";
-export {
-  aggregateIntelligenceTelemetry,
-  projectIntelligenceMetrics,
-} from "./intelligence-telemetry";
-export type {
-  IntelligenceMetric,
-  IntelligenceTelemetryAggregate,
-  IntelligenceTelemetryObservation,
-} from "./intelligence-telemetry";
 export type {
   StrategyGuardAttempt,
   StrategyGuardDecision,

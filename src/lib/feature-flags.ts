@@ -22,7 +22,10 @@ export function getV2FeatureFlags(
 }
 
 export function isV2FeatureEnabled(feature: keyof V2FeatureFlags) {
-  const keys: Record<keyof V2FeatureFlags, Parameters<typeof runtimeSystemSetting>[0]> = {
+  const keys: Record<
+    keyof V2FeatureFlags,
+    Parameters<typeof runtimeSystemSetting>[0]
+  > = {
     workspaces: "features.workspaces",
     learning: "features.learning",
     automation: "features.automation",

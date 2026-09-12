@@ -93,7 +93,9 @@ export function SystemSettingsPage() {
   const [savingAction, setSavingAction] = useState<"save" | "clear" | null>(
     null,
   );
-  const [settingErrors, setSettingErrors] = useState<Record<string, string>>({});
+  const [settingErrors, setSettingErrors] = useState<Record<string, string>>(
+    {},
+  );
 
   const load = async () => {
     setLoading(true);
@@ -301,7 +303,9 @@ function StorageProfilesSection() {
       await loadProfiles();
       toast.success("MinIO profile created");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to create profile");
+      toast.error(
+        error instanceof Error ? error.message : "Unable to create profile",
+      );
     } finally {
       setBusy(false);
     }
@@ -317,9 +321,15 @@ function StorageProfilesSection() {
         },
       );
       await loadProfiles();
-      toast.success(type === "test" ? "Storage connection verified" : "Storage profile activated");
+      toast.success(
+        type === "test"
+          ? "Storage connection verified"
+          : "Storage profile activated",
+      );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Storage action failed");
+      toast.error(
+        error instanceof Error ? error.message : "Storage action failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -329,7 +339,8 @@ function StorageProfilesSection() {
       <div>
         <h2 className="text-lg font-medium">Object Storage Profiles</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Create immutable S3-compatible profiles. MinIO credentials are encrypted and never returned.
+          Create immutable S3-compatible profiles. MinIO credentials are
+          encrypted and never returned.
         </p>
       </div>
       <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2">
@@ -358,21 +369,26 @@ function StorageProfilesSection() {
             <option value="s3">S3</option>
           </select>
         </div>
-        {Object.entries(form).map(([key, value]) => (
+        {Object.entries(form).map(([key, value]) =>
           key === "driver" ? null : (
-          <div key={key} className="space-y-2">
-            <Label htmlFor={`storage-${key}`}>{key.replace(/([A-Z])/g, " $1")}</Label>
-            <Input
-              id={`storage-${key}`}
-              type={key === "secretAccessKey" ? "password" : "text"}
-              value={value}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, [key]: event.target.value }))
-              }
-            />
-          </div>
-          )
-        ))}
+            <div key={key} className="space-y-2">
+              <Label htmlFor={`storage-${key}`}>
+                {key.replace(/([A-Z])/g, " $1")}
+              </Label>
+              <Input
+                id={`storage-${key}`}
+                type={key === "secretAccessKey" ? "password" : "text"}
+                value={value}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    [key]: event.target.value,
+                  }))
+                }
+              />
+            </div>
+          ),
+        )}
         <div className="md:col-span-2">
           <Button disabled={busy} onClick={() => void create()}>
             Create MinIO Profile
@@ -381,7 +397,10 @@ function StorageProfilesSection() {
       </div>
       <div className="divide-y rounded-lg border">
         {profiles.map((profile) => (
-          <div key={profile.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+          <div
+            key={profile.id}
+            className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center"
+          >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{profile.name}</span>
@@ -390,12 +409,24 @@ function StorageProfilesSection() {
                 </Badge>
               </div>
               <p className="truncate text-xs text-muted-foreground">
-                {profile.s3?.endpoint ?? profile.driver} {profile.s3?.bucket ?? ""}
+                {profile.s3?.endpoint ?? profile.driver}{" "}
+                {profile.s3?.bucket ?? ""}
               </p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" disabled={busy} onClick={() => void action(profile.id, "test")}>Test</Button>
-              <Button disabled={busy || profile.active} onClick={() => void action(profile.id, "activate")}>Activate</Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => void action(profile.id, "test")}
+              >
+                Test
+              </Button>
+              <Button
+                disabled={busy || profile.active}
+                onClick={() => void action(profile.id, "activate")}
+              >
+                Activate
+              </Button>
             </div>
           </div>
         ))}

@@ -1,9 +1,9 @@
 import "server-only";
 
 import {
+  type AutomationCreateData,
   AutomationCreateSchema,
   AutomationUpdateSchema,
-  type AutomationCreateData,
 } from "app-types/automation";
 import { and, desc, eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
@@ -27,7 +27,9 @@ async function assertTargetAccess(
       ? await workflowRepository.checkAccess(input.targetId, userId)
       : input.targetType === "skill"
         ? Boolean(await skillRepository.selectSkillById(input.targetId, userId))
-        : Boolean(await agentRepository.selectAgentById(input.targetId, userId));
+        : Boolean(
+            await agentRepository.selectAgentById(input.targetId, userId),
+          );
   if (!targetExists) throw new Error("AUTOMATION_TARGET_NOT_FOUND");
 }
 

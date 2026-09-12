@@ -18,12 +18,17 @@ describe("worker heartbeat", () => {
     };
     const onFailure = vi.fn();
     const onShutdown = vi.fn().mockResolvedValue(undefined);
-    const heartbeat = startWorkerHeartbeat("postgres://unused", identity, 1_000, {
-      maxConsecutiveFailures: 2,
-      onFailure,
-      onShutdown,
-      pool,
-    });
+    const heartbeat = startWorkerHeartbeat(
+      "postgres://unused",
+      identity,
+      1_000,
+      {
+        maxConsecutiveFailures: 2,
+        onFailure,
+        onShutdown,
+        pool,
+      },
+    );
 
     await vi.advanceTimersByTimeAsync(2_000);
 
@@ -49,12 +54,17 @@ describe("worker heartbeat", () => {
     };
     const onFailure = vi.fn();
     const onShutdown = vi.fn();
-    const heartbeat = startWorkerHeartbeat("postgres://unused", identity, 1_000, {
-      maxConsecutiveFailures: 2,
-      onFailure,
-      onShutdown,
-      pool,
-    });
+    const heartbeat = startWorkerHeartbeat(
+      "postgres://unused",
+      identity,
+      1_000,
+      {
+        maxConsecutiveFailures: 2,
+        onFailure,
+        onShutdown,
+        pool,
+      },
+    );
 
     await vi.advanceTimersByTimeAsync(3_000);
 
@@ -73,12 +83,17 @@ describe("worker heartbeat", () => {
         .mockImplementation(() => new Promise(() => {})),
       end: vi.fn().mockResolvedValue(undefined),
     };
-    const heartbeat = startWorkerHeartbeat("postgres://unused", identity, 1_000, {
-      maxConsecutiveFailures: 1,
-      shutdownTimeoutMs: 20,
-      onShutdown: () => new Promise(() => {}),
-      pool,
-    });
+    const heartbeat = startWorkerHeartbeat(
+      "postgres://unused",
+      identity,
+      1_000,
+      {
+        maxConsecutiveFailures: 1,
+        shutdownTimeoutMs: 20,
+        onShutdown: () => new Promise(() => {}),
+        pool,
+      },
+    );
 
     const shutdownAttempt = heartbeat.start();
     await vi.advanceTimersByTimeAsync(20);

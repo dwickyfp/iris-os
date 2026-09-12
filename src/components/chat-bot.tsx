@@ -1,39 +1,47 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
-import { toast } from "sonner";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PromptInput from "./prompt-input";
-import clsx from "clsx";
 import { appStore } from "@/app/store";
+import { useChat } from "@ai-sdk/react";
+import clsx from "clsx";
 import { cn, createDebounce, generateUUID, truncateString } from "lib/utils";
-import { ErrorMessage, PreviewMessage } from "./message";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ChatGreeting } from "./chat-greeting";
+import { ErrorMessage, PreviewMessage } from "./message";
+import PromptInput from "./prompt-input";
 
-import { useShallow } from "zustand/shallow";
 import {
   DefaultChatTransport,
+  TextUIPart,
+  UIMessage,
   isToolUIPart,
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
-  TextUIPart,
-  UIMessage,
 } from "ai";
+import { useShallow } from "zustand/shallow";
 
-import { safe } from "ts-safe";
-import { mutate } from "swr";
+import { deleteThreadAction } from "@/app/api/chat/actions";
+import { useGenerateThreadTitle } from "@/hooks/queries/use-generate-thread-title";
+import { useFileDragOverlay } from "@/hooks/use-file-drag-overlay";
+import { useToRef } from "@/hooks/use-latest";
+import { useMounted } from "@/hooks/use-mounted";
+import { useThreadFileUploader } from "@/hooks/use-thread-file-uploader";
 import {
+  CapabilityRef,
   ChatApiSchemaRequestBody,
   ChatAttachment,
-  CapabilityRef,
   ChatModel,
 } from "app-types/chat";
-import { useToRef } from "@/hooks/use-latest";
-import { isShortcutEvent, Shortcuts } from "lib/keyboard-shortcuts";
-import { Button } from "ui/button";
-import { deleteThreadAction } from "@/app/api/chat/actions";
+import { AnimatePresence, motion } from "framer-motion";
+import { getStorageManager } from "lib/browser-stroage";
+import { Shortcuts, isShortcutEvent } from "lib/keyboard-shortcuts";
+import { ArrowDown, FilePlus, Loader } from "lucide-react";
+import { useTranslations } from "next-intl";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { ArrowDown, Loader, FilePlus } from "lucide-react";
+import { mutate } from "swr";
+import { safe } from "ts-safe";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -42,15 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "ui/dialog";
-import { useTranslations } from "next-intl";
 import { Think } from "ui/think";
-import { useGenerateThreadTitle } from "@/hooks/queries/use-generate-thread-title";
-import dynamic from "next/dynamic";
-import { useMounted } from "@/hooks/use-mounted";
-import { getStorageManager } from "lib/browser-stroage";
-import { AnimatePresence, motion } from "framer-motion";
-import { useThreadFileUploader } from "@/hooks/use-thread-file-uploader";
-import { useFileDragOverlay } from "@/hooks/use-file-drag-overlay";
 
 type Props = {
   threadId: string;
@@ -118,7 +118,7 @@ export default function ChatBot({
           : {}),
         ...(taskId !== undefined ? { activeTaskId: taskId ?? undefined } : {}),
         chatSessions: {
-          ...state.chatSessions,
+          ...evictStaleSessions(state.chatSessions, threadId),
           [threadId]: { initialMessages },
         },
       };
@@ -126,6 +126,21 @@ export default function ChatBot({
   }, [appStoreMutate, initialMessages, taskId, threadId, workspaceId]);
 
   return null;
+}
+
+/** Bounds mounted hidden chat sessions so memory cannot grow unbounded. */
+function evictStaleSessions(
+  sessions: Record<string, { initialMessages: UIMessage[] }>,
+  keepId: string,
+) {
+  const MAX_SESSIONS = 12;
+  const ids = Object.keys(sessions);
+  if (ids.length < MAX_SESSIONS) return sessions;
+  const keep = new Set(ids.slice(ids.length - (MAX_SESSIONS - 1)));
+  keep.delete(keepId);
+  return Object.fromEntries(
+    Object.entries(sessions).filter(([id]) => keep.has(id) || id === keepId),
+  );
 }
 
 export function ChatSession({
@@ -241,6 +256,8 @@ export function ChatSession({
     addToolResult: _addToolResult,
     addToolApprovalResponse,
     error,
+    clearError,
+    regenerate,
     sendMessage,
     stop,
   } = useChat({
@@ -251,7 +268,6 @@ export function ChatSession({
     transport: new DefaultChatTransport({
       prepareSendMessagesRequest: ({ messages, body, id }) => {
         if (window.location.pathname !== `/chat/${threadId}`) {
-          console.log("replace-state");
           window.history.replaceState({}, "", `/chat/${threadId}`);
         }
         const lastMessage = messages.at(-1)!;
@@ -630,7 +646,15 @@ export function ChatSession({
                 </>
               )}
 
-              {error && <ErrorMessage error={error} />}
+              {error && (
+                <ErrorMessage
+                  error={error}
+                  onRetry={() => {
+                    clearError();
+                    regenerate();
+                  }}
+                />
+              )}
               <div className="min-w-0 min-h-52" />
             </div>
           </>

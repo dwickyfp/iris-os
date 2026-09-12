@@ -15,7 +15,10 @@ export async function POST(
   if (!isV2FeatureEnabled("automation"))
     return Response.json({ error: "Not found" }, { status: 404 });
   const scheduledFor = new Date();
-  const run = await triggerManagedAutomation(session.user.id, (await params).id);
+  const run = await triggerManagedAutomation(
+    session.user.id,
+    (await params).id,
+  );
   return Response.json(
     {
       queued: run?.status === "queued",

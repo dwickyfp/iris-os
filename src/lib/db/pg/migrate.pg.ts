@@ -1,11 +1,9 @@
 import { join } from "path";
+import { sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { sql } from "drizzle-orm";
 
-export async function assertSandboxRetirementDrained(
-  database: NodePgDatabase,
-) {
+export async function assertSandboxRetirementDrained(database: NodePgDatabase) {
   await database.execute(sql`
     DO $$
     DECLARE

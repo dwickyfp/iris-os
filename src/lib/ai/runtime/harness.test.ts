@@ -75,18 +75,22 @@ describe("IrisHarness", () => {
       orchestration: orchestration(),
     } as never);
 
-    const result = await stream.finalize(native, {}, {
-      checkpoint: {
-        continuationKind: "goal",
-        goalRound: 1,
-        maxGoalRounds: 3,
-        delegationToolCallIds: [],
-        responseMessages: [],
-        modelMessages: [],
-        modelConfig: {},
-        authorizationRecipe: {},
+    const result = await stream.finalize(
+      native,
+      {},
+      {
+        checkpoint: {
+          continuationKind: "goal",
+          goalRound: 1,
+          maxGoalRounds: 3,
+          delegationToolCallIds: [],
+          responseMessages: [],
+          modelMessages: [],
+          modelConfig: {},
+          authorizationRecipe: {},
+        },
       },
-    });
+    );
 
     expect(result).toMatchObject({ status: "continued" });
     expect(runs.suspendParent).toHaveBeenCalledWith(

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { BudgetExhaustedError, BudgetGuard } from "lib/ai/runtime/budget";
 import { Client } from "pg";
 import {
   afterAll,
@@ -10,7 +11,6 @@ import {
   vi,
 } from "vitest";
 import { applyMigrations, recreatePublicSchema } from "./migration-harness";
-import { BudgetExhaustedError, BudgetGuard } from "lib/ai/runtime/budget";
 
 const connectionString = process.env.TEST_POSTGRES_URL;
 if (!connectionString) throw new Error("TEST_POSTGRES_URL is required");
@@ -23,7 +23,9 @@ type BudgetAuthorityModule = Awaited<
 const loadBudgetAuthorityModule = () =>
   import("lib/ai/runtime/server-budget-authority");
 let authority: BudgetAuthorityModule["serverBudgetAuthority"];
-let resolveBudget: typeof import("lib/ai/runtime/server-budget-resolver").serverBudgetResolver;
+let resolveBudget: typeof import(
+  "lib/ai/runtime/server-budget-resolver"
+).serverBudgetResolver;
 
 beforeAll(async () => {
   await client.connect();

@@ -5,15 +5,15 @@ import type {
 } from "app-types/remote-agent";
 import { sanitizeActivityPayload } from "lib/activity/sanitize";
 import type { ArtifactReference } from "lib/ai/artifacts";
+import {
+  isActiveAgentRunStatus,
+  isTerminalAgentRunStatus,
+} from "lib/ai/runs/status";
 import type {
   AgentRun,
   RunContinuation,
   RunLeaseState,
 } from "lib/ai/runs/types";
-import {
-  isActiveAgentRunStatus,
-  isTerminalAgentRunStatus,
-} from "lib/ai/runs/status";
 import type { AutomationExecutionResult } from "lib/automation/execution-adapter";
 import {
   type AbortCause,
@@ -409,6 +409,51 @@ export function createDelegationWorkerExecutor(
       await dependencies.runs.waitForApproval(run.id, token);
       return;
     }
+    // Transient remote failures are retried with bounded backoff instead of
+    // failing the child permanently. The child deadline remains the hard
+    // ceiling: reconcileTerminalDelegatedRuns times out waiting runs.
+    if (
+      result.status === "failed" &&
+      result.retryable &&
+      result.errorCode?.startsWith("REMOTE_")
+    ) {
+      const priorAttempts = Number.parseInt(
+        (run.waitingReason ?? "").replace("REMOTE_RETRY:", ""),
+        10,
+      );
+      const attempts =
+        Number.isInteger(priorAttempts) && priorAttempts > 0
+          ? priorAttempts
+          : 0;
+      if (attempts < MAX_REMOTE_RETRIES) {
+        const delaySeconds = Math.min(60, 5 * 2 ** attempts);
+        const deferred = await dependencies.runs.deferRemoteTask(
+          run.id,
+          token,
+          {
+            id: result.remoteTaskId ?? `retry:${run.id}`,
+            state: "submitted",
+          },
+          `REMOTE_RETRY:${attempts + 1}`,
+          new Date(now() + delaySeconds * 1_000),
+        );
+        if (deferred) {
+          const enqueued = await dependencies
+            .enqueue(run.id, delaySeconds)
+            .catch(() => false);
+          if (enqueued)
+            await dependencies.markDispatched(run.id).catch(() => undefined);
+          await dependencies.recordEvent({
+            kind: "remote",
+            child: deferred,
+            eventType: "agent.remote_status_changed",
+            toStatus: "retry_scheduled",
+            payload: { attempt: attempts + 1, delaySeconds },
+          });
+          return;
+        }
+      }
+    }
     const finished =
       result.status === "succeeded"
         ? await dependencies.runs.succeedWithLease(run.id, token, result.output)
@@ -664,6 +709,7 @@ export function createDelegationWorkerExecutor(
                 : "REMOTE_FAILED",
         message: `Remote task ended in ${task.state}`,
         retryable: task.state === "unknown",
+        remoteTaskId: task.id,
       };
     } catch (error) {
       if (error instanceof DelegationWorkerCrash) throw error;
@@ -683,12 +729,15 @@ export function createDelegationWorkerExecutor(
         errorCode: "REMOTE_EXECUTION_ERROR",
         message: error instanceof Error ? error.message : String(error),
         retryable: true,
+        ...(remoteTaskId ? { remoteTaskId } : {}),
       };
     }
   }
 
   return Object.assign(execute, { cancelRemote });
 }
+
+const MAX_REMOTE_RETRIES = 5;
 
 function remoteTaskMetadata(task: A2ATask): Record<string, unknown> {
   const waiting = ["input_required", "auth_required"].includes(task.state);

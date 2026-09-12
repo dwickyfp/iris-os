@@ -17,6 +17,7 @@
     "benchmark:a2a": "tsx scripts/a2a-disposable-benchmark.ts",
     "eval:capability-routing": "tsx scripts/eval-capability-routing.ts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:integration:db": "tsx scripts/test-postgres.ts",
     "test:integration:db:run": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
@@ -27,6 +28,7 @@
     "test:e2e:clean": "dotenv -- tsx scripts/cleanup-all-test-data.ts",
     "lint": "biome lint",
     "lint:fix": "biome lint --write --unsafe",
+    "lint:oxlint": "oxlint",
     "format": "biome format --write",
     "check-types": "tsc --noEmit",
     "benchmark:skills:live": "node --conditions=react-server --import tsx scripts/benchmark-skills-live.ts",
@@ -159,6 +161,9 @@
     "@axe-core/playwright": "^4.13.0",
     "@better-auth-kit/seed": "^1.0.12",
     "@biomejs/biome": "1.9.4",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/sdk-node": "^0.222.0",
+    "@oxlint/plugins": "1.82.0",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/json-schema": "^7.0.15",
@@ -166,6 +171,7 @@
     "@types/pg": "^8.16.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^5.0.0",
     "cross-env": "^7.0.3",
     "dotenv-cli": "^10.0.0",
     "drizzle-kit": "^0.30.6",
@@ -173,6 +179,7 @@
     "eslint-config-next": "15.3.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "oxlint": "1.82.0",
     "rimraf": "^6.1.2",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",
@@ -181,7 +188,10 @@
     "vitest": "^3.2.4"
   },
   "lint-staged": {
-    "*.{js,json,mjs,ts,yaml,tsx,css}": ["pnpm format", "pnpm lint:fix"]
+    "*.{js,json,mjs,ts,yaml,tsx,css}": [
+      "pnpm format",
+      "pnpm lint:fix"
+    ]
   },
   "packageManager": "pnpm@10.2.1",
   "engines": {

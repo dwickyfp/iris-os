@@ -1,19 +1,19 @@
 "use server";
 
-import { validatedActionWithAdminPermission } from "lib/action-utils";
-import { headers } from "next/headers";
-import { auth } from "auth/server";
 import { DEFAULT_USER_ROLE, userRolesInfo } from "app-types/roles";
-import {
-  UpdateUserRoleSchema,
-  UpdateUserRoleActionState,
-  UpdateUserBanStatusSchema,
-  UpdateUserBanStatusActionState,
-} from "./validations";
+import { auth } from "auth/server";
+import { validatedActionWithAdminPermission } from "lib/action-utils";
 import logger from "lib/logger";
-import { getTranslations } from "next-intl/server";
-import { getUser } from "lib/user/server";
 import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { getUser } from "lib/user/server";
+import { getTranslations } from "next-intl/server";
+import { headers } from "next/headers";
+import {
+  UpdateUserBanStatusActionState,
+  UpdateUserBanStatusSchema,
+  UpdateUserRoleActionState,
+  UpdateUserRoleSchema,
+} from "./validations";
 
 export const updateUserRolesAction = validatedActionWithAdminPermission(
   UpdateUserRoleSchema,
@@ -24,7 +24,9 @@ export const updateUserRolesAction = validatedActionWithAdminPermission(
 
     const role =
       roleInput ||
-      (String(runtimeSystemSetting("users.defaultRole")) as typeof DEFAULT_USER_ROLE);
+      (String(
+        runtimeSystemSetting("users.defaultRole"),
+      ) as typeof DEFAULT_USER_ROLE);
     if (userSession.user.id === userId) {
       return {
         success: false,

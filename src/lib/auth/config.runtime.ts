@@ -3,7 +3,8 @@ import { AuthConfigSchema } from "app-types/authentication";
 import { runtimeSystemSetting } from "lib/system-settings/runtime";
 
 export function getRuntimeAuthConfig(): AuthConfig {
-  const socialAuthenticationProviders: AuthConfig["socialAuthenticationProviders"] = {};
+  const socialAuthenticationProviders: AuthConfig["socialAuthenticationProviders"] =
+    {};
   const oauthEnabled = runtimeSystemSetting("auth.oauthSignUpEnabled") === true;
   const githubId = runtimeSystemSetting("oauth.github.clientId");
   const githubSecret = runtimeSystemSetting("oauth.github.clientSecret");

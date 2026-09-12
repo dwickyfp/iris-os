@@ -11,7 +11,8 @@ describe("production startup migration safety", () => {
     const packageJson = JSON.parse(packageRaw) as {
       scripts: Record<string, string>;
     };
-    const forbidden = /runMigrate|db:migrate|migrate\.pg|drizzle-orm\/.*migrator/;
+    const forbidden =
+      /runMigrate|db:migrate|migrate\.pg|drizzle-orm\/.*migrator/;
 
     expect(instrumentation).not.toMatch(forbidden);
     expect(postinstall).not.toMatch(forbidden);

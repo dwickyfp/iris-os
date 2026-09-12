@@ -1,4 +1,7 @@
-import { loadOperationsConfig, type OperationsConfig } from "lib/operations/config";
+import {
+  type OperationsConfig,
+  loadOperationsConfig,
+} from "lib/operations/config";
 import {
   evaluateReadiness,
   unavailableReadiness,
@@ -33,9 +36,7 @@ export async function GET() {
   }
 }
 
-async function getSnapshotAfterMigrationCheck(
-  config: OperationsConfig,
-) {
+async function getSnapshotAfterMigrationCheck(config: OperationsConfig) {
   if (!(await getOperationsMigrationStatus(config))) return null;
   return getOperationsSnapshot(config);
 }

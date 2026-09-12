@@ -46,6 +46,8 @@ export type AutomationExecutionResult =
       errorCode: string;
       message: string;
       retryable: boolean;
+      /** Remote task id, present when the remote task was created. */
+      remoteTaskId?: string;
     }
   | { status: "cancelled"; message?: string }
   | { status: "timed_out"; message: string }

@@ -1,8 +1,8 @@
 import type { UIMessage } from "ai";
 import type {
+  ContextPlan,
   ContextPlanner,
   ContextPlannerInput,
-  ContextPlan,
 } from "../context-planner";
 
 const SAFETY_MARGIN = 0.85;
@@ -164,7 +164,8 @@ export class ContextEngine {
     const observationParts: string[] = [];
     for (const source of ordered) {
       const tokens = Math.max(1, Math.ceil(source.content.length / 4));
-      const canInclude = source.kind === "current_request" || tokens <= remaining;
+      const canInclude =
+        source.kind === "current_request" || tokens <= remaining;
       const content = canInclude
         ? source.content
         : source.content.slice(0, Math.max(4, remaining * 4));
@@ -192,14 +193,17 @@ ${content}
         }
         remaining = Math.max(0, remaining - used);
       }
-      if (truncated || (!canInclude && tokens > 0)) truncatedSources.push(source.id);
+      if (truncated || (!canInclude && tokens > 0))
+        truncatedSources.push(source.id);
     }
     let conversation = input.messages ?? [];
     // The request is data-plane input. Avoid duplicating it when the caller has
     // already included the submitted user message in the conversation.
     if (
       input.currentRequest &&
-      !conversation.some((message) => textFromMessage(message) === input.currentRequest)
+      !conversation.some(
+        (message) => textFromMessage(message) === input.currentRequest,
+      )
     ) {
       conversation = [
         ...conversation,
@@ -208,7 +212,10 @@ ${content}
     }
     if (observationParts.length) {
       conversation = [
-        observationMessage(observationParts.join("\n\n"), "context-observations"),
+        observationMessage(
+          observationParts.join("\n\n"),
+          "context-observations",
+        ),
         ...conversation,
       ];
     }
@@ -220,7 +227,12 @@ ${content}
         })
       : {
           messages: conversation,
-          provenance: [{ source: "conversation" as const, messageIds: conversation.map((m) => m.id) }],
+          provenance: [
+            {
+              source: "conversation" as const,
+              messageIds: conversation.map((m) => m.id),
+            },
+          ],
           diagnostics: {
             compacted: false,
             estimatedTokensBefore: estimateMessageTokens(conversation),
@@ -254,7 +266,10 @@ ${content}
         .join("\n\n"),
       messages: compacted.messages,
       sourceRecords: records,
-      estimatedTokens: records.reduce((sum, record) => sum + record.estimatedTokens, 0),
+      estimatedTokens: records.reduce(
+        (sum, record) => sum + record.estimatedTokens,
+        0,
+      ),
       truncatedSources: [...new Set(truncatedSources)],
       trustBoundaries,
       provenance: compacted.provenance,
@@ -291,16 +306,19 @@ ${content}
       };
     }
 
-    let retained: UIMessage[] = [];
+    // O(n): sum per-message estimates instead of re-stringifying the whole
+    // retained window on every step.
+    const retainedReversed: UIMessage[] = [];
+    let retainedTokens = 0;
     for (const message of [...messages].reverse()) {
-      if (
-        estimateMessageTokens([message, ...retained]) >
-        budget * RETAINED_BUDGET_RATIO
-      ) {
+      const messageTokens = estimateMessageTokens([message]);
+      if (retainedTokens + messageTokens > budget * RETAINED_BUDGET_RATIO) {
         break;
       }
-      retained = [message, ...retained];
+      retainedReversed.push(message);
+      retainedTokens += messageTokens;
     }
+    const retained = retainedReversed.reverse();
     const oldMessages = messages.slice(
       0,
       Math.max(0, messages.length - retained.length),

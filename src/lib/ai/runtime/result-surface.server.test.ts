@@ -87,9 +87,9 @@ describe("server ResultSurface projection", () => {
       provenance,
     });
     expect("result" in (projected as object)).toBe(false);
-    expect((projected as { preview: string }).preview.length).toBeLessThanOrEqual(
-      512,
-    );
+    expect(
+      (projected as { preview: string }).preview.length,
+    ).toBeLessThanOrEqual(512);
   });
 
   test("preserves explicit mixed trust in a structured summary", async () => {
@@ -140,9 +140,7 @@ describe("server ResultSurface projection", () => {
     expect(projected).toMatchObject({
       mode: "structured-summary",
       trust: "untrusted",
-      provenance: [
-        { sourceId: "call-3", sourceType: "capability-result" },
-      ],
+      provenance: [{ sourceId: "call-3", sourceType: "capability-result" }],
       summary: {
         structure: {
           type: "scalar",

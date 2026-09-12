@@ -17,7 +17,8 @@ async function decryptLegacy(value: string) {
   const encoded = await systemSettingsService.getSecret(
     "legacy.modelSettingsEncryptionKey",
   );
-  if (!encoded) throw new Error("Legacy model encryption key is not configured");
+  if (!encoded)
+    throw new Error("Legacy model encryption key is not configured");
   const key = Buffer.from(encoded, "base64");
   if (key.length !== 32) throw new Error("Invalid legacy model encryption key");
   const [ivValue, tagValue, payload] = value.split(".");

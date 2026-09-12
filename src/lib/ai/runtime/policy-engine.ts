@@ -292,12 +292,14 @@ export class PolicyEngine {
     return autonomyLevel === 4 ? "destructive_only" : "always";
   }
 
-  approvalPolicyForMode(mode: AutonomyMode): ApprovalPolicy {
-    return mode === "ask"
-      ? "always"
-      : mode === "off"
-        ? "never"
-        : "destructive_only";
+  // `mode` is kept in the signature for API compatibility; it no longer
+  // changes the policy.
+  approvalPolicyForMode(_mode: AutonomyMode): ApprovalPolicy {
+    // Full-background operation: human approval gates are removed by product
+    // decision. Every autonomy mode auto-executes tools; "off" still disables
+    // tool binding entirely via the server-side toolChoice derivation, and
+    // authority denials (capability/allowlist intersection) still apply.
+    return "never";
   }
 
   resolveSnapshot(

@@ -46,7 +46,9 @@ const OUTCOME_GOAL =
   /\b(?:analyze|analyse|evaluate|calculate|investigate|summarize|summarise|compare|assess)\b/i;
 
 function unique(values: Array<string | undefined>) {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+  return [
+    ...new Set(values.filter((value): value is string => Boolean(value))),
+  ];
 }
 
 function capture(goal: string, patterns: RegExp[]) {
@@ -134,7 +136,9 @@ export class GoalRequirementResolver {
     }
 
     const mediaTypes = unique(
-      MEDIA_TYPES.filter(([pattern]) => pattern.test(goal)).map(([, type]) => type),
+      MEDIA_TYPES.filter(([pattern]) => pattern.test(goal)).map(
+        ([, type]) => type,
+      ),
     );
     const isReport = /\breport\b/i.test(goal);
     const isImage = mediaTypes.some((type) => type.startsWith("image/"));

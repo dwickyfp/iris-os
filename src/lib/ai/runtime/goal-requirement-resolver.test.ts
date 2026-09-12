@@ -64,8 +64,7 @@ describe("GoalRequirementResolver", () => {
   test("extracts only explicit title and sections", () => {
     expect(
       resolver.resolve({
-        goal:
-          'Generate a markdown report titled "Revenue Review" with sections Summary, Risks and Recommendations.',
+        goal: 'Generate a markdown report titled "Revenue Review" with sections Summary, Risks and Recommendations.',
       }),
     ).toMatchObject({
       requiredTitle: "Revenue Review",

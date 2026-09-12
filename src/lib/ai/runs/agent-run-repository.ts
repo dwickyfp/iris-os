@@ -1,16 +1,16 @@
 import type {
   AgentRun,
+  ClaimedParentRun,
+  ParentRunCheckpoint,
   QueueDelegatedRunInput,
-  RemoteSubmissionIntent,
   RemoteCancellationIntent,
+  RemoteSubmissionIntent,
   ResumeRunInput,
   RunContinuation,
   RunLease,
   RunLeaseState,
   RunOutcome,
   StartRunInput,
-  ParentRunCheckpoint,
-  ClaimedParentRun,
 } from "./types";
 
 export interface AgentRunRepository {
@@ -79,7 +79,9 @@ export interface AgentRunRepository {
     details?: { error?: string; errorCode?: string },
   ): Promise<AgentRun | null>;
   requestCancellationTree(id: string, userId: string): Promise<AgentRun | null>;
-  prepareRemoteCancellation(id: string): Promise<RemoteCancellationIntent | null>;
+  prepareRemoteCancellation(
+    id: string,
+  ): Promise<RemoteCancellationIntent | null>;
   recordRemoteCancellation(
     id: string,
     outcome:
@@ -94,6 +96,7 @@ export interface AgentRunRepository {
   countRunningChildren(parentRunId: string): Promise<number>;
   listStaleDelegatedRunIds(before: Date, limit: number): Promise<string[]>;
   reconcileTerminalDelegatedRuns(limit: number): Promise<AgentRun[]>;
+  reapStaleForegroundRuns(limit: number): Promise<AgentRun[]>;
   listPendingDispatchRunIds(limit: number): Promise<string[]>;
   markDispatched(id: string): Promise<void>;
   listPendingRemoteCancellationRunIds(limit: number): Promise<string[]>;
@@ -103,7 +106,10 @@ export interface AgentRunRepository {
     leaseToken: string,
     checkpoint: ParentRunCheckpoint,
   ): Promise<AgentRun | null>;
-  claimParentResume(id: string, leaseMs: number): Promise<ClaimedParentRun | null>;
+  claimParentResume(
+    id: string,
+    leaseMs: number,
+  ): Promise<ClaimedParentRun | null>;
   checkpointParentAgain(
     id: string,
     claimToken: string,

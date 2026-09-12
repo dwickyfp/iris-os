@@ -1,18 +1,13 @@
-import {
-  isStepCount,
-  tool,
-  ToolLoopAgent,
-  type LanguageModel,
-} from "ai";
-import { z } from "zod";
+import { type LanguageModel, ToolLoopAgent, isStepCount, tool } from "ai";
 import type { MemoryScope } from "app-types/memory";
+import { z } from "zod";
 import {
-  buildMemoryReviewerPrompt,
   MEMORY_REVIEWER_INSTRUCTIONS,
-  MemoryOperationBatchSchema,
   type MemoryCuratorMode,
   type MemoryOperationBatch,
+  MemoryOperationBatchSchema,
   type MemorySearchCandidate,
+  buildMemoryReviewerPrompt,
 } from "./reviewer";
 
 type ReviewerDependencies = {
@@ -61,7 +56,8 @@ export async function runMemoryReviewAgent(input: {
           "Validate and atomically apply one complete batch of memory operations. Call at most once.",
         inputSchema: MemoryOperationBatchSchema,
         execute: async (batch) => {
-          if (commits > 0) throw new Error("Memory batch was already committed");
+          if (commits > 0)
+            throw new Error("Memory batch was already committed");
           const hasMutation = batch.operations.some(
             (operation) => operation.action !== "ignore",
           );

@@ -97,10 +97,7 @@ export function startWorkerHeartbeat(
       } catch (logError) {
         console.error("Worker heartbeat failure logger failed", logError);
       }
-      if (
-        consecutiveFailures >= maxConsecutiveFailures &&
-        !shutdownRequested
-      ) {
+      if (consecutiveFailures >= maxConsecutiveFailures && !shutdownRequested) {
         shutdownRequested = true;
         clearInterval(timer);
         try {
@@ -111,7 +108,10 @@ export function startWorkerHeartbeat(
             );
           }
         } catch (shutdownError) {
-          console.error("Worker heartbeat shutdown callback failed", shutdownError);
+          console.error(
+            "Worker heartbeat shutdown callback failed",
+            shutdownError,
+          );
         }
       }
     }
@@ -126,17 +126,19 @@ export function startWorkerHeartbeat(
       let failure: unknown;
       if (pending) {
         try {
-          await bounded(pending.catch(() => undefined), "Heartbeat write");
+          await bounded(
+            pending.catch(() => undefined),
+            "Heartbeat write",
+          );
         } catch (error) {
           failure = error;
         }
       }
       try {
         await bounded(
-          pool.query(
-            "DELETE FROM iris_worker_heartbeat WHERE worker_id = $1",
-            [heartbeat.workerId],
-          ),
+          pool.query("DELETE FROM iris_worker_heartbeat WHERE worker_id = $1", [
+            heartbeat.workerId,
+          ]),
           "Heartbeat cleanup",
         );
       } catch (error) {

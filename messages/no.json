@@ -49,7 +49,8 @@
     "close": "Lukk",
     "loading": "Laster...",
     "file": "Fil",
-    "files": "Filer"
+    "files": "Filer",
+    "retry": "Prøv igjen"
   },
   "Error": {},
   "Info": {

@@ -22,10 +22,9 @@ const expected = { userId: "u", runId: "r" };
 
 describe("completion requirements", () => {
   test("rejects a fake capability claim without a runtime execution event", async () => {
-    const requirement = new CapabilityRequirement(
-      new VerificationEngine([]),
-      ["generate_report"],
-    );
+    const requirement = new CapabilityRequirement(new VerificationEngine([]), [
+      "generate_report",
+    ]);
 
     await expect(
       requirement.verifyCompletion(
@@ -114,7 +113,10 @@ describe("completion requirements", () => {
     const requirement = new OutcomeRequirement();
 
     await expect(
-      requirement.verifyCompletion({ parts: [{ type: "text", text: "Answer" }] }, expected),
+      requirement.verifyCompletion(
+        { parts: [{ type: "text", text: "Answer" }] },
+        expected,
+      ),
     ).resolves.toEqual({ verified: true, verificationKind: "outcome" });
     await expect(
       requirement.verifyCompletion({ parts: [], role: "assistant" }, expected),

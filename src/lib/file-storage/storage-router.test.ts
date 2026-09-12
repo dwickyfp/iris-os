@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FileStorage } from "./file-storage.interface";
-import { createProfileStorage, createStorageRouter } from "./storage-router";
 import {
-  LEGACY_STORAGE_PROFILE_ID,
   type FileStorageProfile,
+  LEGACY_STORAGE_PROFILE_ID,
   type StorageProfileRepository,
 } from "./storage-profile";
+import { createProfileStorage, createStorageRouter } from "./storage-router";
 
 const profile = (id: string, driver: FileStorageProfile["driver"] = "s3") =>
   ({
@@ -36,8 +36,8 @@ function setup(options: {
 }) {
   const repository: StorageProfileRepository = {
     getActive: vi.fn(async () => options.active ?? null),
-    getById: vi.fn(async (id) =>
-      options.profiles?.find((item) => item.id === id) ?? null,
+    getById: vi.fn(
+      async (id) => options.profiles?.find((item) => item.id === id) ?? null,
     ),
     listForAdmin: vi.fn(async () => []),
     create: vi.fn(async (input) => ({
@@ -61,7 +61,9 @@ function setup(options: {
 
 describe("storage router", () => {
   it("resolves the active profile asynchronously and creates its client lazily", async () => {
-    const { router, repository, createStorage } = setup({ active: profile("a") });
+    const { router, repository, createStorage } = setup({
+      active: profile("a"),
+    });
     expect(createStorage).not.toHaveBeenCalled();
     await expect(router.getSourceUrl("key")).resolves.toBe("a");
     expect(repository.getActive).toHaveBeenCalledOnce();
@@ -132,10 +134,10 @@ describe("storage router", () => {
     const minio: FileStorageProfile = {
       ...profile("minio", "minio"),
       s3: {
-      bucket: "files",
-      endpoint: "http://localhost:9000",
-      forcePathStyle: false,
-      region: "us-east-1",
+        bucket: "files",
+        endpoint: "http://localhost:9000",
+        forcePathStyle: false,
+        region: "us-east-1",
       },
     };
 

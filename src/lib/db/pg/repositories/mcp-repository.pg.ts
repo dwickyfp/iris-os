@@ -1,8 +1,26 @@
+import type { MCPRepository } from "app-types/mcp";
+import { desc, eq, or } from "drizzle-orm";
+import {
+  decryptMcpServerConfig,
+  encryptMcpServerConfig,
+} from "lib/security/mcp-credential-crypto";
+import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import { McpServerTable, UserTable } from "../schema.pg";
-import { eq, or, desc } from "drizzle-orm";
-import { generateUUID } from "lib/utils";
-import type { MCPRepository } from "app-types/mcp";
+
+/** Column type as stored in the database (an envelope string after encryption). */
+type StoredConfig = (typeof McpServerTable.$inferInsert)["config"];
+
+function encryptConfig(config: unknown): StoredConfig {
+  return encryptMcpServerConfig(config) as unknown as StoredConfig;
+}
+
+function withDecryptedConfig<T extends { config: unknown }>(row: T): T {
+  return {
+    ...row,
+    config: decryptMcpServerConfig(row.config) ?? row.config,
+  };
+}
 
 export const pgMcpRepository: MCPRepository = {
   async save(server) {
@@ -11,7 +29,8 @@ export const pgMcpRepository: MCPRepository = {
       .values({
         id: server.id ?? generateUUID(),
         name: server.name,
-        config: server.config,
+        // Credentials (auth headers, env vars) are encrypted at rest.
+        config: encryptConfig(server.config),
         userId: server.userId,
         visibility: server.visibility ?? "private",
         enabled: true,
@@ -21,13 +40,13 @@ export const pgMcpRepository: MCPRepository = {
       .onConflictDoUpdate({
         target: [McpServerTable.id],
         set: {
-          config: server.config,
+          config: encryptConfig(server.config),
           updatedAt: new Date(),
         },
       })
       .returning();
 
-    return result;
+    return withDecryptedConfig(result);
   },
 
   async selectById(id) {
@@ -35,12 +54,12 @@ export const pgMcpRepository: MCPRepository = {
       .select()
       .from(McpServerTable)
       .where(eq(McpServerTable.id, id));
-    return result;
+    return result ? withDecryptedConfig(result) : null;
   },
 
   async selectAll() {
     const results = await db.select().from(McpServerTable);
-    return results;
+    return results.map(withDecryptedConfig);
   },
 
   async selectAllForUser(userId) {
@@ -68,7 +87,7 @@ export const pgMcpRepository: MCPRepository = {
         ),
       )
       .orderBy(desc(McpServerTable.createdAt));
-    return results;
+    return results.map(withDecryptedConfig);
   },
 
   async updateVisibility(id, visibility) {
@@ -87,7 +106,7 @@ export const pgMcpRepository: MCPRepository = {
       .select()
       .from(McpServerTable)
       .where(eq(McpServerTable.name, name));
-    return result;
+    return result ? withDecryptedConfig(result) : null;
   },
   async updateToolInfo(id, toolInfo) {
     await db

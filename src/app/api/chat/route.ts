@@ -8,6 +8,7 @@ import {
 } from "ai";
 
 import { customModelProvider } from "lib/ai/models";
+import { checkRateLimit, rateLimitResponse } from "lib/security/rate-limit";
 
 import type { ActivityEventType } from "app-types/activity";
 import {
@@ -46,6 +47,7 @@ import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
 import type { HarnessStreamResult } from "lib/ai/runtime";
 import { isBudgetExhausted } from "lib/ai/runtime/budget";
+import { resolveChatToolChoice } from "lib/ai/runtime/capabilities/normalize";
 import {
   buildServerCapabilityResolutionInput,
   resolveServerCapabilities,
@@ -109,11 +111,14 @@ export async function POST(request: Request) {
     if (!session?.user.id) {
       return new Response("Unauthorized", { status: 401 });
     }
+    const limiter = checkRateLimit("chat", session.user.id, 30, 60000);
+    if (!limiter.allowed) return rateLimitResponse(limiter.retryAfterMs);
+
     const {
       id,
       message,
       chatModel,
-      toolChoice,
+      toolChoice: requestedToolChoice,
       allowedAppDefaultToolkit,
       allowedMcpServers,
       imageTool,
@@ -125,6 +130,10 @@ export async function POST(request: Request) {
       workspaceId: requestedWorkspaceId,
       taskId: requestedTaskId,
     } = chatApiSchemaRequestBodySchema.parse(json);
+    // Derive the effective tool choice on the server: an autonomy mode sent
+    // by the client overrides the requested tool choice, so "off" cannot be
+    // combined with bound tools ("auto") to bypass the approval policy.
+    const toolChoice = resolveChatToolChoice(autonomy, requestedToolChoice);
     const requestId = generateUUID();
     const runId = generateUUID();
     let checkpointResolvedPolicy;
@@ -753,9 +762,11 @@ export async function POST(request: Request) {
         }
 
         if (agent) {
-          agentRepository.updateAgent(agent.id, session.user.id, {
-            updatedAt: new Date(),
-          } as any);
+          void agentRepository
+            .updateAgent(agent.id, session.user.id, {
+              updatedAt: new Date(),
+            } as any)
+            .catch((error) => logger.warn("Agent touch update failed", error));
         }
         await indexChatMessage({
           userId: session.user.id,
@@ -975,8 +986,12 @@ export async function POST(request: Request) {
     return createUIMessageStreamResponse({
       stream,
     });
-  } catch (error: any) {
-    logger.error(error);
-    return Response.json({ message: error.message }, { status: 500 });
+  } catch (error) {
+    // Log server-side; the raw error message may contain internals.
+    logger.error("Chat request failed", error);
+    return Response.json(
+      { message: "Failed to process chat request" },
+      { status: 500 },
+    );
   }
 }

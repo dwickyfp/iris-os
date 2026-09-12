@@ -15,7 +15,10 @@ export interface ArtifactRepository {
   ): Promise<ArtifactRecord>;
   selectById(id: string): Promise<ArtifactRecord | null>;
   archive(id: string): Promise<void>;
-  scheduleUploadCleanup(storageKey: string, storageProfileId?: string): Promise<string>;
+  scheduleUploadCleanup(
+    storageKey: string,
+    storageProfileId?: string,
+  ): Promise<string>;
   scheduleCleanup(reference: ArtifactReference): Promise<string>;
   claimCleanup(input: {
     before: Date;

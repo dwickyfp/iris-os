@@ -1,10 +1,10 @@
 import type { FileStorage } from "./file-storage.interface";
+import { createS3FileStorage } from "./s3-file-storage";
 import {
-  LEGACY_STORAGE_PROFILE_ID,
   type FileStorageProfile,
+  LEGACY_STORAGE_PROFILE_ID,
   type StorageProfileRepository,
 } from "./storage-profile";
-import { createS3FileStorage } from "./s3-file-storage";
 import { createVercelBlobStorage } from "./vercel-blob-storage";
 
 const ACTIVE_PROFILE_TTL_MS = 2_000;
@@ -22,7 +22,10 @@ export interface StorageRouterOptions {
 export interface StorageRouter extends FileStorage {
   withProfile(profileId: string): FileStorage;
   withActive<T>(
-    operation: (storage: FileStorage, profile: FileStorageProfile) => Promise<T>,
+    operation: (
+      storage: FileStorage,
+      profile: FileStorageProfile,
+    ) => Promise<T>,
   ): Promise<T>;
 }
 
@@ -34,7 +37,9 @@ export function createProfileStorage(profile: FileStorageProfile): FileStorage {
   if (profile.driver === "vercel-blob")
     throw new Error("VERCEL_BLOB_PROFILE_NOT_SUPPORTED");
   if (!profile.s3) {
-    throw new Error(`Storage profile ${profile.id} is missing S3 configuration`);
+    throw new Error(
+      `Storage profile ${profile.id} is missing S3 configuration`,
+    );
   }
   return createS3FileStorage({
     ...profile.s3,
@@ -43,7 +48,9 @@ export function createProfileStorage(profile: FileStorageProfile): FileStorage {
   });
 }
 
-export function createStorageRouter(options: StorageRouterOptions): StorageRouter {
+export function createStorageRouter(
+  options: StorageRouterOptions,
+): StorageRouter {
   const now = options.now ?? Date.now;
   const activeTtlMs = options.activeTtlMs ?? ACTIVE_PROFILE_TTL_MS;
   const maxClients = Math.max(1, options.maxClients ?? DEFAULT_MAX_CLIENTS);
@@ -144,7 +151,10 @@ export function createStorageRouter(options: StorageRouterOptions): StorageRoute
       return facade(profileId);
     },
     async withActive<T>(
-      operation: (storage: FileStorage, profile: FileStorageProfile) => Promise<T>,
+      operation: (
+        storage: FileStorage,
+        profile: FileStorageProfile,
+      ) => Promise<T>,
     ) {
       const profile = await resolveActive();
       return operation(await resolveStorage(profile.id), profile);

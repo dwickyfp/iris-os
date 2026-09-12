@@ -1,27 +1,27 @@
-import { NextRequest } from "next/server";
-import { getSession } from "auth/server";
 import { VercelAIMcpTool } from "app-types/mcp";
+import { getSession } from "auth/server";
+import {
+  buildMcpServerCustomizationsSystemPrompt,
+  buildSpeechSystemPrompt,
+} from "lib/ai/prompts";
+import { NextRequest } from "next/server";
 import {
   filterMcpServerCustomizations,
   loadMcpTools,
   mergeSystemPrompt,
 } from "../shared.chat";
-import {
-  buildMcpServerCustomizationsSystemPrompt,
-  buildSpeechSystemPrompt,
-} from "lib/ai/prompts";
 
-import { safe } from "ts-safe";
+import { ChatMention } from "app-types/chat";
+import { colorize } from "consola/utils";
+import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
 import { DEFAULT_VOICE_TOOLS } from "lib/ai/speech";
+import globalLogger from "lib/logger";
+import { getUserPreferences } from "lib/user/server";
+import { safe } from "ts-safe";
 import {
   rememberAgentAction,
   rememberMcpServerCustomizationsAction,
 } from "../actions";
-import globalLogger from "lib/logger";
-import { colorize } from "consola/utils";
-import { getUserPreferences } from "lib/user/server";
-import { ChatMention } from "app-types/chat";
-import { resolveConfiguredProviderCredential } from "lib/ai/provider-credentials.server";
 
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `OpenAI Realtime API: `),
@@ -57,7 +57,10 @@ export async function POST(request: NextRequest) {
 
     const enabledMentions = agent ? agent.instructions.mentions : mentions;
 
-    const allowedMcpTools = await loadMcpTools({ mentions: enabledMentions });
+    const allowedMcpTools = await loadMcpTools({
+      userId: session.user.id,
+      mentions: enabledMentions,
+    });
 
     const toolNames = Object.keys(allowedMcpTools ?? {});
 

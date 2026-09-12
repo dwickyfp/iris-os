@@ -1,9 +1,14 @@
-import { McpOAuthSession, McpOAuthRepository } from "app-types/mcp";
+import { McpOAuthRepository, McpOAuthSession } from "app-types/mcp";
+import { and, desc, eq, isNotNull, isNull, ne } from "drizzle-orm";
+import {
+  decryptMcpOAuthSecrets,
+  encryptMcpOAuthSecrets,
+} from "lib/security/mcp-credential-crypto";
 import { pgDb as db } from "../db.pg";
 import { McpOAuthSessionTable } from "../schema.pg";
-import { eq, and, isNotNull, desc, isNull, ne } from "drizzle-orm";
 
-// OAuth repository implementation for multi-instance support
+// OAuth repository implementation for multi-instance support.
+// Credential fields (tokens, clientInfo, codeVerifier) are encrypted at rest.
 export const pgMcpOAuthRepository: McpOAuthRepository = {
   // 1. Query methods
 
@@ -21,7 +26,9 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
       .orderBy(desc(McpOAuthSessionTable.updatedAt))
       .limit(1);
 
-    return session as McpOAuthSession | undefined;
+    return session
+      ? (decryptMcpOAuthSecrets(session) as McpOAuthSession)
+      : undefined;
   },
 
   // Get session by OAuth state (for callback handling)
@@ -33,7 +40,9 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
       .from(McpOAuthSessionTable)
       .where(eq(McpOAuthSessionTable.state, state));
 
-    return session as McpOAuthSession | undefined;
+    return session
+      ? (decryptMcpOAuthSecrets(session) as McpOAuthSession)
+      : undefined;
   },
 
   // 2. Create/Update methods
@@ -46,13 +55,15 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
       .insert(McpOAuthSessionTable)
       .values({
         ...(data as McpOAuthSession),
+        // Encrypted credential fields must override the plaintext spread.
+        ...encryptMcpOAuthSecrets(data),
         mcpServerId,
         createdAt: now,
         updatedAt: now,
       })
       .returning();
 
-    return session as McpOAuthSession;
+    return decryptMcpOAuthSecrets(session) as McpOAuthSession;
   },
 
   // Update existing session by state
@@ -62,7 +73,7 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
     const [session] = await db
       .update(McpOAuthSessionTable)
       .set({
-        ...data,
+        ...encryptMcpOAuthSecrets(data),
         updatedAt: now,
       })
       .where(eq(McpOAuthSessionTable.state, state))
@@ -72,14 +83,14 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
       throw new Error(`Session with state ${state} not found`);
     }
 
-    return session as McpOAuthSession;
+    return decryptMcpOAuthSecrets(session) as McpOAuthSession;
   },
 
   saveTokensAndCleanup: async (state, mcpServerId, data) => {
     const [session] = await db
       .update(McpOAuthSessionTable)
       .set({
-        ...data,
+        ...encryptMcpOAuthSecrets(data),
         updatedAt: new Date(),
       })
       .where(eq(McpOAuthSessionTable.state, state))
@@ -95,7 +106,7 @@ export const pgMcpOAuthRepository: McpOAuthRepository = {
         ),
       );
 
-    return session as McpOAuthSession;
+    return decryptMcpOAuthSecrets(session) as McpOAuthSession;
   },
 
   // Delete a session by its OAuth state

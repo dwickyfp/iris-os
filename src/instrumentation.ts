@@ -8,6 +8,31 @@ export async function register() {
     await startRuntimeSystemSettingsRefresh();
     const { loadOperationsConfig } = await import("lib/operations/config");
     await loadOperationsConfig();
+
+    // Optional OpenTelemetry trace export. Spans created by @ai-sdk/otel are
+    // dropped unless a collector endpoint is configured.
+    if (
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT &&
+      process.env.OTEL_SDK_ENABLED !== "false"
+    ) {
+      try {
+        const { NodeSDK } = await import("@opentelemetry/sdk-node");
+        const { OTLPTraceExporter } = await import(
+          "@opentelemetry/exporter-trace-otlp-http"
+        );
+        const sdk = new NodeSDK({
+          traceExporter: new OTLPTraceExporter({
+            url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT.replace(/\/$/, "")}/v1/traces`,
+          }),
+        });
+        sdk.start();
+        console.log(
+          `[otel] Trace export enabled -> ${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}`,
+        );
+      } catch (error) {
+        console.warn("[otel] Failed to start trace exporter", error);
+      }
+    }
   }
 
   if (

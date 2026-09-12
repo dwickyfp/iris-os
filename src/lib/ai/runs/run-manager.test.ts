@@ -28,6 +28,7 @@ function repository() {
     countRunningChildren: vi.fn(),
     listStaleDelegatedRunIds: vi.fn(),
     reconcileTerminalDelegatedRuns: vi.fn(),
+    reapStaleForegroundRuns: vi.fn(),
     listPendingDispatchRunIds: vi.fn(),
     markDispatched: vi.fn(),
     listPendingRemoteCancellationRunIds: vi.fn(),

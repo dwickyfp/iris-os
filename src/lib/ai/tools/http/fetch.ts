@@ -1,6 +1,7 @@
-import { JSONSchema7 } from "json-schema";
 import { tool as createTool } from "ai";
+import { JSONSchema7 } from "json-schema";
 import { jsonSchemaToZod } from "lib/json-schema-to-zod";
+import { secureFetchResponse } from "lib/security/outbound-http";
 import { safe } from "ts-safe";
 
 export const httpFetchSchema: JSONSchema7 = {
@@ -36,61 +37,63 @@ export const httpFetchSchema: JSONSchema7 = {
   required: ["url"],
 };
 
+const MIN_TIMEOUT_MS = 1_000;
+const MAX_TIMEOUT_MS = 30_000;
+const MAX_RESPONSE_BYTES = 2_000_000;
+
 export const httpFetchTool = createTool({
   description:
-    "Make HTTP requests to any URL. Can be used to fetch data from APIs, send data to servers, or interact with web services.",
+    "Make HTTP requests to public internet URLs. Can be used to fetch data from APIs, send data to servers, or interact with web services. Requests to private, loopback, or link-local addresses are blocked.",
   inputSchema: jsonSchemaToZod(httpFetchSchema),
   execute: async ({ url, method = "GET", headers, body, timeout = 10000 }) => {
     return safe(async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-      try {
-        const response = await fetch(url, {
+      const response = await secureFetchResponse(
+        url,
+        {
           method,
           headers: headers ? { ...headers } : undefined,
           body:
             body && method !== "GET" && method !== "HEAD" ? body : undefined,
-          signal: controller.signal,
-        });
+        },
+        {
+          timeoutMs: Math.min(
+            Math.max(timeout, MIN_TIMEOUT_MS),
+            MAX_TIMEOUT_MS,
+          ),
+          // The tool is a general-purpose HTTP client, but every request is
+          // still validated against public DNS-resolved addresses only.
+          allowHttp: true,
+          maxBodyBytes: MAX_RESPONSE_BYTES,
+        },
+      );
 
-        clearTimeout(timeoutId);
-
-        const responseHeaders: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
-        });
-
-        let responseBody: any;
-        const contentType = response.headers.get("content-type");
-
-        if (contentType?.includes("application/json")) {
-          responseBody = await response.json();
-        } else if (contentType?.includes("text/")) {
-          responseBody = await response.text();
-        } else {
-          responseBody = await response.text();
+      const contentType = response.headers["content-type"];
+      let responseBody: any;
+      if (contentType?.includes("application/json")) {
+        try {
+          responseBody = JSON.parse(response.body);
+        } catch {
+          responseBody = response.body;
         }
-
-        return {
-          status: response.status,
-          statusText: response.statusText,
-          headers: responseHeaders,
-          body: responseBody,
-          ok: response.ok,
-          url: response.url,
-        };
-      } catch (error) {
-        clearTimeout(timeoutId);
-        throw error;
+      } else {
+        responseBody = response.body;
       }
+
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        body: responseBody,
+        ok: response.ok,
+        url: response.url,
+      };
     })
       .ifFail((err) => {
         return {
           isError: true,
           error: err.message,
           solution:
-            "An HTTP request error occurred. This could be due to network issues, invalid URL, timeout, or server errors. Check the URL and try again. For CORS issues, the server needs to allow your origin.",
+            "An HTTP request error occurred. This could be due to network issues, an invalid URL, a blocked private address, timeout, or server errors. Check the URL and try again.",
         };
       })
       .unwrap();

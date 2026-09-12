@@ -267,8 +267,7 @@ export function createPgDurableJobRepository(
 
     async failExpiredMaxAttempts() {
       return db.transaction(async (tx) => {
-        const jobs = await tx
-          .execute(sql`
+        const jobs = await tx.execute(sql`
             SELECT ${jobProjection}
             FROM durable_job
             WHERE status = 'running'

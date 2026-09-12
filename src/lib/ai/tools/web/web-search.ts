@@ -191,7 +191,8 @@ const resolveExaBaseUrl = (value: unknown): string => {
 };
 
 const fetchExa = async (endpoint: string, body: any): Promise<any> => {
-  if (!resolveExaSettings) throw new Error("Exa settings resolver is unavailable");
+  if (!resolveExaSettings)
+    throw new Error("Exa settings resolver is unavailable");
   const { apiKey, baseUrl: baseUrlSetting } = await resolveExaSettings();
 
   if (!apiKey) {

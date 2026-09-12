@@ -8,6 +8,7 @@ import {
   createArtifactVerifier,
   ingestRemoteArtifacts,
 } from "lib/ai/artifacts";
+import { enqueueParentResume } from "lib/ai/runs/parent-resume-queue";
 import { runManager } from "lib/ai/runs/server";
 import type { AgentRun } from "lib/ai/runs/types";
 import { createAutomationExecutionAdapter } from "lib/automation/execution-adapter";
@@ -30,7 +31,6 @@ import { serverFileStorage } from "lib/file-storage";
 import { remoteAgentService } from "lib/remote-agent/server";
 import { decryptRemoteAgentSecret } from "lib/security/secrets";
 import type PgBoss from "pg-boss";
-import { enqueueParentResume } from "lib/ai/runs/parent-resume-queue";
 
 const executeTarget = createAutomationExecutionAdapter();
 const artifacts = new ArtifactService(serverFileStorage, artifactRepository);
@@ -188,13 +188,17 @@ export async function registerDelegationWorkers(boss: PgBoss) {
     DELEGATION_EXECUTE_QUEUE,
     { batchSize: DELEGATION_LIMITS.maxParallelChildren },
     async (jobs) => {
-      for (const job of jobs) await execute(job.data.childRunId);
+      // DB-level claim guards (max parallel children) make concurrent
+      // execution safe; the claim limit still bounds actual parallelism.
+      await Promise.all(jobs.map((job) => execute(job.data.childRunId)));
     },
   );
   await boss.work<{ childRunId: string }>(
     DELEGATION_REMOTE_CANCEL_QUEUE,
     async (jobs) => {
-      for (const job of jobs) await execute.cancelRemote(job.data.childRunId);
+      await Promise.all(
+        jobs.map((job) => execute.cancelRemote(job.data.childRunId)),
+      );
     },
   );
   await boss.work(DELEGATION_SWEEP_QUEUE, async () => {

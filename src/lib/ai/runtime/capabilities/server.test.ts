@@ -13,6 +13,7 @@ const repositories = vi.hoisted(() => ({
   skillById: vi.fn(),
   skillContent: vi.fn(),
   skillFile: vi.fn(),
+  mcpServers: vi.fn(),
 }));
 const selectScopedSkills = vi.hoisted(() => vi.fn());
 
@@ -21,6 +22,7 @@ vi.mock("lib/db/repository", () => ({
   agentRepository: { selectAgentsByUserId: repositories.agents },
   remoteAgentRepository: { listByUserId: repositories.remoteAgents },
   workflowRepository: { selectExecuteAbility: repositories.workflows },
+  mcpRepository: { selectAllForUser: repositories.mcpServers },
   skillRepository: {
     selectSkillSummariesByAgentId: repositories.assignedSkills,
     selectSkillById: repositories.skillById,
@@ -87,6 +89,7 @@ describe("production server capability parity", () => {
       },
     ]);
     repositories.assignedSkills.mockResolvedValue([]);
+    repositories.mcpServers.mockResolvedValue([{ id: "warehouse" }]);
     selectScopedSkills.mockResolvedValue([
       { id: "skill-1", name: "Revenue skill", description: "Analyze revenue" },
     ]);
@@ -150,6 +153,32 @@ describe("production server capability parity", () => {
         taskId: "task-1",
       }),
     );
+  });
+
+  test("client MCP allowlists cannot bind servers outside user ownership", async () => {
+    repositories.mcpServers.mockResolvedValue([{ id: "owned-server" }]);
+    const resolved = await resolveServerCapabilities(
+      await buildServerCapabilityResolutionInput({
+        userId: "user-1",
+        runId: "run-1",
+        goal: "query the warehouse",
+        permissions: {
+          allowedMcpServers: { warehouse: { tools: ["query"] } },
+        },
+        featureState: {
+          tools: true,
+          workflows: false,
+          delegation: false,
+          remoteAgents: false,
+          learning: false,
+        },
+      }),
+    );
+
+    expect(resolved.ordered.map(({ id }) => id)).not.toContain(
+      "mcp:warehouse:query",
+    );
+    expect(resolved.executable.warehouse_query).toBeUndefined();
   });
 
   test("automation allowlists only subtract and record an explicit reason", async () => {

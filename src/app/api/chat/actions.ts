@@ -1,11 +1,6 @@
 "use server";
 
-import {
-  generateObject,
-  generateText,
-  jsonSchema,
-  type UIMessage,
-} from "ai";
+import { type UIMessage, generateObject, generateText, jsonSchema } from "ai";
 
 import {
   CREATE_THREAD_TITLE_PROMPT,
@@ -14,6 +9,11 @@ import {
 
 import type { ChatModel, ChatThread } from "app-types/chat";
 
+import { MCPToolInfo, McpServerCustomizationsPrompt } from "app-types/mcp";
+import { getSession } from "auth/server";
+import { customModelProvider } from "lib/ai/models";
+import { serverCache } from "lib/cache";
+import { CacheKeys } from "lib/cache/cache-keys";
 import {
   agentRepository,
   chatExportRepository,
@@ -21,18 +21,13 @@ import {
   mcpMcpToolCustomizationRepository,
   mcpServerCustomizationRepository,
 } from "lib/db/repository";
-import { customModelProvider } from "lib/ai/models";
 import { toAny } from "lib/utils";
-import { McpServerCustomizationsPrompt, MCPToolInfo } from "app-types/mcp";
-import { serverCache } from "lib/cache";
-import { CacheKeys } from "lib/cache/cache-keys";
-import { getSession } from "auth/server";
 import logger from "logger";
 
-import { JSONSchema7 } from "json-schema";
-import { ObjectJsonSchema7 } from "app-types/util";
-import { jsonSchemaToZod } from "lib/json-schema-to-zod";
 import { Agent } from "app-types/agent";
+import { ObjectJsonSchema7 } from "app-types/util";
+import { JSONSchema7 } from "json-schema";
+import { jsonSchemaToZod } from "lib/json-schema-to-zod";
 
 export async function getUserId() {
   const session = await getSession();
@@ -219,7 +214,8 @@ export async function rememberAgentAction(
   let cachedAgent = await serverCache.get<Agent | null>(key);
   if (!cachedAgent) {
     cachedAgent = await agentRepository.selectAgentById(agent, userId);
-    await serverCache.set(key, cachedAgent);
+    // Bounded TTL: an unbounded entry would keep a deleted agent forever.
+    await serverCache.set(key, cachedAgent, 1000 * 60 * 15);
   }
   return cachedAgent as Agent | undefined;
 }

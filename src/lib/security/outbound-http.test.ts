@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { isPublicIpAddress, secureJsonFetch, validatePublicUrl } = await import(
-  "./outbound-http"
-);
+const {
+  isPublicIpAddress,
+  secureJsonFetch,
+  secureFetchResponse,
+  validatePublicUrl,
+} = await import("./outbound-http");
 
 const publicLookup = vi.fn(async () => [
   { address: "93.184.216.34", family: 4 },
@@ -297,5 +300,71 @@ describe("outbound HTTP security", () => {
         },
       ),
     ).rejects.toThrow("Content-Type");
+  });
+
+  it("secureFetchResponse returns non-2xx responses without throwing", async () => {
+    const response = await secureFetchResponse(
+      "https://example.test/missing",
+      { method: "POST", body: "payload" },
+      {
+        fetch: async (_url, init) => {
+          expect(init?.method).toBe("POST");
+          expect(init?.body).toBe("payload");
+          return new Response("nope", { status: 404 });
+        },
+        lookup: publicLookup,
+      },
+    );
+    expect(response.status).toBe(404);
+    expect(response.ok).toBe(false);
+    expect(response.body).toBe("nope");
+  });
+
+  it("secureFetchResponse blocks private addresses", async () => {
+    await expect(
+      secureFetchResponse(
+        "http://169.254.169.254/latest/meta-data",
+        {},
+        {
+          fetch: async () => new Response("secret"),
+          lookup: async () => [{ address: "169.254.169.254", family: 4 }],
+          allowHttp: true,
+        },
+      ),
+    ).rejects.toThrow("non-public");
+  });
+
+  it("secureFetchResponse enforces the response body cap", async () => {
+    await expect(
+      secureFetchResponse(
+        "https://example.test/big",
+        {},
+        {
+          fetch: async () =>
+            new Response("x".repeat(64), {
+              headers: { "Content-Type": "text/plain" },
+            }),
+          lookup: publicLookup,
+          maxBodyBytes: 16,
+        },
+      ),
+    ).rejects.toThrow("too large");
+  });
+
+  it("secureFetchResponse surfaces headers and JSON bodies as text", async () => {
+    const response = await secureFetchResponse(
+      "https://example.test/data",
+      {},
+      {
+        fetch: async () =>
+          new Response(JSON.stringify({ hello: "world" }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        lookup: publicLookup,
+      },
+    );
+    expect(response.ok).toBe(true);
+    expect(response.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(response.body)).toEqual({ hello: "world" });
   });
 });

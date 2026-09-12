@@ -1,10 +1,10 @@
 import "server-only";
 
 import type { Tool } from "ai";
-import { configureExaSettingsResolver } from "lib/ai/tools/web/web-search";
-import { systemSettingsService } from "lib/system-settings/server";
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import type { Agent } from "app-types/agent";
+import { configureExaSettingsResolver } from "lib/ai/tools/web/web-search";
+import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { systemSettingsService } from "lib/system-settings/server";
 
 configureExaSettingsResolver(async () => ({
   apiKey: await systemSettingsService.getSecret("exa.apiKey"),
@@ -21,6 +21,7 @@ import {
 import { selectScopedLearnedSkillSummaries } from "lib/ai/skill/scoped-learned";
 import { createDelegateWorkTool } from "lib/ai/tools/delegation/delegate-work";
 import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
+import { mcpRepository } from "lib/db/repository";
 import {
   agentRepository,
   remoteAgentRepository,
@@ -33,6 +34,10 @@ import {
 } from "lib/delegation/targets";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { workflowToVercelAITool } from "../../../../app/api/chat/shared.chat";
+import {
+  accessibleMcpServerIdsForUser,
+  selectAccessibleMcpServers,
+} from "./mcp-access";
 import {
   builtinCapabilities,
   localPeerCapabilities,
@@ -261,9 +266,18 @@ export async function resolveServerCapabilities(input: {
       );
       return Object.entries(tools).map(([key, value]) => ({ key, value }));
     }),
-    mcpCapabilities(async ({ allowedMcpServers, toolsEnabled }) => {
+    mcpCapabilities(async ({ userId, allowedMcpServers, toolsEnabled }) => {
       if (!toolsEnabled) return [];
-      const authorized = allowedMcpServers ?? {};
+      // The client allowlist is not authoritative: intersect it with the
+      // servers this user owns or that are public before binding tools.
+      const accessible = await accessibleMcpServerIdsForUser(userId, (id) =>
+        mcpRepository.selectAllForUser(id),
+      );
+      const authorized = selectAccessibleMcpServers(
+        allowedMcpServers,
+        accessible,
+      );
+      if (Object.keys(authorized).length === 0) return [];
       return Object.entries(mcpClientsManager.tools()).flatMap(
         ([key, value]) => {
           const tool = value as VercelAIMcpTool;

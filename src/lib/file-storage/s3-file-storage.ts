@@ -51,8 +51,9 @@ const buildKey = (filename: string, prefix: string) => {
 };
 
 const encodeKeySegment = (segment: string) =>
-  encodeURIComponent(segment).replace(/[!'()*]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  encodeURIComponent(segment).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 
 const encodeKey = (key: string) =>
@@ -129,7 +130,9 @@ export const createS3FileStorage = (
   };
   const s3 =
     config.client ??
-    (config.clientFactory ?? ((options) => new S3Client(options)))(clientConfig);
+    (config.clientFactory ?? ((options) => new S3Client(options)))(
+      clientConfig,
+    );
   const presign = config.presigner ?? (getSignedUrl as S3Presigner);
 
   return {

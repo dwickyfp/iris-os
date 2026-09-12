@@ -1,23 +1,21 @@
 import "server-only";
 import {
   LoadAPIKeyError,
-  UIMessage,
   Tool,
-  jsonSchema,
-  tool as createTool,
-  isToolUIPart,
-  UIMessagePart,
   ToolUIPart,
-  getToolName,
+  UIMessage,
+  UIMessagePart,
   UIMessageStreamWriter,
+  tool as createTool,
+  getToolName,
+  isToolUIPart,
+  jsonSchema,
 } from "ai";
 import {
   ChatMention,
   ChatMetadata,
   ManualToolConfirmTag,
 } from "app-types/chat";
-import { errorToString, exclude, objectFlow } from "lib/utils";
-import logger from "logger";
 import {
   AllowedMCPServer,
   McpServerCustomizationsPrompt,
@@ -25,10 +23,16 @@ import {
   VercelAIMcpToolTag,
 } from "app-types/mcp";
 import { MANUAL_REJECT_RESPONSE_PROMPT } from "lib/ai/prompts";
+import { errorToString, exclude, objectFlow } from "lib/utils";
+import logger from "logger";
 
 import { ObjectJsonSchema7 } from "app-types/util";
+import {
+  accessibleMcpServerIdsForUser,
+  filterToolsByAccessibleServers,
+} from "lib/ai/runtime/capabilities/mcp-access";
+import { mcpRepository, workflowRepository } from "lib/db/repository";
 import { safe } from "ts-safe";
-import { workflowRepository } from "lib/db/repository";
 
 import {
   VercelAIWorkflowTool,
@@ -36,13 +40,13 @@ import {
   VercelAIWorkflowToolStreamingResultTag,
   VercelAIWorkflowToolTag,
 } from "app-types/workflow";
+import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
+import { mergePreferredCapabilities } from "lib/ai/runtime/capabilities";
+import { AppDefaultToolkit } from "lib/ai/tools";
+import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
+import type { WorkflowExecutionContext } from "lib/ai/workflow/executor/node-executor";
 import { createWorkflowExecutor } from "lib/ai/workflow/executor/workflow-executor";
 import { NodeKind } from "lib/ai/workflow/workflow.interface";
-import type { WorkflowExecutionContext } from "lib/ai/workflow/executor/node-executor";
-import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
-import { APP_DEFAULT_TOOL_KIT } from "lib/ai/tools/tool-kit";
-import { AppDefaultToolkit } from "lib/ai/tools";
-import { mergePreferredCapabilities } from "lib/ai/runtime/capabilities";
 
 export function filterMCPToolsByMentions(
   tools: Record<string, VercelAIMcpTool>,
@@ -402,11 +406,19 @@ export const workflowToVercelAITools = (
     );
 };
 
-export const loadMcpTools = (opt?: {
+export const loadMcpTools = async (opt: {
+  userId: string;
   mentions?: ChatMention[];
   allowedMcpServers?: Record<string, AllowedMCPServer>;
-}) =>
-  safe(() => mcpClientsManager.tools())
+}) => {
+  // The MCP manager is a process-global holding every user's servers; scope
+  // tool loading to servers the requesting user owns or that are public
+  // before any client-supplied mention/allowlist filtering is applied.
+  const accessible = await accessibleMcpServerIdsForUser(opt.userId, (id) =>
+    mcpRepository.selectAllForUser(id),
+  );
+  return safe(() => mcpClientsManager.tools())
+    .map((tools) => filterToolsByAccessibleServers(tools, accessible))
     .map((tools) => {
       if (opt?.mentions?.length) {
         return mergePreferredCapabilities(
@@ -418,6 +430,7 @@ export const loadMcpTools = (opt?: {
       return filterMCPToolsByAllowedMCPServers(tools, opt?.allowedMcpServers);
     })
     .orElse({} as Record<string, VercelAIMcpTool>);
+};
 
 export const loadWorkFlowTools = (opt: {
   mentions?: ChatMention[];

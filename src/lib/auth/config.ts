@@ -1,12 +1,12 @@
 import {
-  GitHubConfigSchema,
-  GoogleConfigSchema,
-  MicrosoftConfigSchema,
-  GitHubConfig,
-  GoogleConfig,
-  MicrosoftConfig,
   AuthConfig,
   AuthConfigSchema,
+  GitHubConfig,
+  GitHubConfigSchema,
+  GoogleConfig,
+  GoogleConfigSchema,
+  MicrosoftConfig,
+  MicrosoftConfigSchema,
 } from "app-types/authentication";
 // Conditionally import React taint
 let experimental_taintUniqueValue: any = () => {};
@@ -98,7 +98,9 @@ function parseSocialAuthConfigs(env: Record<string, string | undefined>) {
   return configs;
 }
 
-export function getAuthConfig(env: Record<string, string | undefined> = {}): AuthConfig {
+export function getAuthConfig(
+  env: Record<string, string | undefined> = {},
+): AuthConfig {
   const rawConfig = {
     emailAndPasswordEnabled: env.DISABLE_EMAIL_SIGN_IN
       ? !parseEnvBoolean(env.DISABLE_EMAIL_SIGN_IN)

@@ -72,7 +72,9 @@ export type ToolLoopAgentConfig = {
   budget?: BudgetGuard;
   durableBudget?: DurableBudgetAuthority;
   strategyGuard?: StrategyGuard;
-  projectCapabilityResult?: Parameters<typeof createCapabilityInvoker>[0]["projectResult"];
+  projectCapabilityResult?: Parameters<
+    typeof createCapabilityInvoker
+  >[0]["projectResult"];
 };
 
 export function runtimeEventCallbacks(

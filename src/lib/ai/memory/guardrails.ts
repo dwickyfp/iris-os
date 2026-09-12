@@ -15,6 +15,20 @@ export function isSafeMemoryContent(content: string) {
   );
 }
 
+const EMAIL = /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g;
+const LONG_DIGITS = /\b\d[\d\s-]{6,}\d\b/g;
+
+/**
+ * Beyond the blocklist, actively redacts common PII shapes (email addresses
+ * and long digit runs such as phone/account numbers) so stored text is safe
+ * even when a pattern above does not match.
+ */
+export function redactPII(content: string) {
+  return content
+    .replace(EMAIL, "[redacted-email]")
+    .replace(LONG_DIGITS, "[redacted-number]");
+}
+
 export function sanitizeMemoryContent(content: string) {
-  return content.replace(/\s+/g, " ").trim().slice(0, 2_000);
+  return redactPII(content.replace(/\s+/g, " ").trim()).slice(0, 2_000);
 }

@@ -5,10 +5,10 @@ import { serverBudgetAuthority } from "lib/ai/runtime/server-budget-authority";
 import { artifactRepository } from "lib/db/repository";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { serverFileStorage } from "lib/file-storage";
+import { getStartedPgBoss } from "lib/jobs/pg-boss";
 import { loadOperationsConfig } from "lib/operations/config";
 import { startWorkerHeartbeat } from "lib/operations/heartbeat";
 import { startRuntimeSystemSettingsRefresh } from "lib/system-settings/runtime";
-import PgBoss from "pg-boss";
 import packageJson from "../package.json" with { type: "json" };
 import { registerActivityWorkers } from "./workers/activity-worker";
 import { registerAutomationWorkers } from "./workers/automation-worker";
@@ -16,6 +16,7 @@ import { registerDelegationWorkers } from "./workers/delegation-worker";
 import { registerDurableJobWorkers } from "./workers/durable-job-worker";
 import { registerLearningWorkers } from "./workers/learning-worker";
 import { registerParentResumeWorkers } from "./workers/parent-resume-worker";
+import { registerRunRecoveryWorkers } from "./workers/run-recovery-worker";
 
 await startRuntimeSystemSettingsRefresh();
 const config = await loadOperationsConfig();
@@ -23,10 +24,15 @@ const workerId =
   config.IRIS_WORKER_ID ??
   `${hostname()}:${process.pid}:${crypto.randomUUID()}`;
 
-const boss = new PgBoss({ connectionString: config.POSTGRES_URL });
-await boss.start();
+const startedBoss = await getStartedPgBoss(config.POSTGRES_URL);
+if (!startedBoss)
+  throw new Error("POSTGRES_URL is required for the iris worker");
+const boss = startedBoss;
 const artifacts = new ArtifactService(serverFileStorage, artifactRepository);
 await registerDurableJobWorkers(boss, workerId);
+// Run recovery (crashed foreground runs) and retention sweeps apply to every
+// deployment regardless of V2 feature flags.
+await registerRunRecoveryWorkers(boss);
 await serverBudgetAuthority.reconcileExpiredReservations();
 if (isV2FeatureEnabled("learning")) {
   await registerActivityWorkers(boss);

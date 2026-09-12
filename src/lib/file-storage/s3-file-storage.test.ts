@@ -29,8 +29,8 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
 }));
 
 import {
-  createS3FileStorage,
   type S3FileStorageConfig,
+  createS3FileStorage,
 } from "./s3-file-storage";
 
 const explicitConfig: S3FileStorageConfig = {
@@ -111,22 +111,17 @@ describe("s3-file-storage", () => {
     );
   });
 
-  it(
-    "builds path-style MinIO URLs and encodes individual key segments",
-    async () => {
-      const storage = createS3FileStorage({
-        ...explicitConfig,
-        endpoint: "http://localhost:9000/",
-        forcePathStyle: true,
-      });
+  it("builds path-style MinIO URLs and encodes individual key segments", async () => {
+    const storage = createS3FileStorage({
+      ...explicitConfig,
+      endpoint: "http://localhost:9000/",
+      forcePathStyle: true,
+    });
 
-      await expect(
-        storage.getSourceUrl("folder/a #?%+!'()*b.txt"),
-      ).resolves.toBe(
-        "http://localhost:9000/my-bucket/folder/a%20%23%3F%25%2B%21%27%28%29%2Ab.txt",
-      );
-    },
-  );
+    await expect(storage.getSourceUrl("folder/a #?%+!'()*b.txt")).resolves.toBe(
+      "http://localhost:9000/my-bucket/folder/a%20%23%3F%25%2B%21%27%28%29%2Ab.txt",
+    );
+  });
 
   it("joins encoded keys to a configured public base URL", async () => {
     const storage = createS3FileStorage({

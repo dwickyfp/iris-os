@@ -8,16 +8,16 @@ import {
 } from "lib/security/secrets";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type H10MatrixRow,
+  H10_CRASH_POINTS,
+  formatH10MatrixReport,
+} from "./h10-recovery-matrix";
+import {
+  DelegationWorkerCrash,
   type DelegationWorkerEvent,
   type DelegationWorkerExecutorDependencies,
   createDelegationWorkerExecutor,
-  DelegationWorkerCrash,
 } from "./worker-executor";
-import {
-  H10_CRASH_POINTS,
-  formatH10MatrixReport,
-  type H10MatrixRow,
-} from "./h10-recovery-matrix";
 
 vi.mock("server-only", () => ({}));
 
@@ -576,46 +576,50 @@ describe("durable delegation worker with fake A2A", () => {
     "timed_out",
     "budget_exhausted",
     "cancel_requested",
-  ] as const)("cancels a running child when polling sees a %s parent", async (state) => {
-    const fixture = new DurableRunFixture();
-    fixture.runs.set(
-      "child-1",
-      run({ agentId: "agent-1", absoluteDeadlineAt: null }),
-    );
-    const dependencies: DelegationWorkerExecutorDependencies =
-      fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
-    dependencies.selectDelegation = async () => ({
-      targetKind: "local_agent",
-      remoteAgentId: null,
-    });
-    dependencies.executeLocal = vi.fn(async ({ signal }) => {
-      const parent = fixture.runs.get("parent-1")!;
-      fixture.runs.set("parent-1", {
-        ...parent,
-        ...(state === "cancel_requested"
-          ? { cancelRequestedAt: new Date() }
-          : { status: state }),
+  ] as const)(
+    "cancels a running child when polling sees a %s parent",
+    async (state) => {
+      const fixture = new DurableRunFixture();
+      fixture.runs.set(
+        "child-1",
+        run({ agentId: "agent-1", absoluteDeadlineAt: null }),
+      );
+      const dependencies: DelegationWorkerExecutorDependencies =
+        fixture.dependencies(remoteService(fakeA2A(["completed"]).fetcher));
+      dependencies.selectDelegation = async () => ({
+        targetKind: "local_agent",
+        remoteAgentId: null,
       });
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) resolve();
-        else signal.addEventListener("abort", () => resolve(), { once: true });
+      dependencies.executeLocal = vi.fn(async ({ signal }) => {
+        const parent = fixture.runs.get("parent-1")!;
+        fixture.runs.set("parent-1", {
+          ...parent,
+          ...(state === "cancel_requested"
+            ? { cancelRequestedAt: new Date() }
+            : { status: state }),
+        });
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else
+            signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return {
+          status: "failed" as const,
+          errorCode: "LOCAL_ABORTED",
+          message: "Local execution aborted",
+          retryable: true,
+        };
       });
-      return {
-        status: "failed" as const,
-        errorCode: "LOCAL_ABORTED",
-        message: "Local execution aborted",
-        retryable: true,
-      };
-    });
 
-    await createDelegationWorkerExecutor(dependencies)("child-1");
+      await createDelegationWorkerExecutor(dependencies)("child-1");
 
-    expect(fixture.runs.get("child-1")).toMatchObject({
-      status: "cancelled",
-      errorCode: "CANCELLED",
-    });
-    expect(fixture.reservationSettlements).toBe(1);
-  });
+      expect(fixture.runs.get("child-1")).toMatchObject({
+        status: "cancelled",
+        errorCode: "CANCELLED",
+      });
+      expect(fixture.reservationSettlements).toBe(1);
+    },
+  );
 
   it("covers the H10 worker crash/recovery matrix", async () => {
     const rows: H10MatrixRow[] = [];

@@ -1,16 +1,33 @@
 "use server";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
-import { z } from "zod";
 import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { z } from "zod";
 
-import { McpServerTable } from "lib/db/pg/schema.pg";
-import { mcpOAuthRepository, mcpRepository } from "lib/db/repository";
+import {
+  MCPRemoteConfigZodSchema,
+  MCPStdioConfigZodSchema,
+} from "app-types/mcp";
 import {
   canCreateMCP,
   canManageMCPServer,
   canShareMCPServer,
   getCurrentUser,
 } from "lib/auth/permissions";
+import { mcpOAuthRepository, mcpRepository } from "lib/db/repository";
+
+export const mcpServerUpsertSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9\-]+$/, {
+      message:
+        "Name must contain only alphanumeric characters (A-Z, a-z, 0-9) and hyphens (-)",
+    }),
+  config: z.union([MCPRemoteConfigZodSchema, MCPStdioConfigZodSchema]),
+  visibility: z.enum(["public", "private"]).optional(),
+});
 
 export async function selectMcpClientsAction() {
   // Get current user to filter MCP servers
@@ -56,7 +73,7 @@ export async function selectMcpClientAction(id: string) {
 }
 
 export async function saveMcpClientAction(
-  server: typeof McpServerTable.$inferInsert,
+  server: z.infer<typeof mcpServerUpsertSchema>,
 ) {
   if (runtimeSystemSetting("mcp.allowUserServers") !== true) {
     throw new Error("Not allowed to add MCP servers");
@@ -74,16 +91,33 @@ export async function saveMcpClientAction(
     throw new Error("You don't have permission to create MCP connections");
   }
   // Validate name to ensure it only contains alphanumeric characters and hyphens
-  const nameSchema = z.string().regex(/^[a-zA-Z0-9\-]+$/, {
-    message:
-      "Name must contain only alphanumeric characters (A-Z, a-z, 0-9) and hyphens (-)",
-  });
-
-  const result = nameSchema.safeParse(server.name);
-  if (!result.success) {
+  const nameResult = mcpServerUpsertSchema.shape.name.safeParse(server.name);
+  if (!nameResult.success) {
     throw new Error(
       "Name must contain only alphanumeric characters (A-Z, a-z, 0-9) and hyphens (-)",
     );
+  }
+
+  // An update by id must target a server the caller is allowed to manage;
+  // otherwise the upsert would let any user overwrite a shared server's
+  // config (URL + credentials) and redirect its tool traffic.
+  let ownerId = currentUser.id;
+  if (server.id) {
+    const existing = await mcpRepository.selectById(server.id);
+    if (!existing) {
+      throw new Error("MCP server not found");
+    }
+    const canManage = await canManageMCPServer(
+      existing.userId,
+      existing.visibility,
+    );
+    if (!canManage) {
+      throw new Error(
+        "You don't have permission to modify this MCP connection",
+      );
+    }
+    // Preserve the original owner on update (e.g. admin editing a shared server).
+    ownerId = existing.userId;
   }
 
   // Check for duplicate names if creating a featured server
@@ -104,7 +138,7 @@ export async function saveMcpClientAction(
   // Add userId to the server object
   const serverWithUser = {
     ...server,
-    userId: currentUser.id,
+    userId: ownerId,
     visibility: server.visibility || "private",
   };
 

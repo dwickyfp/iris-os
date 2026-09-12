@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  assertDelegationTargetEligible,
-  delegationTargetId,
-} from "./targets";
+import { assertDelegationTargetEligible, delegationTargetId } from "./targets";
 
 describe("delegation target allowlist", () => {
   it("uses stable kind-qualified target identities", () => {

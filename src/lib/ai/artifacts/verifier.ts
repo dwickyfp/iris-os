@@ -59,9 +59,12 @@ export function createArtifactVerifier(
         return { verified: false, reason: "ARTIFACT_REFERENCE_INVALID" };
       const reference = parsed.data;
       const artifact = await repository.selectById(reference.artifactId);
-      const artifactStorage = artifact?.storageProfileId && "withProfile" in storage
-        ? (storage as FileStorage & { withProfile(id: string): FileStorage }).withProfile(artifact.storageProfileId)
-        : storage;
+      const artifactStorage =
+        artifact?.storageProfileId && "withProfile" in storage
+          ? (
+              storage as FileStorage & { withProfile(id: string): FileStorage }
+            ).withProfile(artifact.storageProfileId)
+          : storage;
       let result: VerificationResult;
 
       if (!artifact) {
@@ -84,7 +87,9 @@ export function createArtifactVerifier(
       } else if (!(await artifactStorage.exists(reference.storageKey))) {
         result = { verified: false, reason: "ARTIFACT_NOT_FOUND" };
       } else {
-        const metadata = await artifactStorage.getMetadata(reference.storageKey);
+        const metadata = await artifactStorage.getMetadata(
+          reference.storageKey,
+        );
         if (!metadata) {
           result = { verified: false, reason: "ARTIFACT_METADATA_MISSING" };
         } else if (

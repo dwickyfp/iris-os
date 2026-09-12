@@ -1,5 +1,3 @@
-import type PgBoss from "pg-boss";
-import { z } from "zod";
 import { and, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { ACTIVITY_PROCESS_QUEUE } from "lib/activity/queue";
 import { pgDb } from "lib/db/pg/db.pg";
@@ -10,19 +8,24 @@ import {
   SkillRevisionTable,
   SkillTable,
 } from "lib/db/pg/schema.pg";
+import { canAutoPromoteSkill } from "lib/learning/policy";
 import {
   LEARNING_PROMOTION_QUEUE,
   LEARNING_PROMOTION_SWEEP_QUEUE,
 } from "lib/learning/queue";
-import { canAutoPromoteSkill } from "lib/learning/policy";
 import { getLearningSettings } from "lib/learning/settings";
 import { generateUUID } from "lib/utils";
+import type PgBoss from "pg-boss";
+import { z } from "zod";
 
 const CLAIM_MS = 5 * 60 * 1_000;
 const MAX_ATTEMPTS = 8;
 
 const LearnedSkillPayloadSchema = z.object({
-  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64),
+  name: z
+    .string()
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .max(64),
   description: z.string().min(1).max(1_024),
   body: z.string().min(1).max(102_400),
   allowedTools: z.array(z.string()).max(0).default([]),
@@ -305,7 +308,9 @@ export async function registerLearningWorkers(boss: PgBoss) {
     LEARNING_PROMOTION_QUEUE,
     { batchSize: 2 },
     async (jobs) => {
-      for (const job of jobs) await promoteCandidate(job.data.candidateId, boss);
+      await Promise.all(
+        jobs.map((job) => promoteCandidate(job.data.candidateId, boss)),
+      );
     },
   );
   await boss.work(LEARNING_PROMOTION_SWEEP_QUEUE, async () => {

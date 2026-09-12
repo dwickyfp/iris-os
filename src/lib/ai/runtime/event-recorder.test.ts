@@ -91,7 +91,8 @@ describe("EventRecorder", () => {
     };
     const recorder = new EventRecorder({
       database: database as never,
-      generateId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, "0")}`,
+      generateId: () =>
+        `00000000-0000-4000-8000-${String(++nextId).padStart(12, "0")}`,
       sanitizePayload: (payload) => payload,
       publish: vi.fn(async () => undefined),
       onPublishError: vi.fn(),

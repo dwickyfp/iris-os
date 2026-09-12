@@ -3,7 +3,6 @@ import "server-only";
 import type { ArtifactReference } from "../artifacts/contracts";
 import type { CapabilityResultProjectionContext } from "./capability-invoker";
 import {
-  fitsInlineResultSurface,
   type ResultOwnership,
   type ResultProvenance,
   type ResultSource,
@@ -12,6 +11,7 @@ import {
   type ResultSurfaceStore,
   type ResultTrust,
   type StructuredResultSummary,
+  fitsInlineResultSurface,
 } from "./result-surface";
 
 type ArtifactCreator = {
@@ -90,7 +90,10 @@ export function createServerResultSurfaceProjector(
     input: ServerResultSurfaceInput<T>,
   ): Promise<T | StoredServerResultSurface> {
     const serialized = JSON.stringify(input.result);
-    if (serialized === undefined || fitsInlineResultSurface(serialized, options)) {
+    if (
+      serialized === undefined ||
+      fitsInlineResultSurface(serialized, options)
+    ) {
       return input.result;
     }
 
@@ -118,7 +121,9 @@ export function createServerResultSurfaceProjector(
     });
     const artifact = surface.ref.artifact;
     if (!artifact || !surface.ref.uri) {
-      throw new Error("Result surface store did not return an artifact reference");
+      throw new Error(
+        "Result surface store did not return an artifact reference",
+      );
     }
     const common = {
       mode: surface.mode,

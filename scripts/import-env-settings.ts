@@ -1,11 +1,14 @@
 import "load-env";
 
 import { randomUUID } from "node:crypto";
-import { SYSTEM_SETTING_DEFINITIONS } from "lib/system-settings/definitions";
-import { systemSettingsService } from "lib/system-settings/server";
-import type { SystemSettingKey, SystemSettingScalar } from "app-types/system-settings";
+import type {
+  SystemSettingKey,
+  SystemSettingScalar,
+} from "app-types/system-settings";
 import { pgStorageProfileRepository } from "lib/db/pg/repositories/storage-profile-repository.pg";
 import { encryptSystemSettingValue } from "lib/security/encrypted-value";
+import { SYSTEM_SETTING_DEFINITIONS } from "lib/system-settings/definitions";
+import { systemSettingsService } from "lib/system-settings/server";
 
 const SYSTEM_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
 const inverted = new Set<SystemSettingKey>([
@@ -25,7 +28,9 @@ function parseLegacy(key: SystemSettingKey, raw: string): SystemSettingScalar {
   return raw;
 }
 
-for (const key of Object.keys(SYSTEM_SETTING_DEFINITIONS) as SystemSettingKey[]) {
+for (const key of Object.keys(
+  SYSTEM_SETTING_DEFINITIONS,
+) as SystemSettingKey[]) {
   const definition = SYSTEM_SETTING_DEFINITIONS[key];
   const raw = process.env[definition.env];
   if (!raw) continue;
@@ -65,7 +70,9 @@ if (process.env.FILE_STORAGE_TYPE === "s3") {
         secretAccessKey: secretKey,
         forcePathStyle:
           driver === "minio" ||
-          /^(1|true)$/i.test(process.env.FILE_STORAGE_S3_FORCE_PATH_STYLE ?? ""),
+          /^(1|true)$/i.test(
+            process.env.FILE_STORAGE_S3_FORCE_PATH_STYLE ?? "",
+          ),
         publicBaseUrl: process.env.FILE_STORAGE_S3_PUBLIC_BASE_URL,
         prefix: process.env.FILE_STORAGE_PREFIX ?? "uploads",
       },
@@ -78,6 +85,8 @@ if (process.env.FILE_STORAGE_TYPE === "s3") {
         secretKey,
       ),
     });
-    console.info("object storage: imported; test and activate in Admin > Settings");
+    console.info(
+      "object storage: imported; test and activate in Admin > Settings",
+    );
   }
 }

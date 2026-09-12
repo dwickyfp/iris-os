@@ -326,9 +326,9 @@ describe("parent resume executor", () => {
     expect(
       (checkpoint.mock.calls as any[][])[0][0].responseMessages,
     ).toHaveLength(2);
-    expect((checkpoint.mock.calls as any[][])[0][0].delegationToolCallIds).toEqual(
-      ["call-2"],
-    );
+    expect(
+      (checkpoint.mock.calls as any[][])[0][0].delegationToolCallIds,
+    ).toEqual(["call-2"]);
   });
 
   it("retains the normalized goal requirement across another resume", async () => {
@@ -530,8 +530,7 @@ describe("parent resume executor", () => {
 
     await execute("root-1");
 
-    const recipe = (checkpoint.mock.calls as any[][])[0][0]
-      .authorizationRecipe;
+    const recipe = (checkpoint.mock.calls as any[][])[0][0].authorizationRecipe;
     expect(recipe).toMatchObject({
       routingSnapshot: { selectedIds: ["local-peer:child-1"] },
       budgetSnapshot: { maxTokens: 500 },

@@ -6,7 +6,8 @@ export function resolveWorkerAutomationAuthority(input: {
   persisted: AutomationAuthoritySnapshot | null;
   current: AutomationAuthoritySnapshot;
 }) {
-  if (!input.persisted) throw new Error("AUTOMATION_AUTHORITY_SNAPSHOT_MISSING");
+  if (!input.persisted)
+    throw new Error("AUTOMATION_AUTHORITY_SNAPSHOT_MISSING");
   return intersectAutomationAuthority(input.persisted, input.current);
 }
 
