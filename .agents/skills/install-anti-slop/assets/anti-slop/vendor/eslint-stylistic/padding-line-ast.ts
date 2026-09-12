@@ -1,5 +1,11 @@
 // Local replacements for the upstream helper imports. See UPSTREAM.md.
-import type { ESTree, SourceCode, Token as SyntaxToken, Comment, Location } from "@oxlint/plugins";
+import type {
+  ESTree,
+  SourceCode,
+  Token as SyntaxToken,
+  Comment,
+  Location,
+} from "@oxlint/plugins";
 
 type Token = SyntaxToken | Comment;
 
@@ -15,11 +21,14 @@ export const isSemicolonToken = (token: Token): boolean =>
   token.type === "Punctuator" && token.value === ";";
 
 /** Filter the optional final semicolon when identifying block-like statements. */
-export const isNotSemicolonToken = (token: Token): boolean => !isSemicolonToken(token);
+export const isNotSemicolonToken = (token: Token): boolean =>
+  !isSemicolonToken(token);
 
 /** Compare token/node boundaries, including attached comments. */
-export const isTokenOnSameLine = (left: { loc: Location }, right: { loc: Location }): boolean =>
-  left.loc.end.line === right.loc.start.line;
+export const isTokenOnSameLine = (
+  left: { loc: Location },
+  right: { loc: Location },
+): boolean => left.loc.end.line === right.loc.start.line;
 
 /** Recognize declarations and expressions used by the upstream IIFE matcher. */
 export const isFunction = (node: ESTree.Node): boolean =>
@@ -44,7 +53,10 @@ export const isTopLevelExpressionStatement = (
     (node.parent.type === "BlockStatement" && isFunction(node.parent.parent)));
 
 /** A single wrapping pair suffices to exclude a string from directive syntax. */
-export function isParenthesized(node: ESTree.Node, sourceCode: SourceCode): boolean {
+export function isParenthesized(
+  node: ESTree.Node,
+  sourceCode: SourceCode,
+): boolean {
   const before = sourceCode.getTokenBefore(node);
   const after = sourceCode.getTokenAfter(node);
   return before?.value === "(" && after?.value === ")";

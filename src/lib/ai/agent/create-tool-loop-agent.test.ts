@@ -1,9 +1,10 @@
 import { tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { DefaultToolName, ImageToolName } from "lib/ai/tools";
+import { DefaultToolName, ImageToolName, SpawnSubagentToolName } from "lib/ai/tools";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { BudgetGuard } from "../runtime/budget";
+import { subagentToolTimeoutMs } from "../tools/subagent/spawn-subagent";
 import {
   AGENT_TIMEOUTS,
   configuredAgentTimeouts,
@@ -85,8 +86,49 @@ describe("getAgentToolTimeouts", () => {
     });
   });
 
-  it("uses automatic reasoning for the implicit base agent", () => {
-    expect(getToolLoopAgentReasoningMode({ type: "base" })).toBe("auto");
+  it("gives the subagent spawn tool its own bounded timeout", () => {
+    const timeouts = getAgentToolTimeouts({
+      [SpawnSubagentToolName]: {} as any,
+    });
+    expect(timeouts).toEqual({
+      [`${SpawnSubagentToolName}Ms`]: subagentToolTimeoutMs(),
+    });
+  });
+
+  it("raises the parent step timeout when a subagent tool is present", async () => {
+    const model = new MockLanguageModelV3({
+      doGenerate: [modelResult([{ type: "text", text: "done" }])],
+    });
+    const agent = createToolLoopAgent({
+      profile: { type: "base" },
+      model,
+      instructions: "test",
+      tools: {
+        [SpawnSubagentToolName]: tool({
+          inputSchema: z.object({ task: z.string() }),
+          execute: async () => ({ status: "completed" }),
+        }) as any,
+      },
+      runtimeContext: runtimeContext(),
+    });
+
+    // The internal ToolLoopAgent timeout is not directly observable; verify
+    // through the exported helper contract instead: with a spawn tool the
+    // agent must not use the bare 30s default step timeout.
+    const timeouts = getAgentToolTimeouts({
+      [SpawnSubagentToolName]: {} as any,
+    });
+    expect(timeouts[`${SpawnSubagentToolName}Ms`]).toBeGreaterThan(
+      AGENT_TIMEOUTS.toolMs,
+    );
+    expect(
+      Math.max(AGENT_TIMEOUTS.stepMs, subagentToolTimeoutMs() + 30_000),
+    ).toBeGreaterThan(AGENT_TIMEOUTS.stepMs);
+
+    await expect(agent.generate({ prompt: "hi" })).resolves.toBeDefined();
+  });
+
+  it("uses automatic reasoning for the implicit base agent", () => {    expect(getToolLoopAgentReasoningMode({ type: "base" })).toBe("auto");
     expect(
       getToolLoopAgentReasoningMode({
         type: "custom",

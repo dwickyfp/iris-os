@@ -39,6 +39,10 @@ vi.mock("lib/db/repository", () => ({
   },
   skillRepository: {
     selectSkillSummariesByAgentId: vi.fn(async () => []),
+    selectSkills: vi.fn(async () => []),
+    selectSkillById: vi.fn(async () => null),
+    selectSkillContentById: vi.fn(async () => null),
+    selectSkillFileByPath: vi.fn(async () => null),
   },
 }));
 vi.mock("lib/ai/mcp/mcp-manager", () => ({

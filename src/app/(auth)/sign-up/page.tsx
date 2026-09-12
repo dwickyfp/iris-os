@@ -1,35 +1,17 @@
-import SignUpPage from "@/components/auth/sign-up";
-import { getDatabaseAuthConfig } from "auth/config.server";
-import { getIsFirstUser } from "lib/auth/server";
+import { getAuthConfig } from "lib/auth/config";
 import { redirect } from "next/navigation";
 
 export default async function SignUp() {
-  const isFirstUser = await getIsFirstUser();
-  const {
-    emailAndPasswordEnabled,
-    socialAuthenticationProviders,
-    signUpEnabled,
-  } = await getDatabaseAuthConfig();
+  const { emailAndPasswordEnabled, signUpEnabled } = getAuthConfig(process.env);
 
   if (!signUpEnabled) {
     redirect("/sign-in");
   }
 
-  const enabledProviders = (
-    Object.keys(
-      socialAuthenticationProviders,
-    ) as (keyof typeof socialAuthenticationProviders)[]
-  ).filter((key) => socialAuthenticationProviders[key]);
-
-  if (emailAndPasswordEnabled && enabledProviders.length === 0) {
+  if (emailAndPasswordEnabled) {
     redirect("/sign-up/email");
   }
 
-  return (
-    <SignUpPage
-      isFirstUser={isFirstUser}
-      emailAndPasswordEnabled={emailAndPasswordEnabled}
-      socialAuthenticationProviders={enabledProviders}
-    />
-  );
+  // Email sign-up is the only sign-up method; without it there is nothing to show.
+  redirect("/sign-in");
 }

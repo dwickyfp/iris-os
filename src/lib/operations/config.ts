@@ -1,4 +1,3 @@
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import { z } from "zod";
 
 const booleanString = z
@@ -93,48 +92,6 @@ export function validateOperationsConfig(
   return operationsEnvSchema.safeParse(env);
 }
 
-export async function loadOperationsConfig(): Promise<OperationsConfig> {
-  const { systemSettingsService } = await import("lib/system-settings/server");
-  const [
-    metricsToken,
-    readyTimeout,
-    queryTimeout,
-    workerRequired,
-    staleAfter,
-    heartbeatInterval,
-    maxFailures,
-  ] = await Promise.all([
-    systemSettingsService.getSecret("operations.metricsToken"),
-    systemSettingsService.getPlain("operations.readyTimeoutMs"),
-    systemSettingsService.getPlain("operations.queryTimeoutMs"),
-    systemSettingsService.getPlain("operations.workerRequired"),
-    systemSettingsService.getPlain("operations.workerStaleAfterMs"),
-    systemSettingsService.getPlain("operations.workerHeartbeatIntervalMs"),
-    systemSettingsService.getPlain("operations.workerMaxHeartbeatFailures"),
-  ]);
-  const flags = getV2FeatureFlagsFromRuntime();
-  return operationsEnvSchema.parse({
-    NODE_ENV: process.env.NODE_ENV,
-    POSTGRES_URL: process.env.POSTGRES_URL,
-    OPERATIONS_METRICS_TOKEN: metricsToken ?? undefined,
-    OPERATIONS_READY_TIMEOUT_MS: readyTimeout,
-    OPERATIONS_QUERY_TIMEOUT_MS: queryTimeout,
-    IRIS_WORKER_REQUIRED: String(workerRequired),
-    IRIS_WORKER_STALE_AFTER_MS: staleAfter,
-    IRIS_WORKER_HEARTBEAT_INTERVAL_MS: heartbeatInterval,
-    IRIS_WORKER_MAX_CONSECUTIVE_HEARTBEAT_FAILURES: maxFailures,
-    IRIS_LEARNING_V2: String(flags.learning),
-    IRIS_AUTOMATION_V2: String(flags.automation),
-    IRIS_DELEGATION_V2: String(flags.delegation),
-    IRIS_REMOTE_AGENTS_A2A: String(flags.remoteAgents),
-  });
-}
-
-function getV2FeatureFlagsFromRuntime() {
-  return {
-    learning: runtimeSystemSetting("features.learning") === true,
-    automation: runtimeSystemSetting("features.automation") === true,
-    delegation: runtimeSystemSetting("features.delegation") === true,
-    remoteAgents: runtimeSystemSetting("features.remoteAgents") === true,
-  };
+export function loadOperationsConfig(): OperationsConfig {
+  return parseOperationsConfig(process.env);
 }

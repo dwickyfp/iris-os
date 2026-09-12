@@ -4,21 +4,51 @@ import createPaddingLineRule from "../vendor/eslint-stylistic/padding-line-betwe
 
 const paddingRule = createPaddingLineRule([
   { blankLine: "always", prev: "import", next: "*" },
-  { blankLine: "always", prev: "*", next: { selector: "Program > :not(ImportDeclaration)" } },
-  { blankLine: "always", prev: { selector: "Program > :not(ImportDeclaration)" }, next: "*" },
-  { blankLine: "always", prev: "*", next: ["function", "class", "interface", "type"] },
-  { blankLine: "always", prev: ["function", "class", "interface", "type"], next: "*" },
   {
     blankLine: "always",
     prev: "*",
-    next: ["multiline-const", "multiline-let", "multiline-var", "multiline-using"],
+    next: { selector: "Program > :not(ImportDeclaration)" },
   },
   {
     blankLine: "always",
-    prev: ["multiline-const", "multiline-let", "multiline-var", "multiline-using"],
+    prev: { selector: "Program > :not(ImportDeclaration)" },
     next: "*",
   },
-  { blankLine: "always", prev: "*", next: ["return", "if", "switch", "try", "for", "while", "do"] },
+  {
+    blankLine: "always",
+    prev: "*",
+    next: ["function", "class", "interface", "type"],
+  },
+  {
+    blankLine: "always",
+    prev: ["function", "class", "interface", "type"],
+    next: "*",
+  },
+  {
+    blankLine: "always",
+    prev: "*",
+    next: [
+      "multiline-const",
+      "multiline-let",
+      "multiline-var",
+      "multiline-using",
+    ],
+  },
+  {
+    blankLine: "always",
+    prev: [
+      "multiline-const",
+      "multiline-let",
+      "multiline-var",
+      "multiline-using",
+    ],
+    next: "*",
+  },
+  {
+    blankLine: "always",
+    prev: "*",
+    next: ["return", "if", "switch", "try", "for", "while", "do"],
+  },
   { blankLine: "always", prev: "block-like", next: "*" },
   { blankLine: "any", prev: "import", next: "import" },
   {
@@ -40,7 +70,8 @@ export const requireReadableSpacingRule: CreateRule = {
   meta: {
     ...paddingRule.meta,
     docs: {
-      description: "Require readable spacing between declarations and logical statement groups.",
+      description:
+        "Require readable spacing between declarations and logical statement groups.",
     },
     schema: [],
   },

@@ -21,6 +21,7 @@ import {
 import { useShallow } from "zustand/shallow";
 
 import { deleteThreadAction } from "@/app/api/chat/actions";
+import { ArtifactPanel } from "./chat/artifact-panel";
 import { useGenerateThreadTitle } from "@/hooks/queries/use-generate-thread-title";
 import { useFileDragOverlay } from "@/hooks/use-file-drag-overlay";
 import { useToRef } from "@/hooks/use-latest";
@@ -579,115 +580,118 @@ export function ChatSession({
   return (
     <>
       {particle}
-      <div
-        className={cn(
-          emptyMessage && "justify-center pb-24",
-          "flex flex-col min-w-0 relative h-full z-40",
-        )}
-      >
-        {isDragging && (
-          <div className="absolute inset-0 z-40 bg-background/70 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-            <div className="rounded-2xl px-6 py-5 bg-background/80 shadow-xl border border-border flex items-center gap-3">
-              <div className="rounded-full bg-primary/10 p-2 text-primary">
-                <FilePlus className="size-6" />
-              </div>
-              <span className="text-sm text-muted-foreground">
-                Drop files to upload
-              </span>
-            </div>
-          </div>
-        )}
-        {emptyMessage ? (
-          <ChatGreeting />
-        ) : (
-          <>
-            <div
-              className={
-                "flex flex-col gap-2 overflow-y-auto py-6 z-10 [scrollbar-gutter:stable_both-edges]"
-              }
-              ref={containerRef}
-              onScroll={handleScroll}
-            >
-              {messages.map((message, index) => {
-                const isLastMessage = messages.length - 1 === index;
-                return (
-                  <PreviewMessage
-                    threadId={threadId}
-                    messageIndex={index}
-                    prevMessage={messages[index - 1]}
-                    key={message.id}
-                    message={message}
-                    status={status}
-                    addToolResult={addToolResult}
-                    addToolApprovalResponse={addToolApprovalResponse}
-                    isLoading={isLoading || isPendingToolCall}
-                    isLastMessage={isLastMessage}
-                    setMessages={setMessages}
-                    sendMessage={sendMessage}
-                    className={
-                      isLastMessage &&
-                      message.role != "user" &&
-                      !space &&
-                      message.parts.length > 1
-                        ? "min-h-[calc(55dvh-40px)]"
-                        : ""
-                    }
-                  />
-                );
-              })}
-              {space && (
-                <>
-                  <div className="w-full mx-auto max-w-3xl px-6 relative">
-                    <div className={space == "space" ? "opacity-0" : ""}>
-                      <Think />
-                    </div>
-                  </div>
-                  <div className="min-h-[calc(55dvh-56px)]" />
-                </>
-              )}
-
-              {error && (
-                <ErrorMessage
-                  error={error}
-                  onRetry={() => {
-                    clearError();
-                    regenerate();
-                  }}
-                />
-              )}
-              <div className="min-w-0 min-h-52" />
-            </div>
-          </>
-        )}
-
+      <div className="flex h-full w-full min-w-0">
         <div
-          className={clsx(
-            messages.length && "absolute bottom-14",
-            "w-full z-10",
+          className={cn(
+            emptyMessage && "justify-center pb-24",
+            "flex flex-col min-w-0 relative h-full z-40 flex-1",
           )}
         >
-          <div className="max-w-3xl mx-auto relative flex justify-center items-center -top-2">
-            <ScrollToBottomButton
-              show={!isAtBottom && messages.length > 0}
-              onClick={scrollToBottom}
+          {isDragging && (
+            <div className="absolute inset-0 z-40 bg-background/70 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+              <div className="rounded-2xl px-6 py-5 bg-background/80 shadow-xl border border-border flex items-center gap-3">
+                <div className="rounded-full bg-primary/10 p-2 text-primary">
+                  <FilePlus className="size-6" />
+                </div>
+                <span className="text-sm text-muted-foreground">
+                  Drop files to upload
+                </span>
+              </div>
+            </div>
+          )}
+          {emptyMessage ? (
+            <ChatGreeting />
+          ) : (
+            <>
+              <div
+                className={
+                  "flex flex-col gap-2 overflow-y-auto py-6 z-10 [scrollbar-gutter:stable_both-edges]"
+                }
+                ref={containerRef}
+                onScroll={handleScroll}
+              >
+                {messages.map((message, index) => {
+                  const isLastMessage = messages.length - 1 === index;
+                  return (
+                    <PreviewMessage
+                      threadId={threadId}
+                      messageIndex={index}
+                      prevMessage={messages[index - 1]}
+                      key={message.id}
+                      message={message}
+                      status={status}
+                      addToolResult={addToolResult}
+                      addToolApprovalResponse={addToolApprovalResponse}
+                      isLoading={isLoading || isPendingToolCall}
+                      isLastMessage={isLastMessage}
+                      setMessages={setMessages}
+                      sendMessage={sendMessage}
+                      className={
+                        isLastMessage &&
+                        message.role != "user" &&
+                        !space &&
+                        message.parts.length > 1
+                          ? "min-h-[calc(55dvh-40px)]"
+                          : ""
+                      }
+                    />
+                  );
+                })}
+                {space && (
+                  <>
+                    <div className="w-full mx-auto max-w-3xl px-6 relative">
+                      <div className={space == "space" ? "opacity-0" : ""}>
+                        <Think />
+                      </div>
+                    </div>
+                    <div className="min-h-[calc(55dvh-56px)]" />
+                  </>
+                )}
+
+                {error && (
+                  <ErrorMessage
+                    error={error}
+                    onRetry={() => {
+                      clearError();
+                      regenerate();
+                    }}
+                  />
+                )}
+                <div className="min-w-0 min-h-52" />
+              </div>
+            </>
+          )}
+
+          <div
+            className={clsx(
+              messages.length && "absolute bottom-14",
+              "w-full z-10",
+            )}
+          >
+            <div className="max-w-3xl mx-auto relative flex justify-center items-center -top-2">
+              <ScrollToBottomButton
+                show={!isAtBottom && messages.length > 0}
+                onClick={scrollToBottom}
+              />
+            </div>
+
+            <PromptInput
+              input={input}
+              threadId={threadId}
+              sendMessage={sendMessage}
+              setInput={setDraftInput}
+              isLoading={isLoading || isPendingToolCall}
+              onStop={stop}
+              onFocus={isFirstTime ? undefined : handleFocus}
             />
           </div>
-
-          <PromptInput
-            input={input}
+          <DeleteThreadPopup
             threadId={threadId}
-            sendMessage={sendMessage}
-            setInput={setDraftInput}
-            isLoading={isLoading || isPendingToolCall}
-            onStop={stop}
-            onFocus={isFirstTime ? undefined : handleFocus}
+            onClose={() => setIsDeleteThreadPopupOpen(false)}
+            open={isDeleteThreadPopupOpen}
           />
         </div>
-        <DeleteThreadPopup
-          threadId={threadId}
-          onClose={() => setIsDeleteThreadPopupOpen(false)}
-          open={isDeleteThreadPopupOpen}
-        />
+        <ArtifactPanel threadId={threadId} messages={messages} />
       </div>
     </>
   );

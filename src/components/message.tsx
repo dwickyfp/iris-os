@@ -137,6 +137,7 @@ const PurePreviewMessage = ({
                   isLast={isLast}
                   readonly={readonly}
                   messageId={message.id}
+                  threadId={threadId}
                   isManualToolInvocation={isManualToolInvocation}
                   showActions={
                     !readonly &&

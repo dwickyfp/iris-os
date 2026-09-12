@@ -9,6 +9,7 @@ describe("getV2FeatureFlags", () => {
       automation: false,
       delegation: false,
       remoteAgents: false,
+      subagents: true,
     });
   });
 
@@ -27,6 +28,20 @@ describe("getV2FeatureFlags", () => {
       automation: false,
       delegation: false,
       remoteAgents: true,
+      subagents: true,
     });
+  });
+
+  it("keeps subagents on unless explicitly disabled", () => {
+    expect(getV2FeatureFlags({ IRIS_SUBAGENTS_V2: "false" }).subagents).toBe(
+      false,
+    );
+    expect(getV2FeatureFlags({ IRIS_SUBAGENTS_V2: "0" }).subagents).toBe(false);
+    expect(getV2FeatureFlags({ IRIS_SUBAGENTS_V2: "true" }).subagents).toBe(
+      true,
+    );
+    expect(getV2FeatureFlags({ IRIS_SUBAGENTS_V2: "anything" }).subagents).toBe(
+      true,
+    );
   });
 });

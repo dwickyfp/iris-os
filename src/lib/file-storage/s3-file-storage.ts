@@ -44,10 +44,15 @@ export interface S3FileStorageConfig {
 const normalizePrefix = (prefix: string) =>
   prefix.replace(/^\/+|\/+$/g, "").trim();
 
-const buildKey = (filename: string, prefix: string) => {
+const OWNER_SEGMENT = "users";
+
+const buildKey = (filename: string, prefix: string, ownerId?: string) => {
   const safeName = sanitizeFilename(filename || "file");
   const id = generateUUID();
-  return path.posix.join(prefix, `${id}-${safeName}`);
+  const scope = ownerId
+    ? path.posix.join(prefix, OWNER_SEGMENT, ownerId)
+    : prefix;
+  return path.posix.join(scope, `${id}-${safeName}`);
 };
 
 const encodeKeySegment = (segment: string) =>
@@ -142,7 +147,7 @@ export const createS3FileStorage = (
     async upload(content, options: UploadOptions = {}) {
       const buffer = await toBuffer(content);
       const filename = options.filename ?? "file";
-      const key = options.key ?? buildKey(filename, prefix);
+      const key = options.key ?? buildKey(filename, prefix, options.ownerId);
 
       await s3.send(
         new PutObjectCommand({
@@ -180,7 +185,7 @@ export const createS3FileStorage = (
     async createUploadUrl(
       options: UploadUrlOptions,
     ): Promise<UploadUrl | null> {
-      const key = buildKey(options.filename, prefix);
+      const key = buildKey(options.filename, prefix, options.ownerId);
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,

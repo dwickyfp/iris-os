@@ -1,5 +1,5 @@
 import { MemoryKindSchema, MemoryScopeTypeSchema } from "app-types/memory";
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { STATIC_APP_CONFIG } from "lib/app-config";
 import { z } from "zod";
 
 export const MemoryCuratorModeSchema = z.enum(["off", "shadow", "write"]);
@@ -8,9 +8,8 @@ export type MemoryCuratorMode = z.infer<typeof MemoryCuratorModeSchema>;
 export function getMemoryCuratorMode(
   env?: Record<string, string | undefined>,
 ): MemoryCuratorMode {
-  const configured = env
-    ? env.IRIS_MEMORY_CURATOR_MODE
-    : runtimeSystemSetting("memory.curatorMode");
+  const configured =
+    env?.IRIS_MEMORY_CURATOR_MODE ?? STATIC_APP_CONFIG.memory.curatorMode;
   return MemoryCuratorModeSchema.catch("shadow").parse(configured);
 }
 

@@ -52,21 +52,33 @@ async function signInViaUi(
   page: Page,
   { email, password }: { email: string; password: string },
 ) {
-  await page.goto("/sign-in");
+  const submit = async () => {
+    await page.goto("/sign-in");
+    await page.locator("#email").fill(email);
+    await page.locator("#password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  };
+  const redirect = {
+    url: (url: URL) =>
+      !url.toString().includes("/sign-in") &&
+      !url.toString().includes("/sign-up"),
+    timeout: 20000,
+  };
 
-  // Sign in with the seeded editor user
-  await page.locator("#email").fill(email);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await submit();
 
-  // Wait for redirect after successful login
-  await page.waitForURL(
-    (url) => {
-      const urlStr = url.toString();
-      return !urlStr.includes("/sign-in") && !urlStr.includes("/sign-up");
-    },
-    { timeout: 20000 },
-  );
+  try {
+    // Wait for redirect after successful login
+    await page.waitForURL(redirect.url, redirect);
+  } catch {
+    // A reused dev server keeps Better Auth rate limiting enabled because
+    // E2E_DISABLE_AUTH_RATE_LIMIT only reaches a Playwright-spawned
+    // webServer; sequential setup sign-ins can then be throttled. Wait out
+    // the rate-limit window and retry once.
+    await page.waitForTimeout(12_000);
+    await submit();
+    await page.waitForURL(redirect.url, redirect);
+  }
 }
 
 setup.beforeAll(async () => {

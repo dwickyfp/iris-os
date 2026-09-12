@@ -33,7 +33,7 @@ export function lexicalTerms(query: string) {
  * 'simple' text search has no stemmer, so OR-joined prefix queries stand in
  * for stemming: "kerja:*" still matches "kerjakan"/"kerjasama"-style tokens.
  */
-function prefixTsQuery(terms: string[]) {
+export function prefixTsQuery(terms: string[]) {
   const safe = terms
     .map((term) => term.replace(/[&|!():*'\\]/g, ""))
     .filter((term) => term.length > 2);
@@ -56,7 +56,10 @@ function trigramEnabled() {
   return trigramPromise;
 }
 
-/** Matches claims whose content hits any term prefix or fuzzy-similar text. */
+/** Matches claims whose content hits any term prefix or fuzzy-similar text.
+ * The tsvector side must spell out to_tsvector('simple', content) so the
+ * expression GIN indexes (0072/0073) can serve the predicate — a bare
+ * `content @@ tsquery` would force a sequential scan. */
 export async function contentMatches(
   terms: string[],
 ): Promise<SQL | undefined> {
@@ -65,8 +68,8 @@ export async function contentMatches(
   if (!tsQuery && !fuzzy) return undefined;
   if (!tsQuery) return sql`${UserMemoryTable.content} % ${fuzzy}`;
   if (!fuzzy || !(await trigramEnabled()))
-    return sql`${UserMemoryTable.content} @@ to_tsquery('simple', ${tsQuery})`;
-  return sql`(${UserMemoryTable.content} @@ to_tsquery('simple', ${tsQuery}) OR ${UserMemoryTable.content} % ${fuzzy})`;
+    return sql`to_tsvector('simple', ${UserMemoryTable.content}) @@ to_tsquery('simple', ${tsQuery})`;
+  return sql`(to_tsvector('simple', ${UserMemoryTable.content}) @@ to_tsquery('simple', ${tsQuery}) OR ${UserMemoryTable.content} % ${fuzzy})`;
 }
 
 /** Cover-density ranking, boosted by trigram similarity when available. */
@@ -78,4 +81,29 @@ export async function contentRank(terms: string[]): Promise<SQL | undefined> {
   if (fuzzy && (await trigramEnabled()))
     return sql`greatest(${rank}, similarity(${UserMemoryTable.content}, ${fuzzy}))`;
   return rank;
+}
+
+/**
+ * Current-message terms come first; earlier turns only backfill when the
+ * current message is too thin for lexical recall (e.g. "seperti biasa").
+ */
+export function buildRecallQuery(
+  current: string,
+  previous: string[] = [],
+): string {
+  const terms = lexicalTerms(current);
+  if (terms.length >= 3 || !previous.length) return current;
+  const seen = new Set(terms);
+  const supplemented = [...terms];
+  for (const message of previous) {
+    for (const term of lexicalTerms(message)) {
+      if (supplemented.length >= 10) break;
+      if (!seen.has(term)) {
+        seen.add(term);
+        supplemented.push(term);
+      }
+    }
+    if (supplemented.length >= 10) break;
+  }
+  return supplemented.join(" ");
 }

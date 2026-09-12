@@ -60,6 +60,12 @@ export interface AppState {
   threadImageToolModel: {
     [threadId: string]: string | undefined;
   };
+  /**
+   * Open subagent artifact panel per thread. Presence of a threadId key means
+   * the panel is open for that thread; the value is the `spawn_subagent` tool
+   * call id whose artifact is displayed. Ephemeral (not persisted).
+   */
+  subagentArtifactPanels: { [threadId: string]: string | undefined };
   toolPresets: {
     allowedMcpServers?: Record<string, AllowedMCPServer>;
     allowedAppDefaultToolkit?: AppDefaultToolkit[];
@@ -102,6 +108,7 @@ const initialState: AppState = {
   threadCapabilityModes: {},
   threadFiles: {},
   threadImageToolModel: {},
+  subagentArtifactPanels: {},
   mcpList: [],
   agentList: [],
   workflowToolList: [],

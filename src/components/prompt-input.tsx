@@ -24,6 +24,7 @@ import { SelectModel } from "./select-model";
 import { ToolModeDropdown } from "./tool-mode-dropdown";
 
 import { useThreadFileUploader } from "@/hooks/use-thread-file-uploader";
+import { resolveServableFileUrl } from "lib/file-storage/client-url";
 import { cn } from "@/lib/utils";
 import { Editor } from "@tiptap/react";
 import { WorkflowSummary } from "app-types/workflow";
@@ -217,6 +218,14 @@ export default function PromptInput({
   );
 
   // uploadFiles handled by hook
+
+  const handlePasteFiles = useCallback(
+    async (files: File[]) => {
+      if (!threadId || !files.length) return;
+      await uploadFiles(files);
+    },
+    [threadId, uploadFiles],
+  );
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -578,6 +587,7 @@ export default function PromptInput({
                   ref={editorRef}
                   disabledMention={disabledMention}
                   onFocus={onFocus}
+                  onPasteFiles={handlePasteFiles}
                 />
               </div>
               <div className="flex w-full items-center z-30">
@@ -757,7 +767,9 @@ export default function PromptInput({
                   {uploadedFiles.map((file) => {
                     const isImage = file.mimeType.startsWith("image/");
                     const imageSrc =
-                      file.previewUrl || file.url || file.dataUrl || "";
+                      resolveServableFileUrl(
+                        file.previewUrl || file.url || file.dataUrl,
+                      ) || "";
                     const displayName = file.name;
                     const displayExt =
                       file.name.split(".").pop()?.toUpperCase() || "FILE";

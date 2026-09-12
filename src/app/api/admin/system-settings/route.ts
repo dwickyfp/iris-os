@@ -1,4 +1,3 @@
-import type { SystemSettingKey } from "app-types/system-settings";
 import { requireAdminActor } from "auth/permissions";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ModelProviderTable } from "lib/db/pg/schema.pg";
@@ -7,22 +6,10 @@ import { systemSettingsService } from "lib/system-settings/server";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
-const SELECT_OPTIONS: Partial<Record<SystemSettingKey, string[]>> = {
-  "memory.curatorMode": ["off", "shadow", "write"],
-};
-
 const GROUP_LABELS: Record<string, string> = {
-  ai: "AI",
-  auth: "Authentication",
-  capabilityRouter: "Capability Router",
-  exa: "Exa",
-  features: "Features",
+  exa: "Exa Search",
   mcp: "MCP",
-  memory: "Memory",
-  oauth: "OAuth",
   providers: "Providers",
-  redis: "Redis",
-  storage: "Storage",
 };
 
 function title(value: string) {
@@ -65,7 +52,6 @@ export async function GET() {
   for (const setting of settings) {
     const groupKey = setting.key.split(".")[0];
     const definition = SYSTEM_SETTING_DEFINITIONS[setting.key];
-    const options = SELECT_OPTIONS[setting.key];
     const providerOptions = setting.key.startsWith("providers.")
       ? providers.map((provider) => ({
           label: provider.name,
@@ -75,13 +61,11 @@ export async function GET() {
     const type =
       definition.sensitivity === "secret"
         ? "password"
-        : options || providerOptions
+        : providerOptions
           ? "select"
           : typeof definition.default === "boolean"
             ? "boolean"
-            : typeof definition.default === "number"
-              ? "number"
-              : "text";
+            : "text";
     const group = groups.get(groupKey) ?? {
       key: groupKey,
       label: GROUP_LABELS[groupKey] ?? title(groupKey),
@@ -93,18 +77,8 @@ export async function GET() {
       type,
       value: setting.value,
       revision: setting.revision,
-      requiresRestart: setting.restartRequired,
       secretConfigured: setting.sensitivity === "secret" && setting.configured,
-      ...(providerOptions
-        ? { options: providerOptions }
-        : options
-          ? {
-              options: options.map((value) => ({
-                label: title(value),
-                value,
-              })),
-            }
-          : {}),
+      ...(providerOptions ? { options: providerOptions } : {}),
     });
     groups.set(groupKey, group);
   }

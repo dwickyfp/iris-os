@@ -23,22 +23,44 @@ const MermaidDiagram = dynamic(
   () => import("./mermaid-diagram").then((mod) => mod.MermaidDiagram),
   {
     loading: () => (
-      <div className="text-sm flex bg-accent/30 flex-col rounded-2xl relative my-4 overflow-hidden border">
-        <div className="w-full flex z-20 py-2 px-4 items-center">
-          <span className="text-sm text-muted-foreground">mermaid</span>
-        </div>
-        <div className="relative overflow-x-auto px-6 pb-6">
-          <div className="h-20 w-full flex items-center justify-center">
-            <span className="text-muted-foreground">
-              Loading Mermaid renderer...
-            </span>
-          </div>
-        </div>
+      <div className="h-20 w-full flex items-center justify-center">
+        <span className="text-muted-foreground">
+          Loading Mermaid renderer...
+        </span>
       </div>
     ),
     ssr: false,
   },
 );
+
+// Mermaid blocks get a single card: a header like other code blocks, on top
+// of the dotted-grid diagram canvas (no outer pre card around it).
+const MermaidPre = ({ code }: { code: string }) => {
+  const { copied, copy } = useCopy();
+
+  return (
+    <div className="text-sm flex flex-col relative my-4 overflow-hidden border rounded-2xl shadow bg-card">
+      <div className="p-1.5 border-b z-20 bg-secondary">
+        <div className="w-full flex z-20 py-0.5 px-4 items-center">
+          <span className="text-sm text-muted-foreground">mermaid</span>
+          <Button
+            size="icon"
+            variant={copied ? "secondary" : "ghost"}
+            className="ml-auto z-10 p-3! size-2! rounded-sm"
+            onClick={() => {
+              copy(code);
+            }}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon className="size-3!" />}
+          </Button>
+        </div>
+      </div>
+      <div className="relative p-4 bg-card/50 [background-image:radial-gradient(circle,var(--border)_1px,transparent_1px)] [background-size:22px_22px]">
+        <MermaidDiagram chart={code} />
+      </div>
+    </div>
+  );
+};
 
 const PurePre = ({
   children,
@@ -94,11 +116,7 @@ export async function Highlight(
   }
 
   if (lang === "mermaid") {
-    return (
-      <PurePre code={code} lang={lang}>
-        <MermaidDiagram chart={code} />
-      </PurePre>
-    );
+    return <MermaidPre code={code} />;
   }
 
   const out = await codeToHast(code, {
@@ -121,6 +139,7 @@ export function PreBlock({ children }: { children: any }) {
   const { theme } = useTheme();
   const language = children.props.className?.split("-")?.[1] || "bash";
   const [loading, setLoading] = useState(true);
+  const isMermaid = language === "mermaid";
   const [component, setComponent] = useState<JSX.Element | null>(
     <PurePre className="animate-pulse" code={code} lang={language}>
       {children}
@@ -144,11 +163,13 @@ export function PreBlock({ children }: { children: any }) {
   return (
     <div
       className={cn(
-        loading && "animate-pulse",
-        "text-sm flex bg-secondary/40 shadow border flex-col rounded relative my-4 overflow-hidden",
+        loading && !isMermaid && "animate-pulse",
+        isMermaid
+          ? "text-sm relative"
+          : "text-sm flex bg-secondary/40 shadow border flex-col rounded relative my-4 overflow-hidden",
       )}
     >
-      {component}
+      {isMermaid ? <MermaidPre code={code} /> : component}
     </div>
   );
 }

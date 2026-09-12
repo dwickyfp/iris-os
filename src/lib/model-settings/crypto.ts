@@ -13,10 +13,7 @@ export function encryptSecret(value: string) {
 }
 
 async function decryptLegacy(value: string) {
-  const { systemSettingsService } = await import("lib/system-settings/server");
-  const encoded = await systemSettingsService.getSecret(
-    "legacy.modelSettingsEncryptionKey",
-  );
+  const encoded = process.env.MODEL_SETTINGS_ENCRYPTION_KEY;
   if (!encoded)
     throw new Error("Legacy model encryption key is not configured");
   const key = Buffer.from(encoded, "base64");

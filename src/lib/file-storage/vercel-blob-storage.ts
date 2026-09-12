@@ -15,11 +15,14 @@ import {
 
 const STORAGE_PREFIX = resolveStoragePrefix();
 
-const buildPathname = (filename: string) => {
+const OWNER_SEGMENT = "users";
+
+const buildPathname = (filename: string, ownerId?: string) => {
   const safeName = sanitizeFilename(filename);
   const id = generateUUID();
   const prefix = STORAGE_PREFIX ? `${STORAGE_PREFIX}/` : "";
-  return path.posix.join(prefix, `${id}-${safeName}`);
+  const scope = ownerId ? path.posix.join(OWNER_SEGMENT, ownerId) : "";
+  return path.posix.join(prefix, scope, `${id}-${safeName}`);
 };
 
 const mapMetadata = (
@@ -62,7 +65,7 @@ export const createVercelBlobStorage = (): FileStorage => {
     async upload(content, options: UploadOptions = {}) {
       const buffer = await toBuffer(content);
       const filename = options.filename ?? "file";
-      const pathname = options.key ?? buildPathname(filename);
+      const pathname = options.key ?? buildPathname(filename, options.ownerId);
 
       const result = await put(pathname, buffer, {
         access: "public",

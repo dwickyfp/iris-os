@@ -23,6 +23,8 @@ export interface UploadOptions {
   filename?: string;
   contentType?: string;
   sha256?: string;
+  /** Owner scope used to group objects per user (e.g. "uploads/users/<id>/..."). */
+  ownerId?: string;
 }
 
 export interface UploadResult {
@@ -36,6 +38,8 @@ export interface UploadUrlOptions {
   filename: string;
   contentType: string;
   expiresInSeconds?: number;
+  /** Owner scope used to group objects per user (e.g. "uploads/users/<id>/..."). */
+  ownerId?: string;
 }
 
 export type UploadUrlMethod = "PUT" | "POST";

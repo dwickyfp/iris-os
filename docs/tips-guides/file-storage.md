@@ -42,6 +42,18 @@ For browser-visible source URLs, expose MinIO through a reverse proxy or CDN and
 set **Public base URL** to that externally reachable origin. Do not use the
 internal Docker hostname as the public URL.
 
+When running the app on the host (for example with `pnpm dev`) instead of inside
+the Docker stack, use `http://localhost:9000` as the endpoint.
+
+## Per-user grouping
+
+Authenticated uploads (including chat attachments) are grouped per owner: the
+object key is `users/<userId>/<uuid>-<filename>` under the configured prefix
+(default `uploads`), so each user's files live under a single prefix, for
+example `uploads/users/<userId>/<uuid>-report.pdf`. Directly supplied keys and
+server-side uploads without an owner context (such as generated images) keep
+the plain prefix layout.
+
 ## Upload behavior
 
 - Browser-to-server uploads are authenticated and limited to 50 MiB.

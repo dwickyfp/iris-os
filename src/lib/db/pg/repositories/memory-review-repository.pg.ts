@@ -280,7 +280,7 @@ async function findExactActiveClaim(
   scope: MemoryScope,
   content: string,
 ) {
-  const rows: MemoryRow[] = await tx
+  const [row]: MemoryRow[] = await tx
     .select()
     .from(UserMemoryTable)
     .where(
@@ -289,11 +289,11 @@ async function findExactActiveClaim(
         exactScope(UserMemoryTable, scope),
         eq(UserMemoryTable.status, "active"),
         isNull(UserMemoryTable.deletedAt),
+        eq(UserMemoryTable.contentHash, memoryContentHash(content)),
       ),
     )
-    .limit(500);
-  const normalized = normalizeMemoryText(content);
-  return rows.find((row) => normalizeMemoryText(row.content) === normalized);
+    .limit(1);
+  return row;
 }
 
 async function createOrReinforceClaim(
@@ -349,6 +349,7 @@ async function createOrReinforceClaim(
       ...input.scope,
       kind: input.kind,
       content,
+      contentHash: memoryContentHash(content),
       confidence: confidence(input.confidence),
       importance: 50,
       frequency: 1,
@@ -566,11 +567,13 @@ async function commitOperations(input: {
         continue;
       }
       if (operation.action === "refine") {
+        const refinedContent = validateContent(operation.content);
         const [memory] = await tx
           .update(UserMemoryTable)
           .set({
             kind: operation.kind,
-            content: validateContent(operation.content),
+            content: refinedContent,
+            contentHash: memoryContentHash(refinedContent),
             confidence: Math.max(
               target!.confidence,
               confidence(operation.confidence),

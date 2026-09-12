@@ -49,10 +49,12 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Upload to storage (works with any storage backend)
+    // Upload to storage (works with any storage backend); objects are grouped
+    // per user under "users/<userId>/" by the storage drivers.
     const result = await serverFileStorage.upload(buffer, {
       filename: file.name,
       contentType: file.type || "application/octet-stream",
+      ownerId: session.user.id,
     });
     if (!result.storageProfileId) throw new Error("STORAGE_PROFILE_REQUIRED");
     let uploaded: { id: string };

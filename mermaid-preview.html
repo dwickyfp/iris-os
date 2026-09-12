@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --background: hsl(220 6% 9%);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.21 0.006 285.885);
+    --border: oklch(1 0 0 / 10%);
+    --muted-foreground: oklch(0.705 0.015 286.067);
+    --chart-1: hsl(220 70% 50%);
+    --chart-2: hsl(160 60% 45%);
+    --chart-3: hsl(30 80% 55%);
+    --chart-4: hsl(280 65% 60%);
+    --chart-5: hsl(340 75% 55%);
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    padding: 32px;
+  }
+  .frame {
+    width: 860px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .frame > header {
+    background: color-mix(in oklab, var(--accent) 30%, transparent);
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    font-family: ui-monospace, monospace;
+  }
+  .canvas {
+    padding: 16px;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  #old { filter: grayscale(1); }
+</style>
+</head>
+<body>
+<div class="frame" id="old">
+  <header>mermaid — sebelum (theme "dark" default)</header>
+  <div class="canvas" id="old-out"></div>
+</div>
+<div class="frame">
+  <header>mermaid — sesudah (base + design tokens)</header>
+  <div class="canvas" id="new-out"></div>
+</div>
+<script type="module">
+  import mermaid from "/node_modules/mermaid/dist/mermaid.esm.min.mjs";
+
+  const readCssVar = (name, fallback) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  };
+
+  const resolveColor = (value) => {
+    const el = document.createElement("div");
+    el.style.color = value;
+    el.style.display = "none";
+    document.body.appendChild(el);
+    const resolved = getComputedStyle(el).color;
+    el.remove();
+    return /^rgb\(/.test(resolved) ? resolved : null;
+  };
+
+  const parseRgb = (color) => {
+    const m = color.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+
+  const mixColor = (color, pct, dark) => {
+    const rgb = parseRgb(color);
+    if (!rgb) return color;
+    const target = dark ? [0, 0, 0] : [255, 255, 255];
+    const blended = rgb.map((c, i) => Math.round(c * (pct / 100) + target[i] * (1 - pct / 100)));
+    return `rgb(${blended.join(", ")})`;
+  };
+
+  const buildThemeVariables = (dark) => {
+    const mix = (cssVar, fallback, pct) => {
+      const resolved = resolveColor(readCssVar(cssVar, fallback)) ?? resolveColor(fallback) ?? fallback;
+      return mixColor(resolved, pct, dark);
+    };
+    const card = mix("--card", dark ? "#0a0a0b" : "#ffffff", 100);
+    const foreground = mix("--foreground", dark ? "#fafafa" : "#09090b", 100);
+    const border = mix("--border", dark ? "#27272a" : "#e4e4e7", 100);
+    const mutedForeground = mix("--muted-foreground", dark ? "#a1a1aa" : "#71717a", 100);
+    return {
+      darkMode: dark,
+      background: "transparent",
+      fontSize: "15px",
+      primaryColor: mix("--chart-1", "#3b82f6", dark ? 32 : 12),
+      primaryTextColor: foreground,
+      primaryBorderColor: mix("--chart-1", "#3b82f6", dark ? 75 : 50),
+      secondaryColor: mix("--chart-2", "#60a5fa", dark ? 28 : 16),
+      secondaryTextColor: foreground,
+      secondaryBorderColor: mix("--chart-2", "#60a5fa", dark ? 70 : 50),
+      tertiaryColor: mix("--chart-3", "#3b82f6", dark ? 26 : 20),
+      tertiaryTextColor: foreground,
+      tertiaryBorderColor: mix("--chart-3", "#3b82f6", dark ? 70 : 50),
+      lineColor: mix("--chart-1", "#3b82f6", dark ? 58 : 45),
+      textColor: foreground,
+      edgeLabelBackground: card,
+      clusterBkg: mix("--chart-1", "#3b82f6", dark ? 12 : 6),
+      clusterBorder: border,
+      arrowheadColor: mutedForeground,
+    };
+  };
+
+  const chart = `flowchart TD
+  A["User buka aplikasi"] --> B["Tekan tombol<br/>Login with Google/Facebook"]
+  B --> C["Aplikasi redirect ke<br/>halaman login provider"]
+  C --> D{"User setuju<br/>memberi akses?"}
+  D -->|Ya| E["Provider kirim kode<br/>ke callback URL"]
+  D -->|Tidak| F["Kembali ke halaman login"]
+  E --> G["Aplikasi tukar kode<br/>dengan access token"]
+  G --> H["Simpan sesi &<br/>redirect ke dashboard"]`;
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "dark",
+    securityLevel: "loose",
+  });
+  document.getElementById("old-out").innerHTML = (await mermaid.render("m-old", chart)).svg;
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    darkMode: true,
+    securityLevel: "loose",
+    themeVariables: buildThemeVariables(true),
+    flowchart: { curve: "basis", padding: 14, nodeSpacing: 55, rankSpacing: 65, useMaxWidth: true },
+  });
+  document.getElementById("new-out").innerHTML = (await mermaid.render("m-new", chart)).svg;
+</script>
+</body>
+</html>

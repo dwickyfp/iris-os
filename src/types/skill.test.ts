@@ -41,10 +41,18 @@ describe("Skill schemas", () => {
     expect(skill.files).toEqual([]);
   });
 
-  it("does not permit public visibility", () => {
+  it("permits public visibility for sharing with all users", () => {
     expect(SkillUpdateSchema.safeParse({ visibility: "public" }).success).toBe(
-      false,
+      true,
     );
+    const skill = SkillCreateSchema.parse({
+      name: "research",
+      description: "Research workflow",
+      userId: "user-1",
+      body: "Use this skill for research.",
+      visibility: "public",
+    });
+    expect(skill.visibility).toBe("public");
   });
 
   it("rejects duplicate supplemental file paths", () => {

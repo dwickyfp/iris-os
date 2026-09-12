@@ -189,9 +189,7 @@ export default function EditSkill({
                 visibility={skill.visibility}
                 isOwner={isOwner}
                 isBookmarked={initialSkill.isBookmarked}
-                onVisibilityChange={(value) =>
-                  value !== "public" && updateVisibility(value)
-                }
+                onVisibilityChange={(value) => updateVisibility(value)}
                 onBookmarkToggle={bookmark}
                 isVisibilityChangeLoading={isSaving}
                 isBookmarkToggleLoading={isBookmarkLoading}

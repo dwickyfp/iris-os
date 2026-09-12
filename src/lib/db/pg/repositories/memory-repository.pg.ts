@@ -1,5 +1,6 @@
 import type { MemoryScope, UserMemory } from "app-types/memory";
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { memoryContentHash } from "lib/ai/memory/curator";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import {
@@ -74,6 +75,7 @@ export const pgMemoryRepository = {
       .values({
         ...input,
         id: generateUUID(),
+        contentHash: memoryContentHash(input.content),
         confidence: Math.round(input.confidence * 100),
         importance: Math.round(input.importance * 100),
         stability: Math.round(input.stability * 100),
@@ -110,6 +112,9 @@ export const pgMemoryRepository = {
       .update(UserMemoryTable)
       .set({
         ...values,
+        ...(values.content === undefined
+          ? {}
+          : { contentHash: memoryContentHash(values.content) }),
         ...(values.confidence === undefined
           ? {}
           : { confidence: Math.round(values.confidence * 100) }),

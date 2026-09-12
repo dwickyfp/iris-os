@@ -1,6 +1,7 @@
 "use client";
 
 import { useCopy } from "@/hooks/use-copy";
+import { resolveServableFileUrl } from "lib/file-storage/client-url";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { FileUIPart, ToolUIPart, UIMessage, getToolName } from "ai";
 import { cn, safeJSONParse, truncateString } from "lib/utils";
@@ -48,7 +49,11 @@ import {
   VercelAIWorkflowToolStreamingResult,
   VercelAIWorkflowToolStreamingResultTag,
 } from "app-types/workflow";
-import { DefaultToolName, ImageToolName } from "lib/ai/tools";
+import {
+  DefaultToolName,
+  ImageToolName,
+  SpawnSubagentToolName,
+} from "lib/ai/tools";
 import equal from "lib/equal";
 import {
   Shortcut,
@@ -65,6 +70,7 @@ import { notify } from "lib/notify";
 import dynamic from "next/dynamic";
 import { ModelProviderIcon } from "ui/model-provider-icon";
 import { SkillView } from "./tool-invocation/skill-view";
+import { SubagentInvocation } from "./tool-invocation/subagent-invocation";
 import { WorkflowInvocation } from "./tool-invocation/workflow-invocation";
 
 type MessagePart = UIMessage["parts"][number];
@@ -107,6 +113,7 @@ interface ToolMessagePartProps {
   isError?: boolean;
   setMessages?: UseChatHelpers<UIMessage>["setMessages"];
   readonly?: boolean;
+  threadId?: string;
 }
 
 const MAX_TEXT_LENGTH = 600;
@@ -757,6 +764,7 @@ export const ToolMessagePart = memo(
     messageId,
     setMessages,
     isManualToolInvocation,
+    threadId,
   }: ToolMessagePartProps) => {
     const t = useTranslations("");
 
@@ -881,6 +889,10 @@ export const ToolMessagePart = memo(
     );
 
     const CustomToolComponent = useMemo(() => {
+      if (toolName === SpawnSubagentToolName) {
+        return <SubagentInvocation part={part} threadId={threadId} />;
+      }
+
       if (
         toolName === DefaultToolName.WebSearch ||
         toolName === DefaultToolName.WebContent
@@ -1014,7 +1026,7 @@ export const ToolMessagePart = memo(
         }
       }
       return null;
-    }, [toolName, state, onToolCallDirect, result, input]);
+    }, [toolName, state, onToolCallDirect, result, input, part, threadId]);
 
     const { serverName: mcpServerName, toolName: mcpToolName } = useMemo(() => {
       return extractMCPToolId(toolName);
@@ -1324,7 +1336,7 @@ export const FileMessagePart = memo(
       part.filename?.split(".").pop()?.toUpperCase() ||
       part.mediaType?.split("/").pop()?.toUpperCase() ||
       "FILE";
-    const fileUrl = part.url;
+    const fileUrl = resolveServableFileUrl(part.url);
     const filename =
       part.filename || part.url?.split("/").pop() || "Attachment";
     const secondaryLabel =
@@ -1496,7 +1508,7 @@ export function SourceUrlMessagePart({
         </div>
         <div className="flex-1 min-w-0 space-y-1 pr-3">
           <a
-            href={part.url}
+            href={resolveServableFileUrl(part.url)}
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
@@ -1545,7 +1557,11 @@ export function SourceUrlMessagePart({
                   : "text-muted-foreground",
               )}
             >
-              <a href={part.url} target="_blank" rel="noopener noreferrer">
+              <a
+                href={resolveServableFileUrl(part.url)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <Download className="size-4" />
                 <span className="sr-only">Open attachment</span>
               </a>

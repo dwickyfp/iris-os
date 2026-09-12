@@ -15,7 +15,10 @@ type ParameterOwner =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
-function isTypePredicateSubject(owner: ParameterOwner, parameterName: string): boolean {
+function isTypePredicateSubject(
+  owner: ParameterOwner,
+  parameterName: string,
+): boolean {
   const predicate = owner.returnType?.typeAnnotation;
   return (
     predicate?.type === "TSTypePredicate" &&
@@ -43,7 +46,10 @@ export const noUnknownParametersRule = defineRule({
         const annotation = functionParameterTypeAnnotation(parameter);
         if (annotation === null || annotation === undefined) continue;
         if (!containsUnknownType(annotation.typeAnnotation)) continue;
-        const name = functionParameterBindingName(parameter, context.sourceCode);
+        const name = functionParameterBindingName(
+          parameter,
+          context.sourceCode,
+        );
         if (name === "cause" || isTypePredicateSubject(node, name)) continue;
         context.report({
           node: annotation.typeAnnotation,

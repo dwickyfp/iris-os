@@ -1,4 +1,4 @@
-import { S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { clientConfigMock, sendMock } = vi.hoisted(() => ({
@@ -109,6 +109,50 @@ describe("s3-file-storage", () => {
       expect.anything(),
       { expiresIn: 600 },
     );
+  });
+
+  it("groups uploads under users/<ownerId>/ when an owner is provided", async () => {
+    const storage = createS3FileStorage(explicitConfig);
+    sendMock.mockResolvedValue({});
+
+    const result = await storage.upload(Buffer.from("hello"), {
+      filename: "report.pdf",
+      contentType: "application/pdf",
+      ownerId: "user-123",
+    });
+
+    expect(result.key).toMatch(/^uploads\/users\/user-123\/.+report\.pdf$/);
+    const putCall = sendMock.mock.calls.find(
+      ([command]) => command instanceof PutObjectCommand,
+    );
+    expect(putCall?.[0].input.Key).toBe(result.key);
+  });
+
+  it("keeps uploads at the configured prefix without an owner", async () => {
+    const storage = createS3FileStorage(explicitConfig);
+    sendMock.mockResolvedValue({});
+
+    const result = await storage.upload(Buffer.from("hello"), {
+      filename: "notes.txt",
+    });
+
+    expect(result.key).toMatch(/^uploads\/[^/]+notes\.txt$/);
+    expect(result.key).not.toContain("users/");
+  });
+
+  it("scopes presigned upload URLs under users/<ownerId>/", async () => {
+    const presigner = vi.fn(async (_client, command) => {
+      return `https://signed.test/${(command as { input: { Key: string } }).input.Key}`;
+    });
+    const storage = createS3FileStorage({ ...explicitConfig, presigner });
+
+    const result = await storage.createUploadUrl!({
+      filename: "img.png",
+      contentType: "image/png",
+      ownerId: "user-123",
+    });
+
+    expect(result?.key).toMatch(/^uploads\/users\/user-123\/.+img\.png$/);
   });
 
   it("builds path-style MinIO URLs and encodes individual key segments", async () => {

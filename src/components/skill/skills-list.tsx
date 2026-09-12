@@ -50,7 +50,6 @@ export function SkillsList({
   const sharedSkills = skills.filter((skill) => skill.userId !== userId);
 
   const updateVisibility = async (id: string, visibility: Visibility) => {
-    if (visibility === "public") return;
     setBusyId(id);
     try {
       const body = JSON.stringify(SkillUpdateSchema.parse({ visibility }));

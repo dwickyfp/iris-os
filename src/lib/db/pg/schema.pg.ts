@@ -699,6 +699,7 @@ export const UserMemoryTable = pgTable(
       .default("global"),
     scopeId: uuid("scope_id"),
     content: text("content").notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull().default(""),
     confidence: integer("confidence").notNull().default(100),
     importance: integer("importance").notNull().default(50),
     frequency: integer("frequency").notNull().default(1),
@@ -749,6 +750,12 @@ export const UserMemoryTable = pgTable(
       table.scopeType,
       table.scopeId,
       table.status,
+    ),
+    index("user_memory_scope_hash_idx").on(
+      table.userId,
+      table.scopeType,
+      table.scopeId,
+      table.contentHash,
     ),
   ],
 );
@@ -2233,7 +2240,7 @@ export const SkillTable = pgTable(
       .references(() => UserTable.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
     visibility: varchar("visibility", {
-      enum: ["private", "readonly"],
+      enum: ["private", "readonly", "public"],
     })
       .notNull()
       .default("private")
@@ -2263,7 +2270,7 @@ export const SkillTable = pgTable(
     ),
     check(
       "skill_visibility_check",
-      sql`${table.visibility} in ('private', 'readonly')`,
+      sql`${table.visibility} in ('private', 'readonly', 'public')`,
     ),
   ],
 );

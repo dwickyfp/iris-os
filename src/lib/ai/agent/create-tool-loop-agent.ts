@@ -1,7 +1,7 @@
 import { type Tool, ToolLoopAgent, hasToolCall, isStepCount } from "ai";
 import type { LanguageModel } from "ai";
 import type { Agent } from "app-types/agent";
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { STATIC_APP_CONFIG } from "lib/app-config";
 import logger from "logger";
 import type { BudgetGuard } from "../runtime/budget";
 import {
@@ -12,6 +12,8 @@ import {
 import type { ResolvedPolicySnapshot } from "../runtime/contracts";
 import type { PolicyEvaluationDecision } from "../runtime/policy-engine";
 import { StrategyGuard } from "../runtime/strategy-guard";
+import { SpawnSubagentToolName } from "../tools";
+import { subagentToolTimeoutMs } from "../tools/subagent/spawn-subagent";
 import { isReadOnlyTool } from "./approval-policy";
 import type { AgentRuntimeContext } from "./runtime-context";
 
@@ -25,9 +27,9 @@ const DEFAULT_AGENT_TIMEOUTS = {
 } as const;
 
 export function configuredAgentTimeouts(environment?: NodeJS.ProcessEnv) {
-  const configured = environment
-    ? environment.AI_STEP_TIMEOUT_MS
-    : runtimeSystemSetting("ai.stepTimeoutMs");
+  const configured =
+    environment?.AI_STEP_TIMEOUT_MS ??
+    String(STATIC_APP_CONFIG.ai.stepTimeoutMs);
   const stepMs = Number.parseInt(String(configured ?? ""), 10);
   if (!Number.isFinite(stepMs)) return DEFAULT_AGENT_TIMEOUTS;
   if (stepMs < 30_000 || stepMs > 300_000) {
@@ -172,12 +174,14 @@ export function getAgentToolTimeouts(tools: Record<string, Tool>) {
     Object.entries(tools).map(([toolName, tool]) => {
       const timeout = isReadOnlyTool(toolName)
         ? 15_000
-        : toolName === "mini-javascript-execution" ||
-            toolName === "python-execution"
-          ? 45_000
-          : toolName === "image-manager" || "_workflowId" in tool
-            ? 120_000
-            : 30_000;
+        : toolName === SpawnSubagentToolName
+          ? subagentToolTimeoutMs()
+          : toolName === "mini-javascript-execution" ||
+              toolName === "python-execution"
+            ? 45_000
+            : toolName === "image-manager" || "_workflowId" in tool
+              ? 120_000
+              : 30_000;
       return [`${toolName}Ms`, timeout];
     }),
   );
@@ -212,6 +216,18 @@ export function createToolLoopAgent({
 }: ToolLoopAgentConfig) {
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
   const agentTimeouts = configuredAgentTimeouts();
+  // A subagent runs entirely inside one parent tool call, so the parent's
+  // step/total timeouts must outlive the subagent's own budget.
+  const hasSubagentTool = SpawnSubagentToolName in tools;
+  const stepMs = hasSubagentTool
+    ? Math.max(agentTimeouts.stepMs, subagentToolTimeoutMs() + 30_000)
+    : agentTimeouts.stepMs;
+  const timeoutConfig = {
+    ...agentTimeouts,
+    stepMs,
+    totalMs: Math.max(agentTimeouts.totalMs, stepMs + 30_000),
+    tools: getAgentToolTimeouts(tools),
+  };
   const eventCallbacks = runtimeEventCallbacks(onRuntimeEvent);
   const terminalToolCalls = new Set<string>();
   const policyDecisions = new Map<string, PolicyEvaluationDecision>();
@@ -366,7 +382,7 @@ export function createToolLoopAgent({
       isStepCount(Math.min(10, budget?.budget.maxSteps ?? 10)),
       hasToolCall("delegate_agent"),
     ],
-    timeout: { ...agentTimeouts, tools: getAgentToolTimeouts(tools) },
+    timeout: timeoutConfig,
     runtimeContext,
     telemetry: {
       functionId:

@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { DefaultToolName, ImageToolName } from "lib/ai/tools";
 import type { ApprovalPolicy } from "../agent/runtime-context";
 import { SKILLS_LIST_TOOL_NAME, SKILL_VIEW_TOOL_NAME } from "../skill";
-import { MANAGE_LEARNING_TOOL_NAME } from "../tools/background/names";
+import {
+  MANAGE_LEARNING_TOOL_NAME,
+  RECALL_MEMORY_TOOL_NAME,
+} from "../tools/background/names";
 import type { ResolvedPolicySnapshot } from "./contracts";
 
 export type PolicyRisk =
@@ -94,6 +97,7 @@ const READ_ONLY_TOOL_NAMES = new Set<string>([
   DefaultToolName.CreateTable,
   SKILLS_LIST_TOOL_NAME,
   SKILL_VIEW_TOOL_NAME,
+  RECALL_MEMORY_TOOL_NAME,
 ]);
 const HIGH_RISK_TOOL_NAMES = new Set<string>([
   DefaultToolName.Http,

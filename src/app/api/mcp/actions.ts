@@ -4,10 +4,6 @@ import { runtimeSystemSetting } from "lib/system-settings/runtime";
 import { z } from "zod";
 
 import {
-  MCPRemoteConfigZodSchema,
-  MCPStdioConfigZodSchema,
-} from "app-types/mcp";
-import {
   canCreateMCP,
   canManageMCPServer,
   canShareMCPServer,
@@ -15,19 +11,7 @@ import {
 } from "lib/auth/permissions";
 import { mcpOAuthRepository, mcpRepository } from "lib/db/repository";
 
-export const mcpServerUpsertSchema = z.object({
-  id: z.string().uuid().optional(),
-  name: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-zA-Z0-9\-]+$/, {
-      message:
-        "Name must contain only alphanumeric characters (A-Z, a-z, 0-9) and hyphens (-)",
-    }),
-  config: z.union([MCPRemoteConfigZodSchema, MCPStdioConfigZodSchema]),
-  visibility: z.enum(["public", "private"]).optional(),
-});
+import { mcpServerUpsertSchema } from "./mcp-server-schema";
 
 export async function selectMcpClientsAction() {
   // Get current user to filter MCP servers

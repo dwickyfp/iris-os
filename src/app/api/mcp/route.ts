@@ -2,7 +2,8 @@ import { getSession } from "auth/server";
 import { logger } from "better-auth";
 import { canCreateMCP } from "lib/auth/permissions";
 import { NextResponse } from "next/server";
-import { mcpServerUpsertSchema, saveMcpClientAction } from "./actions";
+import { saveMcpClientAction } from "./actions";
+import { mcpServerUpsertSchema } from "./mcp-server-schema";
 
 export async function POST(request: Request) {
   const session = await getSession();

@@ -1,5 +1,6 @@
 import { type Page, type Response, expect, test } from "@playwright/test";
 import { TEST_USERS } from "../constants/test-users";
+import { ensureSidebarOpen } from "../helpers/sidebar-helper";
 
 const suffix = `${Date.now().toString(36)}-${Math.random()
   .toString(36)
@@ -7,6 +8,7 @@ const suffix = `${Date.now().toString(36)}-${Math.random()
 const skillName = `playwright-skill-${suffix}`;
 const updatedSkillName = `${skillName}-updated`;
 const agentName = `playwright-skill-agent-${suffix}`;
+const publicAgentName = `playwright-public-skill-agent-${suffix}`;
 const description = "Deterministic Playwright skill coverage";
 const initialBody = "# Instructions\n\nUse the supporting checklist.";
 const updatedBody = "# Updated instructions\n\nUse the revised checklist.";
@@ -51,9 +53,12 @@ test.describe("Skills", () => {
     page,
   }) => {
     await page.goto("/");
+    await ensureSidebarOpen(page);
     await page.getByRole("link", { name: "Skills", exact: true }).click();
     await expect(page).toHaveURL(/\/skills$/);
-    await expect(page.getByRole("heading", { name: "Skills" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Skills", exact: true }),
+    ).toBeVisible();
 
     await page.getByRole("link", { name: "New skill", exact: true }).click();
     await expect(page).toHaveURL(/\/skill\/new$/);
@@ -192,6 +197,60 @@ test.describe("Skills", () => {
       await expect(
         sharedPage.getByRole("button", { name: "Save", exact: true }),
       ).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("publishes a skill that another user can view, assign, and cannot edit", async ({
+    page,
+    browser,
+  }) => {
+    await page.goto(`/skill/${skillId}`);
+    await page.getByTestId("visibility-button").click();
+    const visibilityResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/api/skill/${skillId}`) &&
+        response.request().method() === "PUT",
+    );
+    await page.getByTestId("visibility-public").click();
+    await expectSuccessfulResponse(visibilityResponse);
+
+    const context = await browser.newContext({
+      storageState: TEST_USERS.editor2.authFile,
+    });
+    try {
+      const readable = await context.request.get(`/api/skill/${skillId}`);
+      expect(readable.ok(), await readable.text()).toBe(true);
+
+      const forbidden = await context.request.put(`/api/skill/${skillId}`, {
+        data: { description: "Hijacked description" },
+      });
+      expect(forbidden.status()).toBe(403);
+
+      const userResponse = await context.request.get("/api/user/details");
+      expect(userResponse.ok(), await userResponse.text()).toBe(true);
+      const user = await userResponse.json();
+      const agentResponse = await context.request.post("/api/agent", {
+        data: {
+          name: publicAgentName,
+          description: "Agent used for public skill assignment E2E coverage",
+          instructions: {},
+          visibility: "private",
+          userId: user.id,
+        },
+      });
+      expect(agentResponse.ok(), await agentResponse.text()).toBe(true);
+      const publicAgentId = (await agentResponse.json()).id;
+      try {
+        const assignment = await context.request.put(
+          `/api/agent/${publicAgentId}/skills`,
+          { data: { skillIds: [skillId] } },
+        );
+        expect(assignment.ok(), await assignment.text()).toBe(true);
+      } finally {
+        await context.request.delete(`/api/agent/${publicAgentId}`);
+      }
     } finally {
       await context.close();
     }

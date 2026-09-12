@@ -8,12 +8,8 @@ import type {
   MemoryProvenance,
   MemoryScope,
 } from "app-types/memory";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import {
-  defaultMemoryTopic,
-  memoryContentHash,
-  normalizeMemoryText,
-} from "lib/ai/memory/curator";
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { defaultMemoryTopic, memoryContentHash } from "lib/ai/memory/curator";
 import type { MemoryGraphAdapter } from "lib/ai/memory/graph-adapter";
 import {
   contentMatches,
@@ -396,7 +392,8 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${`${input.userId}:${memoryScopeKey(scope)}`}))`,
       );
-      const active = await tx
+      const contentHash = memoryContentHash(input.content);
+      const [duplicate] = await tx
         .select()
         .from(UserMemoryTable)
         .where(
@@ -405,15 +402,10 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
             exactScope(UserMemoryTable, scope),
             inArray(UserMemoryTable.status, ["active", "pending"]),
             isNull(UserMemoryTable.deletedAt),
+            eq(UserMemoryTable.contentHash, contentHash),
           ),
         )
-        .orderBy(desc(UserMemoryTable.updatedAt))
-        .limit(500);
-      const duplicate = active.find(
-        (row) =>
-          normalizeMemoryText(row.content) ===
-          normalizeMemoryText(input.content),
-      );
+        .limit(1);
       if (duplicate) {
         await tx
           .insert(MemoryEvidenceTable)
@@ -438,6 +430,7 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           ...scope,
           kind: input.kind,
           content: input.content,
+          contentHash,
           confidence: confidence(input.confidence),
           importance: confidence(input.importance ?? 0.5),
           frequency: input.frequency ?? 1,
@@ -549,9 +542,15 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
               exactScope(UserMemoryTable, scope),
               eq(UserMemoryTable.status, "active"),
               isNull(UserMemoryTable.deletedAt),
+              // Lexical miss: fall back only to high-confidence claims so an
+              // unrelated query never injects weak or stale memory.
+              gte(UserMemoryTable.confidence, 80),
             ),
           )
-          .orderBy(desc(UserMemoryTable.updatedAt))
+          .orderBy(
+            desc(UserMemoryTable.confidence),
+            desc(UserMemoryTable.updatedAt),
+          )
           .limit(Math.min(4, limit));
     const seedIds = seeds.map((row) => row.id);
     const edges = seedIds.length

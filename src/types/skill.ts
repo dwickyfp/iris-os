@@ -7,7 +7,7 @@ export const MAX_SKILL_BODY_SIZE = 100 * 1024;
 export const MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024;
 export const MAX_SKILL_TOTAL_FILE_SIZE = 50 * 1024 * 1024;
 
-export const SkillVisibilitySchema = z.enum(["private", "readonly"]);
+export const SkillVisibilitySchema = z.enum(["private", "readonly", "public"]);
 export const SkillProvenanceSchema = z.enum([
   "manual",
   "background_review",

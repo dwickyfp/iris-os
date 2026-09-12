@@ -3,18 +3,20 @@ import "server-only";
 import type { Tool } from "ai";
 import type { Agent } from "app-types/agent";
 import { configureExaSettingsResolver } from "lib/ai/tools/web/web-search";
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { STATIC_APP_CONFIG } from "lib/app-config";
 import { systemSettingsService } from "lib/system-settings/server";
 
 configureExaSettingsResolver(async () => ({
   apiKey: await systemSettingsService.getSecret("exa.apiKey"),
-  baseUrl: String(await systemSettingsService.getPlain("exa.baseUrl")),
+  baseUrl: STATIC_APP_CONFIG.exa.baseUrl,
 }));
 import type { CapabilityHints, CapabilityRef } from "app-types/chat";
 import type { VercelAIMcpTool } from "app-types/mcp";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 import {
   type AssignedSkillsRepository,
+  MAX_ASSIGNED_SKILLS,
+  type SkillManifestEntry,
   type SkillsRuntime,
   createSkillsRuntime,
 } from "lib/ai/skill";
@@ -93,6 +95,7 @@ export type ServerCapabilityBuildInput = {
   dependencies?: {
     skillsRepository?: AssignedSkillsRepository;
     selectScopedSkills?: typeof selectScopedLearnedSkillSummaries;
+    selectOwnSkillSummaries?: typeof selectOwnSkillSummaries;
   };
 };
 
@@ -132,6 +135,21 @@ function agentCapabilityAuthority(agent?: Agent): CapabilityRef[] | undefined {
   );
 }
 
+/**
+ * Skills owned by the caller are available even without an assigned agent so
+ * plain chats keep progressive-disclosure access to their own skill library.
+ */
+export async function selectOwnSkillSummaries(
+  userId: string,
+): Promise<SkillManifestEntry[]> {
+  const skills = await skillRepository.selectSkills(
+    userId,
+    ["mine"],
+    MAX_ASSIGNED_SKILLS,
+  );
+  return skills.map(({ id, name, description }) => ({ id, name, description }));
+}
+
 /** Builds the production registry input shared by foreground and headless runs. */
 export async function buildServerCapabilityResolutionInput(
   input: ServerCapabilityBuildInput,
@@ -143,7 +161,7 @@ export async function buildServerCapabilityResolutionInput(
     remoteAgents: isV2FeatureEnabled("remoteAgents"),
     learning: isV2FeatureEnabled("learning"),
   };
-  const scopedSkills =
+  const [scopedSkills, ownSkills] = await Promise.all([
     features.tools && features.learning
       ? await (
           input.dependencies?.selectScopedSkills ??
@@ -155,7 +173,13 @@ export async function buildServerCapabilityResolutionInput(
           taskId: input.taskId,
           agentId: input.agent?.id,
         })
-      : [];
+      : [],
+    features.tools && !input.agent?.id
+      ? await (
+          input.dependencies?.selectOwnSkillSummaries ?? selectOwnSkillSummaries
+        )(input.userId)
+      : [],
+  ]);
   const skillsRuntime = features.tools
     ? await createSkillsRuntime({
         repository:
@@ -163,7 +187,7 @@ export async function buildServerCapabilityResolutionInput(
           (skillRepository as AssignedSkillsRepository),
         agentId: input.agent?.id,
         userId: input.userId,
-        additionalSkills: scopedSkills,
+        additionalSkills: [...scopedSkills, ...ownSkills],
       })
     : emptySkillsRuntime();
 
@@ -215,15 +239,7 @@ function emptySkillsRuntime(): SkillsRuntime {
 }
 
 function capabilityRouterConfig() {
-  return {
-    threshold: Number(runtimeSystemSetting("capabilityRouter.threshold")),
-    topN: Number(runtimeSystemSetting("capabilityRouter.topN")),
-    minScore: Number(runtimeSystemSetting("capabilityRouter.minScore")),
-    timeoutMs: Number(runtimeSystemSetting("capabilityRouter.timeoutMs")),
-    fallbackHardCap: Number(
-      runtimeSystemSetting("capabilityRouter.fallbackHardCap"),
-    ),
-  };
+  return { ...STATIC_APP_CONFIG.capabilityRouter };
 }
 
 export async function resolveServerCapabilities(input: {

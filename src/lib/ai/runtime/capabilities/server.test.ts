@@ -13,6 +13,7 @@ const repositories = vi.hoisted(() => ({
   skillById: vi.fn(),
   skillContent: vi.fn(),
   skillFile: vi.fn(),
+  ownSkills: vi.fn(),
   mcpServers: vi.fn(),
 }));
 const selectScopedSkills = vi.hoisted(() => vi.fn());
@@ -28,6 +29,7 @@ vi.mock("lib/db/repository", () => ({
     selectSkillById: repositories.skillById,
     selectSkillContentById: repositories.skillContent,
     selectSkillFileByPath: repositories.skillFile,
+    selectSkills: repositories.ownSkills,
   },
 }));
 vi.mock("lib/ai/skill/scoped-learned", () => ({
@@ -89,6 +91,7 @@ describe("production server capability parity", () => {
       },
     ]);
     repositories.assignedSkills.mockResolvedValue([]);
+    repositories.ownSkills.mockResolvedValue([]);
     repositories.mcpServers.mockResolvedValue([{ id: "warehouse" }]);
     selectScopedSkills.mockResolvedValue([
       { id: "skill-1", name: "Revenue skill", description: "Analyze revenue" },
@@ -298,5 +301,71 @@ describe("production server capability parity", () => {
       "remote-peer:remote-1",
     ]);
     expect(resolved.eligibleDelegationTargets).toEqual(["remote:remote-1"]);
+  });
+
+  test("plain chats expose the user's own skills without an assigned agent", async () => {
+    repositories.ownSkills.mockResolvedValue([
+      { id: "own-skill-1", name: "Own skill", description: "Mine" },
+    ]);
+    const input = await buildServerCapabilityResolutionInput({
+      userId: "user-1",
+      runId: "run-1",
+      goal: "anything",
+      featureState: {
+        tools: true,
+        workflows: false,
+        delegation: false,
+        remoteAgents: false,
+        learning: false,
+      },
+    });
+
+    expect(repositories.ownSkills).toHaveBeenCalledWith("user-1", ["mine"], 20);
+    expect(input.skillsRuntime.manifest.map(({ id }) => id)).toEqual([
+      "own-skill-1",
+    ]);
+
+    const resolved = await resolveServerCapabilities(input);
+    expect(resolved.skillManifest).toEqual([
+      { id: "own-skill-1", name: "Own skill", description: "Mine" },
+    ]);
+    expect(resolved.ordered.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        "skill-runtime:skills_list",
+        "skill-runtime:skill_view",
+      ]),
+    );
+  });
+
+  test("agent chats keep skills limited to agent assignments", async () => {
+    repositories.assignedSkills.mockResolvedValue([
+      { id: "assigned-1", name: "Assigned skill", description: "Assigned" },
+    ]);
+    const input = await buildServerCapabilityResolutionInput({
+      userId: "user-1",
+      runId: "run-1",
+      goal: "anything",
+      agent: {
+        id: "agent-1",
+        userId: "user-1",
+        name: "Bounded agent",
+        instructions: {
+          role: "analyst",
+          systemPrompt: "Analyze",
+        },
+      } as any,
+      featureState: {
+        tools: true,
+        workflows: false,
+        delegation: false,
+        remoteAgents: false,
+        learning: false,
+      },
+    });
+
+    expect(repositories.ownSkills).not.toHaveBeenCalled();
+    expect(input.skillsRuntime.manifest.map(({ id }) => id)).toEqual([
+      "assigned-1",
+    ]);
   });
 });

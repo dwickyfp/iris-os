@@ -2,7 +2,7 @@
 
 import { getStorageInfoAction } from "@/app/api/storage/actions";
 import { upload as uploadToVercelBlob } from "@vercel/blob/client";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 
@@ -26,7 +26,7 @@ interface UploadResult {
 
 // Helpers
 function useStorageInfo() {
-  const { data, isLoading } = useSWR<StorageInfo>(
+  const { data, isLoading, mutate } = useSWR<StorageInfo>(
     "storage-info",
     getStorageInfoAction,
     {
@@ -40,6 +40,7 @@ function useStorageInfo() {
     storageType: data?.type,
     supportsDirectUpload: data?.supportsDirectUpload ?? false,
     isLoading,
+    revalidate: mutate,
   };
 }
 
@@ -70,8 +71,29 @@ export function useFileUpload() {
     storageType,
     supportsDirectUpload,
     isLoading: isLoadingStorageInfo,
+    revalidate: revalidateStorageInfo,
   } = useStorageInfo();
   const [isUploading, setIsUploading] = useState(false);
+
+  // Mirror the latest storage state so an in-flight upload() can read fresh
+  // values after waiting, instead of the stale ones captured at call time.
+  const storageStateRef = useRef({ storageType, supportsDirectUpload });
+  useEffect(() => {
+    storageStateRef.current = { storageType, supportsDirectUpload };
+  }, [storageType, supportsDirectUpload]);
+
+  const waitForStorageInfo = useCallback(
+    async (timeoutMs = 10000): Promise<boolean> => {
+      // Revalidate in case the initial fetch failed or is still in flight.
+      void revalidateStorageInfo();
+      const deadline = Date.now() + timeoutMs;
+      while (!storageStateRef.current.storageType && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return Boolean(storageStateRef.current.storageType);
+    },
+    [revalidateStorageInfo],
+  );
 
   const upload = useCallback(
     async (
@@ -87,16 +109,21 @@ export function useFileUpload() {
       const contentType =
         uploadOptions.contentType || file.type || "application/octet-stream";
 
-      // Wait for storage info to load
-      if (isLoadingStorageInfo || !storageType) {
-        toast.error("Storage is still loading. Please try again.");
-        return;
+      // Wait for storage info to load instead of failing on the first attempt
+      if (!storageStateRef.current.storageType) {
+        const ready = await waitForStorageInfo();
+        if (!ready) {
+          toast.error("Storage is not ready yet. Please try again shortly.");
+          return;
+        }
       }
+      const { storageType: type, supportsDirectUpload: direct } =
+        storageStateRef.current;
 
       setIsUploading(true);
       try {
         // Vercel Blob direct upload
-        if (storageType === "vercel-blob") {
+        if (type === "vercel-blob") {
           const blob = await uploadToVercelBlob(filename, file, {
             access: "public",
             handleUploadUrl: "/api/storage/upload-url",
@@ -112,7 +139,7 @@ export function useFileUpload() {
         }
 
         // S3 or other direct upload (future)
-        if (supportsDirectUpload && storageType === "s3") {
+        if (direct && type === "s3") {
           // Request presigned URL
           const uploadUrlResponse = await fetch("/api/storage/upload-url", {
             method: "POST",
@@ -199,7 +226,7 @@ export function useFileUpload() {
         setIsUploading(false);
       }
     },
-    [storageType, supportsDirectUpload, isLoadingStorageInfo],
+    [waitForStorageInfo],
   );
 
   return {

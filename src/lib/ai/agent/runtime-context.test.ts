@@ -59,4 +59,21 @@ describe("createAgentRuntimeContext", () => {
       skills: [],
     });
   });
+
+  it("carries the resolved skill manifest on a base-agent context", () => {
+    const skills = [{ id: "skill-1", name: "Summarize", description: "d" }];
+    const context = createBaseAgentRuntimeContext({
+      requestId: "request-1",
+      runId: "run-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      toolMode: "auto",
+      approvalPolicy: "never",
+      skills,
+    });
+
+    expect(context.agentType).toBe("base");
+    expect(context.agentId).toBeUndefined();
+    expect(context.skills).toEqual(skills);
+  });
 });

@@ -105,6 +105,7 @@ interface ChatMentionInputProps {
   ref?: RefObject<Editor | null>;
   onFocus?: () => void;
   onBlur?: () => void;
+  onPasteFiles?: (files: File[]) => void;
 }
 
 export default function ChatMentionInput({
@@ -117,6 +118,7 @@ export default function ChatMentionInput({
   disabledMention,
   onFocus,
   onBlur,
+  onPasteFiles,
 }: ChatMentionInputProps) {
   const latestMentions = useRef<string[]>([]);
 
@@ -150,6 +152,7 @@ export default function ChatMentionInput({
       editorRef={ref}
       onFocus={onFocus}
       onBlur={onBlur}
+      onPasteFiles={onPasteFiles}
       fullWidthSuggestion={true}
     />
   );

@@ -5,9 +5,12 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ChatMessageSearchTable, ChatThreadTable } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
+import { buildRecallQuery } from "./lexical-search";
 import { buildRecallScopes } from "./scope";
 
 const MAX_MEMORY_CHARS = 3_200;
+
+export { buildRecallQuery };
 
 function chatSearchExpression(query: string) {
   const terms = query
@@ -19,8 +22,10 @@ function chatSearchExpression(query: string) {
     .slice(0, 10);
   if (!terms.length) return null;
   const tsQuery = terms.join(" OR ");
+  // to_tsvector must wrap the column so the 0073 GIN expression index can
+  // serve the predicate — a bare `content @@ tsquery` forces a seq scan.
   return {
-    condition: sql`${ChatMessageSearchTable.content} @@ websearch_to_tsquery('simple', ${tsQuery})`,
+    condition: sql`to_tsvector('simple', ${ChatMessageSearchTable.content}) @@ websearch_to_tsquery('simple', ${tsQuery})`,
     rank: sql`ts_rank(to_tsvector('simple', ${ChatMessageSearchTable.content}), websearch_to_tsquery('simple', ${tsQuery}))`,
   };
 }
@@ -46,15 +51,66 @@ Private user context:
 ${memories}${priorChats ? `\n\nPotentially relevant earlier conversation:\n${priorChats}` : ""}`;
 }
 
+function formatMemoryNodes(
+  nodes: Array<{
+    type: string;
+    label: string;
+    summary?: string | null;
+    detail?: string | null;
+    category?: string;
+  }>,
+) {
+  return nodes
+    .map((node) => {
+      if (node.type === "topic")
+        return `- ${node.label}: ${node.summary || node.detail || ""}`;
+      if (node.type === "claim") return `- ${node.category}: ${node.label}`;
+      return `- Related concept: ${node.label}`;
+    })
+    .join("\n")
+    .slice(0, MAX_MEMORY_CHARS);
+}
+
+export type MemoryRecallContext = {
+  taskId?: string;
+  agentId?: string;
+  workspaceId?: string;
+};
+
+/** Read-only recall for the in-loop recall_memory tool. */
+export async function recallMemory(
+  userId: string,
+  query: string,
+  context: MemoryRecallContext = {},
+  limit = 8,
+) {
+  const recalled = await Promise.all(
+    buildRecallScopes(context).map((scope) =>
+      memoryGraphRepository.hybridRecall(userId, query, limit, scope),
+    ),
+  );
+  const nodes = recalled
+    .flatMap((result) => result.nodes)
+    .filter(
+      (node, index, all) =>
+        all.findIndex((candidate) => candidate.id === node.id) === index,
+    )
+    .slice(0, limit);
+  const lines = formatMemoryNodes(nodes);
+  return { used: Boolean(lines), lines, nodes };
+}
+
 /** Retrieves data only. Its output is explicitly marked as untrusted reference material. */
 export async function buildMemoryContext(
   userId: string,
   query: string,
-  context: { taskId?: string; agentId?: string; workspaceId?: string } = {},
+  context: MemoryRecallContext = {},
+  recentUserMessages: string[] = [],
 ) {
+  const recallQuery = buildRecallQuery(query, recentUserMessages);
   const recalled = await Promise.all(
     buildRecallScopes(context).map((scope) =>
-      memoryGraphRepository.hybridRecall(userId, query, 10, scope),
+      memoryGraphRepository.hybridRecall(userId, recallQuery, 10, scope),
     ),
   );
   const graph = {
@@ -92,15 +148,7 @@ export async function buildMemoryContext(
         .limit(4)
     : [];
 
-  const selected = graph.nodes
-    .map((node) => {
-      if (node.type === "topic")
-        return `- ${node.label}: ${node.summary || node.detail || ""}`;
-      if (node.type === "claim") return `- ${node.category}: ${node.label}`;
-      return `- Related concept: ${node.label}`;
-    })
-    .join("\n")
-    .slice(0, MAX_MEMORY_CHARS);
+  const selected = formatMemoryNodes(graph.nodes);
   const source = excerpts
     .map(
       (excerpt) =>

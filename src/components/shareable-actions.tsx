@@ -41,6 +41,11 @@ const VISIBILITY_CONFIG = {
       label: "Read only",
       description: "Other users can view and bookmark this skill.",
     },
+    public: {
+      label: "Public",
+      description:
+        "All users can view and assign this skill. Only you can edit it.",
+    },
   },
   agent: {
     private: {

@@ -4,6 +4,7 @@ import { type BetterAuthOptions, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { admin as adminPlugin } from "better-auth/plugins";
+import { STATIC_APP_CONFIG } from "lib/app-config";
 import { pgDb } from "lib/db/pg/db.pg";
 import { pgUserRepository as userRepository } from "lib/db/pg/repositories/user-repository.pg";
 import {
@@ -13,34 +14,15 @@ import {
   VerificationTable,
 } from "lib/db/pg/schema.pg";
 import { deriveBootstrapSecret } from "lib/security/bootstrap-secrets";
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
-import { systemSettingsService } from "lib/system-settings/server";
 import logger from "logger";
 import { headers } from "next/headers";
-import { getRuntimeAuthConfig } from "./config.runtime";
-import { getDatabaseAuthConfig } from "./config.server";
+import { getAuthConfig } from "./config";
 import { ac, admin, editor, user } from "./roles";
 
-const {
-  emailAndPasswordEnabled,
-  signUpEnabled,
-  socialAuthenticationProviders,
-} =
-  process.env.NODE_ENV === "test" ||
-  process.env.NEXT_PHASE === "phase-production-build"
-    ? getRuntimeAuthConfig()
-    : await getDatabaseAuthConfig();
-const configuredDefaultRole = String(
-  process.env.NODE_ENV === "test" ||
-    process.env.NEXT_PHASE === "phase-production-build"
-    ? runtimeSystemSetting("users.defaultRole")
-    : await systemSettingsService.getPlain("users.defaultRole"),
-) as (typeof USER_ROLES)[keyof typeof USER_ROLES];
-const configuredBaseUrl =
-  process.env.NODE_ENV === "test" ||
-  process.env.NEXT_PHASE === "phase-production-build"
-    ? runtimeSystemSetting("auth.baseUrl")
-    : await systemSettingsService.getPlain("auth.baseUrl");
+const { emailAndPasswordEnabled, signUpEnabled } = getAuthConfig(process.env);
+const configuredDefaultRole = STATIC_APP_CONFIG.users
+  .defaultRole as (typeof USER_ROLES)[keyof typeof USER_ROLES];
+const configuredBaseUrl = STATIC_APP_CONFIG.auth.baseUrl;
 const rootEncryptionKey = process.env.IRIS_ROOT_ENCRYPTION_KEY;
 const authSecret = rootEncryptionKey
   ? deriveBootstrapSecret(rootEncryptionKey, "iris-os:better-auth:secret:v1")
@@ -134,16 +116,6 @@ const options = {
   rateLimit: {
     enabled: process.env.E2E_DISABLE_AUTH_RATE_LIMIT !== "1",
   },
-  account: {
-    accountLinking: {
-      trustedProviders: (
-        Object.keys(
-          socialAuthenticationProviders,
-        ) as (keyof typeof socialAuthenticationProviders)[]
-      ).filter((key) => socialAuthenticationProviders[key]),
-    },
-  },
-  socialProviders: socialAuthenticationProviders,
 } satisfies BetterAuthOptions;
 
 export const auth = betterAuth({

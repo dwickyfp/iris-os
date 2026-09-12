@@ -12,7 +12,11 @@ skills, visual workflows, voice, file storage, and persistent user memory.
 - Next.js route handlers and server actions call PostgreSQL repositories built
   with Drizzle.
 - `POST /api/chat` currently composes chat, agent, tools, workflows, skills,
-  memory recall, streaming, persistence, and memory-review enqueueing.
+  memory recall, streaming, persistence, and memory-review enqueueing. Skills
+  support `private`/`readonly`/`public` visibility (public is read/assign for
+  all, edit owner-only, migration 0074), and plain chats without an agent get
+  the user's own non-archived skills (max 20) through the same manifest
+  runtime; agent chats remain assignment-only.
 - Memory V2 scopes claims, topics, entities, edges, evidence, embeddings, and
   audits exactly across global/workspace/task/agent contexts.
 - Workspace, task ledger, activity/learning, learned-skill, workflow automation,
@@ -45,6 +49,13 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   explicit activation/test workflow. Durable jobs use bounded targets,
   at-most-once orchestration, lease fencing, revision guards, and a completion
   outbox.
+- Chat agents (base and custom) can spawn in-process subagents via the
+  `spawn_subagent` tool (`src/lib/ai/tools/subagent/`): AI SDK 7 subagents
+  pattern with preliminary UIMessage streaming, `toModelOutput` context
+  isolation, and a canonical Markdown artifact per run. Gated by the
+  `subagents` feature flag (default on, `IRIS_SUBAGENTS_V2=false|0` to
+  disable). Clicking the chat card opens a right-side artifact panel driven by
+  `appStore.subagentArtifactPanels`.
 
 ## Stable constraints
 

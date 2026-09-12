@@ -158,7 +158,7 @@ export const pgSkillRepository: SkillRepository = {
           or(
             eq(SkillTable.userId, userId),
             and(
-              eq(SkillTable.visibility, "readonly"),
+              inArray(SkillTable.visibility, ["readonly", "public"]),
               isNull(SkillTable.archivedAt),
             ),
           ),
@@ -302,26 +302,26 @@ export const pgSkillRepository: SkillRepository = {
       if (filter === "shared") {
         return and(
           ne(SkillTable.userId, currentUserId),
-          eq(SkillTable.visibility, "readonly"),
+          inArray(SkillTable.visibility, ["readonly", "public"]),
         );
       }
       if (filter === "bookmarked") {
         return and(
           ne(SkillTable.userId, currentUserId),
-          eq(SkillTable.visibility, "readonly"),
+          inArray(SkillTable.visibility, ["readonly", "public"]),
           sql`${BookmarkTable.id} IS NOT NULL`,
         );
       }
       return or(
         eq(SkillTable.userId, currentUserId),
-        eq(SkillTable.visibility, "readonly"),
+        inArray(SkillTable.visibility, ["readonly", "public"]),
       );
     });
     if (filters.includes("all")) {
       conditions = [
         or(
           eq(SkillTable.userId, currentUserId),
-          eq(SkillTable.visibility, "readonly"),
+          inArray(SkillTable.visibility, ["readonly", "public"]),
         ),
       ];
     }
@@ -415,7 +415,7 @@ export const pgSkillRepository: SkillRepository = {
               isNull(SkillTable.archivedAt),
               or(
                 eq(SkillTable.userId, userId),
-                eq(SkillTable.visibility, "readonly"),
+                inArray(SkillTable.visibility, ["readonly", "public"]),
               ),
             ),
           );
@@ -424,9 +424,11 @@ export const pgSkillRepository: SkillRepository = {
         }
         if (
           agent.visibility !== "private" &&
-          available.some((skill) => skill.visibility !== "readonly")
+          available.some((skill) => skill.visibility === "private")
         ) {
-          throw new Error("Shared agents may only use readonly skills");
+          throw new Error(
+            "Shared agents may only use readonly or public skills",
+          );
         }
       }
 
@@ -523,7 +525,7 @@ export const pgSkillRepository: SkillRepository = {
           ),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       )
@@ -598,7 +600,7 @@ export const pgSkillRepository: SkillRepository = {
           ),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       )
@@ -627,7 +629,7 @@ export const pgSkillRepository: SkillRepository = {
           ),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       )
@@ -645,7 +647,7 @@ export const pgSkillRepository: SkillRepository = {
           isNull(SkillTable.archivedAt),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       );
@@ -670,7 +672,7 @@ export const pgSkillRepository: SkillRepository = {
           isNull(SkillTable.archivedAt),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       );
@@ -687,7 +689,7 @@ export const pgSkillRepository: SkillRepository = {
           or(
             eq(SkillTable.userId, userId),
             and(
-              eq(SkillTable.visibility, "readonly"),
+              inArray(SkillTable.visibility, ["readonly", "public"]),
               isNull(SkillTable.archivedAt),
             ),
           ),
@@ -778,7 +780,7 @@ export const pgSkillRepository: SkillRepository = {
           isNull(SkillTable.archivedAt),
           or(
             eq(SkillTable.userId, userId),
-            eq(SkillTable.visibility, "readonly"),
+            inArray(SkillTable.visibility, ["readonly", "public"]),
           ),
         ),
       );

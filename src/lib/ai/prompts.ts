@@ -174,6 +174,7 @@ ${userPreferences.responseStyleExample}
 - When using tools, briefly mention which tool you'll use with natural phrases
 - Examples: "I'll search for that information", "Let me check the weather", "I'll run some calculations"
 - Use \`mermaid\` code blocks for diagrams and charts when helpful
+- Mermaid syntax: always wrap every node and edge label in double quotes, e.g. \`A["Login page"] -->|click| B["Dashboard"]\`; never put raw \`"\`, \`(\`, or \`)\` inside an unquoted label; use \`<br/>\` for line breaks
 </communication_preferences>`;
   }
 

@@ -15,9 +15,9 @@ const { createSystemSettingsService, SystemSettingRevisionConflictError } =
 
 function stored(overrides: Record<string, unknown> = {}) {
   return {
-    key: "memory.curatorMode" as const,
+    key: "mcp.allowUserServers" as const,
     valueKind: "plain" as const,
-    value: "write" as const,
+    value: false as const,
     encryptedValue: null,
     encryptionKeyId: null,
     revision: 2,
@@ -60,27 +60,25 @@ describe("system settings service", () => {
     const settings = await createSystemSettingsService(repo).list();
 
     expect(
-      settings.find(({ key }) => key === "memory.curatorMode"),
-    ).toMatchObject({ value: "write", configured: true, revision: 2 });
+      settings.find(({ key }) => key === "mcp.allowUserServers"),
+    ).toMatchObject({ value: false, configured: true, revision: 2 });
     expect(settings.find(({ key }) => key === "exa.apiKey")).toMatchObject({
       value: null,
       configured: true,
       redacted: true,
       revision: 2,
     });
-    expect(settings.find(({ key }) => key === "exa.baseUrl")).toMatchObject({
-      value: "https://api.exa.ai",
-      configured: false,
-      revision: 0,
-    });
+    expect(
+      settings.find(({ key }) => key === "providers.imageProviderId"),
+    ).toMatchObject({ value: null, configured: false, revision: 0 });
     expect(decrypt).not.toHaveBeenCalled();
   });
 
   it("reads plain defaults and decrypts secrets only through getSecret", async () => {
     const empty = repository([]);
     await expect(
-      createSystemSettingsService(empty).getPlain("exa.baseUrl"),
-    ).resolves.toBe("https://api.exa.ai");
+      createSystemSettingsService(empty).getPlain("mcp.allowUserServers"),
+    ).resolves.toBe(true);
 
     const secret = repository([
       stored({
@@ -99,13 +97,9 @@ describe("system settings service", () => {
   it("does not read runtime settings from environment variables", async () => {
     const repo = repository([]);
     vi.stubEnv("EXA_API_KEY", "environment-secret");
-    vi.stubEnv("DISABLE_EMAIL_SIGN_IN", "1");
     const service = createSystemSettingsService(repo);
 
     await expect(service.getSecret("exa.apiKey")).resolves.toBeNull();
-    await expect(service.getPlain("auth.emailSignInEnabled")).resolves.toBe(
-      true,
-    );
     vi.stubEnv("EXA_API_KEY", "rotated-environment-secret");
     await expect(service.getSecret("exa.apiKey")).resolves.toBeNull();
     vi.unstubAllEnvs();
@@ -150,8 +144,8 @@ describe("system settings service", () => {
       createSystemSettingsService(repo).mutate(
         {
           operation: "set",
-          key: "memory.curatorMode",
-          value: "shadow",
+          key: "mcp.allowUserServers",
+          value: true,
         },
         "admin-1",
         1,
@@ -164,13 +158,13 @@ describe("system settings service", () => {
     repo.mutate.mockResolvedValue({ setting: null, revision: 3 });
     const mutation: SystemSettingMutation = {
       operation: "clear",
-      key: "memory.curatorMode",
+      key: "mcp.allowUserServers",
     };
     await expect(
       createSystemSettingsService(repo).mutate(mutation, "admin-1", 2),
     ).resolves.toMatchObject({
       configured: false,
-      value: "shadow",
+      value: true,
       revision: 3,
     });
   });

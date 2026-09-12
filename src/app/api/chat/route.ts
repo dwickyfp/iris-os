@@ -34,6 +34,7 @@ import globalLogger from "logger";
 import { safe } from "ts-safe";
 
 import { buildCsvIngestionPreviewParts } from "@/lib/ai/ingest/csv-ingest";
+import { inlineBlockedFileUrls } from "@/lib/ai/inline-blocked-file-urls";
 import { getSession } from "auth/server";
 import { colorize } from "consola/utils";
 import { recordActivityEvent } from "lib/activity/service";
@@ -45,6 +46,8 @@ import {
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
+import { RECALL_MEMORY_TOOL_NAME } from "lib/ai/tools/background/names";
+import { createRecallMemoryTool } from "lib/ai/tools/memory/recall-memory.server";
 import type { HarnessStreamResult } from "lib/ai/runtime";
 import { isBudgetExhausted } from "lib/ai/runtime/budget";
 import { resolveChatToolChoice } from "lib/ai/runtime/capabilities/normalize";
@@ -58,7 +61,7 @@ import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
 import { createProductionRunAdapter } from "lib/ai/runtime/server-run-adapters";
 import { buildSkillManifestPrompt } from "lib/ai/skill";
-import { ImageToolName } from "lib/ai/tools";
+import { ImageToolName, SpawnSubagentToolName } from "lib/ai/tools";
 import {
   MANAGE_AUTOMATION_TOOL_NAME,
   createManageAutomationTool,
@@ -68,6 +71,7 @@ import {
   createManageLearningTool,
 } from "lib/ai/tools/background/manage-learning";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
+import { createServerSpawnSubagentTool } from "lib/ai/tools/subagent/spawn-subagent.server";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { serverFileStorage } from "lib/file-storage";
 import { isChatCorrection } from "lib/learning/policy";
@@ -101,6 +105,13 @@ function activityModel(
 ) {
   return chatModel ? `${chatModel.provider}/${chatModel.model}` : undefined;
 }
+
+// Bounded goal continuation: a failed verification may suspend the run into a
+// checkpoint and resume for at most this many additional rounds.
+const GOAL_ROUND_START = 1;
+const MAX_GOAL_ROUNDS = 3;
+// Foreground chat token ceiling charged against the run budget.
+const CHAT_REQUESTED_BUDGET = { maxTokens: 50_000 } as const;
 
 export async function POST(request: Request) {
   try {
@@ -461,6 +472,7 @@ export async function POST(request: Request) {
                     userRole: (session.user as any).role,
                     toolMode: toolChoice,
                     approvalPolicy: policy.approvalPolicy,
+                    skills: value.skillManifest,
                   }),
             resolveModel: async () => ({
               value: model,
@@ -511,6 +523,19 @@ export async function POST(request: Request) {
           .map((v) => filterMcpServerCustomizations(MCP_TOOLS!, v))
           .orElse({});
 
+        const recentUserMessages = messages
+          .filter((m) => m.role === "user")
+          .slice(-3)
+          .map((m) =>
+            m.parts
+              .filter((part: any) => part.type === "text")
+              .map((part: any) => part.text)
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim(),
+          )
+          .filter(Boolean)
+          .reverse();
         const memoryContext = await buildMemoryContext(
           session.user.id,
           userText,
@@ -519,6 +544,7 @@ export async function POST(request: Request) {
             workspaceId: workspace?.id,
             taskId: task?.id,
           },
+          recentUserMessages,
         );
         const assembledInstructions = mergeSystemPrompt(
           !agent && buildBaseAgentSystemPrompt(),
@@ -544,6 +570,17 @@ export async function POST(request: Request) {
         if (capabilities.model.delegate_agent)
           routedModelTools.delegate_agent = capabilities.model.delegate_agent;
         const vercelAITooles = routedModelTools as Record<string, Tool>;
+        // recall_memory stays bound even when toolChoice is "none": reading
+        // personal memory is read-only context, not an action the autonomy
+        // setting governs, so base chats never lose access to it.
+        vercelAITooles[RECALL_MEMORY_TOOL_NAME] = createRecallMemoryTool(
+          session.user.id,
+          {
+            agentId: agent?.id,
+            workspaceId: workspace?.id,
+            taskId: task?.id,
+          },
+        );
         metadata.toolCount = Object.keys(vercelAITooles).length;
         const allowedMcpTools = Object.values(allowedMcpServers ?? {})
           .map((t) => t.tools)
@@ -569,7 +606,7 @@ export async function POST(request: Request) {
         const preparedRun = await preparationAdapter.prepare({
           capabilities: preparationCapabilities,
           request: {
-            requestedBudget: { maxTokens: 50_000 },
+            requestedBudget: CHAT_REQUESTED_BUDGET,
             userId: session.user.id,
             workspaceId: workspace?.id,
             agentId: agent?.id,
@@ -640,7 +677,7 @@ export async function POST(request: Request) {
         });
         const preparedContext = preparedRun.context;
         const modelMessages = await convertToModelMessages(
-          preparedRun.messages,
+          await inlineBlockedFileUrls(preparedRun.messages),
         );
         checkpointModelMessages = modelMessages;
         checkpointPreparationSnapshot = preparedRun.snapshot;
@@ -648,6 +685,16 @@ export async function POST(request: Request) {
         const resolvedPolicy = preparedRun.policy!;
         checkpointResolvedPolicy = resolvedPolicy;
         const runtimeContext = preparedRun.runtimeContext!;
+        if (isToolCallAllowed && isV2FeatureEnabled("subagents")) {
+          vercelAITooles[SpawnSubagentToolName] = createServerSpawnSubagentTool(
+            {
+              model,
+              runtimeContext,
+              parentTools: vercelAITooles,
+            },
+          );
+          metadata.toolCount = Object.keys(vercelAITooles).length;
+        }
         harnessStream = await irisHarness.stream({
           agent: {
             profile: agent ? { type: "custom", agent } : { type: "base" },
@@ -814,8 +861,8 @@ export async function POST(request: Request) {
           await harnessStream?.waitForExternal({
             goalRequirement: checkpointGoalRequirement,
             continuationKind: "delegation",
-            goalRound: 1,
-            maxGoalRounds: 3,
+            goalRound: GOAL_ROUND_START,
+            maxGoalRounds: MAX_GOAL_ROUNDS,
             delegationToolCallIds,
             responseMessages,
             modelMessages: [...checkpointModelMessages, ...responseMessages],
@@ -877,8 +924,8 @@ export async function POST(request: Request) {
               checkpoint: {
                 goalRequirement: checkpointGoalRequirement,
                 continuationKind: "goal",
-                goalRound: 1,
-                maxGoalRounds: 3,
+                goalRound: GOAL_ROUND_START,
+                maxGoalRounds: MAX_GOAL_ROUNDS,
                 delegationToolCallIds: [],
                 responseMessages,
                 modelMessages: [

@@ -36,42 +36,33 @@ describe("system setting definitions", () => {
     }
   });
 
-  it("validates constrained operational settings and provider references", () => {
-    expect(parseSystemSettingValue("memory.curatorMode", "write")).toBe(
-      "write",
-    );
-    expect(() =>
-      parseSystemSettingValue("capabilityRouter.minScore", 1.1),
-    ).toThrow();
-    expect(() =>
-      parseSystemSettingValue("ai.stepTimeoutMs", 300_001),
-    ).toThrow();
+  it("validates provider references", () => {
     expect(() =>
       parseSystemSettingValue("providers.imageProviderId", "not-a-uuid"),
     ).toThrow();
+    expect(parseSystemSettingValue("providers.realtimeProviderId", null)).toBe(
+      null,
+    );
   });
 
   it("validates set values against the selected definition", () => {
     const mutation = SystemSettingMutationSchema.parse({
       operation: "set",
-      key: "capabilityRouter.topN",
-      value: 24,
+      key: "mcp.allowUserServers",
+      value: true,
     });
     expect(parseSystemSettingMutation(mutation)).toEqual(mutation);
     expect(() =>
       parseSystemSettingMutation({
         operation: "set",
-        key: "capabilityRouter.topN",
-        value: "24",
+        key: "mcp.allowUserServers",
+        value: "yes",
       }),
     ).toThrow();
   });
 
   it("redacts configured secrets while returning public values and defaults", () => {
-    const secret = toRedactedSystemSettingDto(
-      "oauth.github.clientSecret",
-      "do-not-return",
-    );
+    const secret = toRedactedSystemSettingDto("exa.apiKey", "do-not-return");
     expect(secret).toMatchObject({
       value: null,
       configured: true,
@@ -80,9 +71,9 @@ describe("system setting definitions", () => {
     });
     expect(JSON.stringify(secret)).not.toContain("do-not-return");
     expect(
-      toRedactedSystemSettingDto("memory.curatorMode", undefined),
+      toRedactedSystemSettingDto("mcp.allowUserServers", undefined),
     ).toMatchObject({
-      value: "shadow",
+      value: true,
       configured: false,
       redacted: false,
     });

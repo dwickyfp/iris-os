@@ -1,17 +1,23 @@
 const SENSITIVE = [
-  /\b(password|passcode|api[ _-]?key|secret|token)\b/i,
-  /\b(card number|credit card|rekening|nomor rekening|nik|passport)\b/i,
-  /\b(diagnosis|medical record|kondisi medis|kesehatan mental)\b/i,
+  /\b(password|passcode|pass phrase|api[ _-]?key|secret|token)\b/i,
+  /\b(kata sandi|kunci api)\b/i,
+  /\b(card number|credit card|rekening|nomor rekening|nik|passport|ktp|npwp)\b/i,
+  /\b(pin (atm|rekening|kartu)|nomor pin|saldo|gaji|pinjaman)\b/i,
+  /\b(alamat rumah|alamat kantor|alamat email|nomor telepon|nomor hp)\b/i,
+  /\b(diagnosis|medical record|kondisi medis|kesehatan mental|riwayat penyakit)\b/i,
   /\b\d{3}-\d{2}-\d{4}\b/,
 ];
 
 const INSTRUCTION =
   /\b(ignore (previous|all)|system prompt|you are chatgpt|execute|run this command|jailbreak)\b/i;
+const INSTRUCTION_ID =
+  /\b(abaikan (semua )?(instruksi|perintah)|lupakan instruksi)\b/i;
 
 export function isSafeMemoryContent(content: string) {
   return (
     !SENSITIVE.some((pattern) => pattern.test(content)) &&
-    !INSTRUCTION.test(content)
+    !INSTRUCTION.test(content) &&
+    !INSTRUCTION_ID.test(content)
   );
 }
 

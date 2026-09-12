@@ -1,18 +1,29 @@
 "use client";
 
-import {
-  AlertCircle,
-  KeyRound,
-  Loader2,
-  RefreshCw,
-  RotateCcw,
-  Save,
-} from "lucide-react";
+import { AlertCircle, Loader2, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { Badge } from "ui/badge";
 import { Button } from "ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "ui/card";
+import { Checkbox } from "ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "ui/dialog";
 import { Input } from "ui/input";
 import { Label } from "ui/label";
 import {
@@ -44,7 +55,6 @@ export type SystemSettingDefinition = {
   value?: string | number | boolean | null;
   options?: SystemSettingOption[];
   revision: number;
-  requiresRestart?: boolean;
   secretConfigured?: boolean;
 };
 
@@ -90,9 +100,6 @@ export function SystemSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [savingAction, setSavingAction] = useState<"save" | "clear" | null>(
-    null,
-  );
   const [settingErrors, setSettingErrors] = useState<Record<string, string>>(
     {},
   );
@@ -124,10 +131,8 @@ export function SystemSettingsPage() {
   const updateSetting = async (
     setting: SystemSettingDefinition,
     value: DraftValue | null,
-    action: "save" | "clear" = "save",
   ) => {
     setSavingKey(setting.key);
-    setSavingAction(action);
     setSettingErrors((errors) => {
       const next = { ...errors };
       delete next[setting.key];
@@ -150,7 +155,6 @@ export function SystemSettingsPage() {
       toast.error(message);
     } finally {
       setSavingKey(null);
-      setSavingAction(null);
     }
   };
 
@@ -163,23 +167,23 @@ export function SystemSettingsPage() {
     );
   }
 
+  const disabled = savingKey !== null || loadError !== null;
+
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-8 p-4 md:p-8">
-      <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-start sm:justify-between">
+    <main className="w-full space-y-6 p-4 md:p-8">
+      <header className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            Administration
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             System Settings
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Configure global application behavior. Changes apply to every user.
           </p>
         </div>
         <Button
           type="button"
           variant="outline"
+          size="sm"
           disabled={loading || savingKey !== null}
           onClick={() => void load()}
         >
@@ -201,33 +205,24 @@ export function SystemSettingsPage() {
         </Alert>
       )}
 
-      {!loadError && groups.length === 0 && (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          No system settings are available.
-        </div>
-      )}
-
       <StorageProfilesSection />
 
       {groups.map((group) => (
-        <section key={group.key} className="space-y-3">
-          <div>
-            <h2 className="text-lg font-medium">{group.label}</h2>
+        <Card key={group.key}>
+          <CardHeader>
+            <CardTitle className="text-base">{group.label}</CardTitle>
             {group.description && (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {group.description}
-              </p>
+              <CardDescription>{group.description}</CardDescription>
             )}
-          </div>
-          <div className="divide-y rounded-lg border">
+          </CardHeader>
+          <CardContent className="divide-y">
             {group.settings.map((setting) => (
               <SettingRow
                 key={setting.key}
                 setting={setting}
                 value={drafts[setting.key] ?? ""}
                 saving={savingKey === setting.key}
-                savingAction={savingAction}
-                disabled={savingKey !== null || loadError !== null}
+                disabled={disabled}
                 error={settingErrors[setting.key]}
                 onChange={(value) =>
                   setDrafts((current) => ({
@@ -236,12 +231,18 @@ export function SystemSettingsPage() {
                   }))
                 }
                 onSave={(value) => void updateSetting(setting, value)}
-                onClear={() => void updateSetting(setting, null, "clear")}
+                onClear={() => void updateSetting(setting, null)}
               />
             ))}
-          </div>
-        </section>
+          </CardContent>
+        </Card>
       ))}
+
+      {!loadError && groups.length === 0 && (
+        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+          No system settings are available.
+        </div>
+      )}
     </main>
   );
 }
@@ -260,12 +261,26 @@ type StorageProfile = {
   };
 };
 
+const STORAGE_FIELDS = [
+  { key: "name", label: "Profile name", placeholder: "Defaults to driver" },
+  { key: "region", label: "Region", placeholder: "us-east-1" },
+  { key: "endpoint", label: "Endpoint", placeholder: "http://localhost:9000" },
+  {
+    key: "publicBaseUrl",
+    label: "Public base URL",
+    placeholder: "Optional",
+  },
+  { key: "bucket", label: "Bucket", placeholder: "iris" },
+  { key: "accessKeyId", label: "Access key ID", placeholder: "" },
+] as const;
+
 function StorageProfilesSection() {
   const [profiles, setProfiles] = useState<StorageProfile[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [adoptLegacyObjects, setAdoptLegacyObjects] = useState(false);
   const [form, setForm] = useState({
-    name: "MinIO",
+    name: "",
     driver: "minio" as "s3" | "minio",
     endpoint: "http://localhost:9000",
     region: "us-east-1",
@@ -274,6 +289,7 @@ function StorageProfilesSection() {
     secretAccessKey: "",
     publicBaseUrl: "",
   });
+
   const loadProfiles = async () => {
     const data = await request<{ profiles: StorageProfile[] }>(
       "/api/admin/system-settings/storage-profiles",
@@ -283,6 +299,7 @@ function StorageProfilesSection() {
   useEffect(() => {
     void loadProfiles().catch(() => undefined);
   }, []);
+
   const create = async () => {
     setBusy(true);
     try {
@@ -290,18 +307,16 @@ function StorageProfilesSection() {
         method: "POST",
         body: JSON.stringify({
           ...form,
+          name: form.name || form.driver,
           forcePathStyle: form.driver === "minio",
           publicBaseUrl: form.publicBaseUrl || undefined,
           prefix: "uploads",
         }),
       });
-      setForm((value) => ({
-        ...value,
-        accessKeyId: "",
-        secretAccessKey: "",
-      }));
+      setForm((value) => ({ ...value, accessKeyId: "", secretAccessKey: "" }));
+      setDialogOpen(false);
       await loadProfiles();
-      toast.success("MinIO profile created");
+      toast.success("Storage profile created");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Unable to create profile",
@@ -310,6 +325,7 @@ function StorageProfilesSection() {
       setBusy(false);
     }
   };
+
   const action = async (id: string, type: "test" | "activate") => {
     setBusy(true);
     try {
@@ -334,112 +350,185 @@ function StorageProfilesSection() {
       setBusy(false);
     }
   };
+
+  const canCreate = form.accessKeyId !== "" && form.secretAccessKey !== "";
+
   return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-lg font-medium">Object Storage Profiles</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Create immutable S3-compatible profiles. MinIO credentials are
-          encrypted and never returned.
-        </p>
-      </div>
-      <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2">
-        <label className="md:col-span-2 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={adoptLegacyObjects}
-            onChange={(event) => setAdoptLegacyObjects(event.target.checked)}
-          />
-          Adopt existing untracked objects when activating the first profile
-        </label>
-        <div className="space-y-2">
-          <Label htmlFor="storage-driver">Driver</Label>
-          <select
-            id="storage-driver"
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-            value={form.driver}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                driver: event.target.value as "s3" | "minio",
-              }))
-            }
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Object Storage</CardTitle>
+        <CardDescription>
+          S3-compatible storage for uploads and artifacts. Credentials are
+          encrypted and never returned after saving.
+        </CardDescription>
+        <CardAction>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              setDialogOpen(open);
+            }}
           >
-            <option value="minio">MinIO</option>
-            <option value="s3">S3</option>
-          </select>
-        </div>
-        {Object.entries(form).map(([key, value]) =>
-          key === "driver" ? null : (
-            <div key={key} className="space-y-2">
-              <Label htmlFor={`storage-${key}`}>
-                {key.replace(/([A-Z])/g, " $1")}
-              </Label>
-              <Input
-                id={`storage-${key}`}
-                type={key === "secretAccessKey" ? "password" : "text"}
-                value={value}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    [key]: event.target.value,
-                  }))
-                }
-              />
-            </div>
-          ),
-        )}
-        <div className="md:col-span-2">
-          <Button disabled={busy} onClick={() => void create()}>
-            Create MinIO Profile
-          </Button>
-        </div>
-      </div>
-      <div className="divide-y rounded-lg border">
-        {profiles.map((profile) => (
-          <div
-            key={profile.id}
-            className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{profile.name}</span>
-                <Badge variant={profile.active ? "default" : "outline"}>
-                  {profile.active ? "Active" : profile.driver}
-                </Badge>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-1">
+                <Plus />
+                New profile
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>New storage profile</DialogTitle>
+                <DialogDescription>
+                  Profiles are immutable. Create a new one to change
+                  credentials.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="storage-driver">Driver</Label>
+                  <Select
+                    value={form.driver}
+                    onValueChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        driver: value as "s3" | "minio",
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="storage-driver" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="minio">MinIO</SelectItem>
+                      <SelectItem value="s3">S3</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {STORAGE_FIELDS.map((field) => (
+                  <div
+                    key={field.key}
+                    className={`space-y-2${
+                      field.key === "accessKeyId" || field.key === "name"
+                        ? " sm:col-span-2"
+                        : ""
+                    }`}
+                  >
+                    <Label htmlFor={`storage-${field.key}`}>
+                      {field.label}
+                    </Label>
+                    <Input
+                      id={`storage-${field.key}`}
+                      type="text"
+                      value={form[field.key]}
+                      placeholder={field.placeholder || undefined}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                ))}
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="storage-secretAccessKey">
+                    Secret access key
+                  </Label>
+                  <Input
+                    id="storage-secretAccessKey"
+                    type="password"
+                    value={form.secretAccessKey}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        secretAccessKey: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
               </div>
-              <p className="truncate text-xs text-muted-foreground">
-                {profile.s3?.endpoint ?? profile.driver}{" "}
-                {profile.s3?.bucket ?? ""}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => void action(profile.id, "test")}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  disabled={busy || !canCreate}
+                  onClick={() => void create()}
+                >
+                  {busy && <Loader2 className="animate-spin" />}
+                  Create profile
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {profiles.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            No storage profile yet. Create one to enable uploads.
+          </p>
+        ) : (
+          <div className="divide-y rounded-lg border">
+            {profiles.map((profile) => (
+              <div
+                key={profile.id}
+                className="flex flex-col gap-3 px-4 py-3 first:rounded-t-lg last:rounded-b-lg sm:flex-row sm:items-center"
               >
-                Test
-              </Button>
-              <Button
-                disabled={busy || profile.active}
-                onClick={() => void action(profile.id, "activate")}
-              >
-                Activate
-              </Button>
-            </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{profile.name}</span>
+                    <Badge variant={profile.active ? "default" : "outline"}>
+                      {profile.active ? "Active" : profile.driver}
+                    </Badge>
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {profile.s3?.endpoint ?? profile.driver}{" "}
+                    {profile.s3?.bucket ?? ""}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void action(profile.id, "test")}
+                  >
+                    Test
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={busy || profile.active}
+                    onClick={() => void action(profile.id, "activate")}
+                  >
+                    Activate
+                  </Button>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-    </section>
+        )}
+        {!profilesWithActive(profiles) && profiles.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={adoptLegacyObjects}
+              onCheckedChange={(checked) =>
+                setAdoptLegacyObjects(checked === true)
+              }
+            />
+            Adopt existing untracked objects when activating the first profile
+          </label>
+        )}
+      </CardContent>
+    </Card>
   );
+}
+
+function profilesWithActive(profiles: StorageProfile[]) {
+  return profiles.some((profile) => profile.active);
 }
 
 function SettingRow({
   setting,
   value,
   saving,
-  savingAction,
   disabled,
   error,
   onChange,
@@ -449,7 +538,6 @@ function SettingRow({
   setting: SystemSettingDefinition;
   value: DraftValue;
   saving: boolean;
-  savingAction: "save" | "clear" | null;
   disabled: boolean;
   error?: string;
   onChange: (value: DraftValue) => void;
@@ -458,156 +546,115 @@ function SettingRow({
 }) {
   const inputId = `system-setting-${setting.key}`;
   const isSecret = setting.type === "password";
-  const isUnchanged = !isSecret && value === (setting.value ?? "");
-  const secretIsEmpty = isSecret && value === "";
+  const isDirty = !isSecret && value !== (setting.value ?? "");
+  const showSave = setting.type !== "boolean" && (isSecret || isDirty);
+  const showClear = isSecret && setting.secretConfigured === true;
 
   return (
-    <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)] md:p-5">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor={inputId} className="font-medium">
-            {setting.label}
-          </Label>
-          {setting.requiresRestart && (
-            <Badge
-              variant="outline"
-              className="border-amber-500/40 text-amber-700 dark:text-amber-400"
-            >
-              <RotateCcw />
-              Restart required
-            </Badge>
-          )}
-          <Badge variant="secondary">Revision {setting.revision}</Badge>
-        </div>
-        {setting.description && (
-          <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-            {setting.description}
-          </p>
-        )}
+    <div className="flex flex-col gap-2 py-4 first:pt-0 last:pb-0 md:flex-row md:items-center md:gap-6">
+      <div className="min-w-0 md:w-1/3 md:shrink-0">
+        <Label htmlFor={inputId} className="font-medium">
+          {setting.label}
+        </Label>
         {isSecret && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <KeyRound className="size-3.5" />
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {setting.secretConfigured
-              ? "A secret is configured. Its value is never displayed."
-              : "No secret is configured."}
+              ? "Configured — value is never displayed."
+              : "Not configured."}
           </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <SettingControl
-          id={inputId}
-          setting={setting}
-          value={value}
-          disabled={disabled}
-          onChange={onChange}
-        />
-        <div className="flex flex-wrap justify-end gap-2">
-          {isSecret && setting.secretConfigured && (
+      <div className="w-full min-w-0">
+        <div className="flex items-center gap-2">
+          {setting.type === "boolean" ? (
+            <div className="flex flex-1 justify-end">
+              <Switch
+                id={inputId}
+                checked={Boolean(value)}
+                disabled={disabled || saving}
+                onCheckedChange={(checked) => {
+                  onChange(checked);
+                  onSave(checked);
+                }}
+              />
+            </div>
+          ) : setting.type === "select" ? (
+            <Select
+              value={String(value)}
+              disabled={disabled}
+              onValueChange={onChange}
+            >
+              <SelectTrigger id={inputId} className="flex-1">
+                <SelectValue placeholder="Select a value" />
+              </SelectTrigger>
+              <SelectContent>
+                {(setting.options ?? []).map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input
+              id={inputId}
+              type={isSecret ? "password" : setting.type}
+              value={value as string | number}
+              disabled={disabled}
+              autoComplete={isSecret ? "new-password" : undefined}
+              placeholder={isSecret ? "Enter a new secret" : undefined}
+              onChange={(event) =>
+                onChange(
+                  setting.type === "number"
+                    ? event.target.value === ""
+                      ? ""
+                      : event.target.valueAsNumber
+                    : event.target.value,
+                )
+              }
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  !disabled &&
+                  (isSecret ? value !== "" : isDirty)
+                ) {
+                  onSave(value);
+                }
+              }}
+            />
+          )}
+
+          {showSave && (
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant={isSecret ? "default" : "outline"}
+              disabled={disabled || (isSecret && value === "")}
+              onClick={() => onSave(value)}
+            >
+              {saving && <Loader2 className="animate-spin" />}
+              {isSecret ? "Replace" : "Save"}
+            </Button>
+          )}
+          {isSecret && showClear && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
               disabled={disabled}
               onClick={onClear}
             >
-              {saving && savingAction === "clear" && (
-                <Loader2 className="animate-spin" />
-              )}
-              Clear secret
+              Clear
             </Button>
           )}
-          <Button
-            type="button"
-            size="sm"
-            disabled={disabled || isUnchanged || secretIsEmpty}
-            onClick={() => onSave(value)}
-          >
-            {saving && savingAction === "save" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Save />
-            )}
-            {isSecret ? "Replace secret" : "Save"}
-          </Button>
         </div>
         {error && (
-          <p role="alert" className="text-right text-xs text-destructive">
+          <p role="alert" className="mt-1 text-xs text-destructive">
             {error}
           </p>
         )}
       </div>
     </div>
-  );
-}
-
-function SettingControl({
-  id,
-  setting,
-  value,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  setting: SystemSettingDefinition;
-  value: DraftValue;
-  disabled: boolean;
-  onChange: (value: DraftValue) => void;
-}) {
-  if (setting.type === "boolean") {
-    return (
-      <div className="flex h-9 items-center justify-between rounded-md border px-3">
-        <span className="text-sm">{value ? "Enabled" : "Disabled"}</span>
-        <Switch
-          id={id}
-          checked={Boolean(value)}
-          disabled={disabled}
-          onCheckedChange={onChange}
-        />
-      </div>
-    );
-  }
-
-  if (setting.type === "select") {
-    return (
-      <Select
-        value={String(value)}
-        disabled={disabled}
-        onValueChange={onChange}
-      >
-        <SelectTrigger id={id} className="w-full">
-          <SelectValue placeholder="Select a value" />
-        </SelectTrigger>
-        <SelectContent>
-          {(setting.options ?? []).map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  }
-
-  return (
-    <Input
-      id={id}
-      type={setting.type === "password" ? "password" : setting.type}
-      value={value as string | number}
-      disabled={disabled}
-      autoComplete={setting.type === "password" ? "new-password" : undefined}
-      placeholder={
-        setting.type === "password" ? "Enter a new secret" : undefined
-      }
-      onChange={(event) =>
-        onChange(
-          setting.type === "number"
-            ? event.target.value === ""
-              ? ""
-              : event.target.valueAsNumber
-            : event.target.value,
-        )
-      }
-    />
   );
 }

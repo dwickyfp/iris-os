@@ -36,12 +36,10 @@ type ClientOptions = {
 };
 
 const CONNET_TIMEOUT = IS_VERCEL_ENV ? 30000 : 120000;
-import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { STATIC_APP_CONFIG } from "lib/app-config";
 
-const mcpMaxTotalTimeout = () => {
-  const value = runtimeSystemSetting("mcp.maxTotalTimeoutMs");
-  return typeof value === "number" ? value : undefined;
-};
+const mcpMaxTotalTimeout = () =>
+  STATIC_APP_CONFIG.mcp.maxTotalTimeoutMs ?? undefined;
 
 const MCP_STDIO_INHERITED_ENV_KEYS = [
   "PATH",

@@ -75,10 +75,10 @@ export function createBaseAgentRuntimeContext({
   userRole,
   toolMode,
   approvalPolicy,
-}: Omit<
-  AgentRuntimeContext,
-  "agentType" | "agentId" | "skills"
->): AgentRuntimeContext {
+  skills = [],
+}: Omit<AgentRuntimeContext, "agentType" | "agentId" | "skills"> & {
+  skills?: SkillManifestEntry[];
+}): AgentRuntimeContext {
   return {
     requestId,
     runId,
@@ -91,6 +91,6 @@ export function createBaseAgentRuntimeContext({
     userRole,
     toolMode,
     approvalPolicy,
-    skills: [],
+    skills,
   };
 }

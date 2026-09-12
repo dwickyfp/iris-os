@@ -40,6 +40,7 @@ interface MentionInputProps {
   editorRef?: RefObject<Editor | null>;
   onFocus?: () => void;
   onBlur?: () => void;
+  onPasteFiles?: (files: File[]) => void;
   fullWidthSuggestion?: boolean;
   MentionItem?: FC<{
     label: string;
@@ -69,6 +70,7 @@ export default function MentionInput({
   editorRef,
   onFocus,
   onBlur,
+  onPasteFiles,
   fullWidthSuggestion = false,
 }: MentionInputProps) {
   const isMobile = useIsMobile();
@@ -86,6 +88,13 @@ export default function MentionInput({
     json: TipTapMentionJsonContent;
     text: string;
   } | null>(null);
+
+  // Keep the paste handler in a ref so editorConfig (and the editor itself)
+  // is not recreated when the callback identity changes.
+  const onPasteFilesRef = useRef(onPasteFiles);
+  useEffect(() => {
+    onPasteFilesRef.current = onPasteFiles;
+  }, [onPasteFiles]);
 
   // Memoize editor configuration
   const editorConfig = useMemo<UseEditorOptions>(() => {
@@ -194,6 +203,12 @@ export default function MentionInput({
         attributes: {
           class:
             "w-full max-h-80 min-h-[2rem] break-words overflow-y-auto resize-none focus:outline-none px-2 py-1 prose prose-sm dark:prose-invert ",
+        },
+        handlePaste: (_view, event) => {
+          const files = Array.from(event.clipboardData?.files ?? []);
+          if (files.length === 0) return false;
+          onPasteFilesRef.current?.(files);
+          return true;
         },
       },
     };

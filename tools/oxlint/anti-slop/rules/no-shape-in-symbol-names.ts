@@ -28,8 +28,11 @@ export const noForbiddenTermInSymbolNamesRule = defineRule({
     },
   },
   createOnce(context) {
-    const reportForbiddenSymbolName = (node: ESTree.Node & { name: string }) => {
-      if (!containsForbiddenSymbolName(node.name) || isBorrowedMemberName(node)) return;
+    const reportForbiddenSymbolName = (
+      node: ESTree.Node & { name: string },
+    ) => {
+      if (!containsForbiddenSymbolName(node.name) || isBorrowedMemberName(node))
+        return;
       context.report({
         node,
         messageId: "forbiddenSymbolName",

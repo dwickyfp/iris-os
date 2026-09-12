@@ -11,12 +11,7 @@ import { SYSTEM_SETTING_DEFINITIONS } from "lib/system-settings/definitions";
 import { systemSettingsService } from "lib/system-settings/server";
 
 const SYSTEM_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
-const inverted = new Set<SystemSettingKey>([
-  "auth.emailSignInEnabled",
-  "auth.emailSignUpEnabled",
-  "auth.oauthSignUpEnabled",
-  "mcp.allowUserServers",
-]);
+const inverted = new Set<SystemSettingKey>(["mcp.allowUserServers"]);
 
 function parseLegacy(key: SystemSettingKey, raw: string): SystemSettingScalar {
   const definition = SYSTEM_SETTING_DEFINITIONS[key];
