@@ -19,7 +19,6 @@ import { filterMemoryGraph } from "./memory-graph-model";
 const emptyGraph: MemoryGraphView = {
   nodes: [],
   edges: [],
-  degradedSemanticSearch: true,
 };
 
 export function MemoryCenter() {
@@ -190,11 +189,6 @@ export function MemoryCenter() {
                 }
               />
             </label>
-            {graph.degradedSemanticSearch && (
-              <span className="rounded-full bg-amber-500/15 px-3 py-1 text-xs text-amber-600">
-                Lexical mode · pgvector unavailable
-              </span>
-            )}
           </div>
           <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
             <div className="space-y-2">

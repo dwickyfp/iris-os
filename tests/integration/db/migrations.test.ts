@@ -593,9 +593,10 @@ describe("IRIS V2 PostgreSQL migrations", () => {
        FROM model_engine_assignment
        ORDER BY engine_key`,
     );
+    // Migration 0072 retires the embedding engine; its legacy backfill is
+    // removed again, leaving only the curator assignment.
     expect(assignments.rows).toEqual([
       { engine_key: "memory-curator", model_id: curatorId },
-      { engine_key: "memory-embedding", model_id: embeddingId },
     ]);
   });
 
@@ -645,13 +646,6 @@ describe("IRIS V2 PostgreSQL migrations", () => {
       [userId, memoryId],
     );
     await client.query(
-      `INSERT INTO memory_embedding
-        (user_id, node_id, node_type, model, dimensions, values, content_hash)
-       VALUES ($1, $2, 'claim', 'fixture', 3, '[0.1,0.2,0.3]'::json,
-               md5('Legacy durable fact'))`,
-      [userId, memoryId],
-    );
-    await client.query(
       `INSERT INTO memory_curator_run (user_id, job_type, status)
        VALUES ($1, 'curate', 'completed')`,
       [userId],
@@ -682,7 +676,6 @@ describe("IRIS V2 PostgreSQL migrations", () => {
          UNION ALL SELECT scope_type, scope_id FROM memory_entity WHERE user_id = $1
          UNION ALL SELECT scope_type, scope_id FROM memory_edge WHERE user_id = $1
          UNION ALL SELECT scope_type, scope_id FROM memory_evidence WHERE user_id = $1
-         UNION ALL SELECT scope_type, scope_id FROM memory_embedding WHERE user_id = $1
          UNION ALL SELECT scope_type, scope_id FROM memory_curator_run WHERE user_id = $1
          UNION ALL SELECT scope_type, scope_id FROM memory_retrieval_audit WHERE user_id = $1
        ) graph WHERE scope_type <> 'global' OR scope_id IS NOT NULL`,

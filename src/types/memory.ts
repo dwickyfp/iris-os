@@ -166,7 +166,6 @@ export type MemoryNode = {
 export type MemoryGraphView = {
   nodes: MemoryNode[];
   edges: MemoryEdge[];
-  degradedSemanticSearch: boolean;
 };
 
 export type MemoryConflict = {
@@ -178,13 +177,7 @@ export type MemoryConflict = {
 export type MemoryCuratorRun = {
   id: string;
   userId: string;
-  jobType:
-    | "extract"
-    | "curate"
-    | "sweep"
-    | "reembed"
-    | "review"
-    | "consolidate";
+  jobType: "extract" | "curate" | "sweep" | "review" | "consolidate";
   status: "running" | "completed" | "failed";
   stats: Record<string, number>;
   error?: string;

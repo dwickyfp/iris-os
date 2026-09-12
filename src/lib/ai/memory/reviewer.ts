@@ -1,12 +1,9 @@
-import { z } from "zod";
 import { MemoryKindSchema, MemoryScopeTypeSchema } from "app-types/memory";
 import { runtimeSystemSetting } from "lib/system-settings/runtime";
+import { z } from "zod";
 
 export const MemoryCuratorModeSchema = z.enum(["off", "shadow", "write"]);
 export type MemoryCuratorMode = z.infer<typeof MemoryCuratorModeSchema>;
-
-export const MemoryRecallModeSchema = z.enum(["keyword", "hybrid"]);
-export type MemoryRecallMode = z.infer<typeof MemoryRecallModeSchema>;
 
 export function getMemoryCuratorMode(
   env?: Record<string, string | undefined>,
@@ -15,15 +12,6 @@ export function getMemoryCuratorMode(
     ? env.IRIS_MEMORY_CURATOR_MODE
     : runtimeSystemSetting("memory.curatorMode");
   return MemoryCuratorModeSchema.catch("shadow").parse(configured);
-}
-
-export function getMemoryRecallMode(
-  env?: Record<string, string | undefined>,
-): MemoryRecallMode {
-  const configured = env
-    ? env.IRIS_MEMORY_RECALL_MODE
-    : runtimeSystemSetting("memory.recallMode");
-  return MemoryRecallModeSchema.catch("keyword").parse(configured);
 }
 
 export const MemoryTopicKeySchema = z.enum([

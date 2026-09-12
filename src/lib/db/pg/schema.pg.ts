@@ -590,10 +590,6 @@ export const ModelConfigurationTable = pgTable(
       .notNull()
       .default("chat"),
     isCurator: boolean("is_curator").notNull().default(false),
-    isEmbeddingDefault: boolean("is_embedding_default")
-      .notNull()
-      .default(false),
-    embeddingDimensions: integer("embedding_dimensions"),
     createdAt: timestamp("created_at")
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
@@ -627,16 +623,27 @@ export const ModelEngineAssignmentTable = pgTable(
   (table) => [index("model_engine_assignment_model_idx").on(table.modelId)],
 );
 
-export const ChatMessageTable = pgTable("chat_message", {
-  id: text("id").primaryKey().notNull(),
-  threadId: uuid("thread_id")
-    .notNull()
-    .references(() => ChatThreadTable.id, { onDelete: "cascade" }),
-  role: text("role").notNull().$type<UIMessage["role"]>(),
-  parts: json("parts").notNull().array().$type<UIMessage["parts"]>(),
-  metadata: json("metadata").$type<ChatMetadata>(),
-  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+export const ChatMessageTable = pgTable(
+  "chat_message",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => ChatThreadTable.id, { onDelete: "cascade" }),
+    role: text("role").notNull().$type<UIMessage["role"]>(),
+    parts: json("parts").notNull().array().$type<UIMessage["parts"]>(),
+    metadata: json("metadata").$type<ChatMetadata>(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("chat_message_thread_created_idx").on(
+      table.threadId,
+      table.createdAt,
+    ),
+  ],
+);
 
 /** Denormalized, user-scoped text extracted from messages for cross-thread recall. */
 export const ChatMessageSearchTable = pgTable(
@@ -657,7 +664,10 @@ export const ChatMessageSearchTable = pgTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP`),
   },
-  (table) => [index("chat_message_search_user_idx").on(table.userId)],
+  (table) => [
+    index("chat_message_search_user_idx").on(table.userId),
+    index("chat_message_search_thread_idx").on(table.threadId),
+  ],
 );
 
 export const UserMemoryTable = pgTable(
@@ -987,49 +997,6 @@ export const MemoryEvidenceTable = pgTable(
 );
 
 /** JSON is the portable source; deployments with pgvector also get vector_value via migration. */
-export const MemoryEmbeddingTable = pgTable(
-  "memory_embedding",
-  {
-    id: uuid("id").primaryKey().notNull().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => UserTable.id, { onDelete: "cascade" }),
-    scopeType: varchar("scope_type", {
-      enum: ["global", "workspace", "task", "agent"],
-    })
-      .notNull()
-      .default("global"),
-    scopeId: uuid("scope_id"),
-    nodeId: uuid("node_id").notNull(),
-    nodeType: varchar("node_type", { enum: ["topic", "claim", "entity"] })
-      .notNull()
-      .$type<MemoryNodeType>(),
-    model: varchar("model", { length: 180 }).notNull(),
-    dimensions: integer("dimensions").notNull(),
-    values: json("values").notNull().$type<number[]>(),
-    contentHash: varchar("content_hash", { length: 64 }).notNull(),
-    createdAt: timestamp("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: timestamp("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [
-    check(
-      "memory_embedding_scope_check",
-      sql`(${table.scopeType} = 'global' AND ${table.scopeId} IS NULL) OR (${table.scopeType} IN ('workspace', 'task', 'agent') AND ${table.scopeId} IS NOT NULL)`,
-    ),
-    unique().on(
-      table.userId,
-      table.scopeType,
-      table.scopeId,
-      table.nodeId,
-      table.model,
-    ),
-    index("memory_embedding_user_idx").on(table.userId),
-  ],
-);
 
 export const MemoryCuratorRunTable = pgTable(
   "memory_curator_run",
@@ -1046,7 +1013,7 @@ export const MemoryCuratorRunTable = pgTable(
     scopeId: uuid("scope_id"),
     jobKey: varchar("job_key", { length: 240 }),
     jobType: varchar("job_type", {
-      enum: ["extract", "curate", "sweep", "reembed", "review", "consolidate"],
+      enum: ["extract", "curate", "sweep", "review", "consolidate"],
     }).notNull(),
     status: varchar("status", {
       enum: ["running", "completed", "failed"],
@@ -1196,6 +1163,8 @@ export const IrisActivityEventTable = pgTable(
       table.trajectoryId,
       table.sequence,
     ),
+    index("iris_activity_thread_idx").on(table.threadId),
+    index("iris_activity_task_idx").on(table.taskId),
   ],
 );
 

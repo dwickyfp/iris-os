@@ -1,11 +1,12 @@
-import { smoothStream, streamText } from "ai";
+import { type LanguageModel, smoothStream, streamText } from "ai";
 
-import { customModelProvider } from "lib/ai/models";
-import { CREATE_THREAD_TITLE_PROMPT } from "lib/ai/prompts";
-import globalLogger from "logger";
-import { chatRepository } from "lib/db/repository";
+import { type ChatModel } from "app-types/chat";
 import { getSession } from "auth/server";
 import { colorize } from "consola/utils";
+import { customModelProvider } from "lib/ai/models";
+import { CREATE_THREAD_TITLE_PROMPT } from "lib/ai/prompts";
+import { chatRepository } from "lib/db/repository";
+import globalLogger from "logger";
 import { handleError } from "../shared.chat";
 
 const logger = globalLogger.withDefaults({
@@ -16,9 +17,14 @@ export async function POST(request: Request) {
   try {
     const json = await request.json();
 
-    const { message = "hello", threadId } = json as {
+    const {
+      message = "hello",
+      threadId,
+      model,
+    } = json as {
       message: string;
       threadId: string;
+      model?: ChatModel;
     };
 
     const session = await getSession();
@@ -28,8 +34,16 @@ export async function POST(request: Request) {
 
     logger.info(`system engine: thread-title, threadId: ${threadId}`);
 
+    // Inherit the caller's selected chat model; fall back to the default.
+    let languageModel: LanguageModel;
+    try {
+      languageModel = await customModelProvider.getModel(model);
+    } catch {
+      languageModel = await customModelProvider.getEngineModel("thread-title");
+    }
+
     const result = streamText({
-      model: await customModelProvider.getEngineModel("thread-title"),
+      model: languageModel,
       instructions: CREATE_THREAD_TITLE_PROMPT,
       experimental_transform: smoothStream({ chunking: "word" }),
       prompt: message,

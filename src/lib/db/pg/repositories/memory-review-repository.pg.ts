@@ -1,6 +1,15 @@
-import { embed } from "ai";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { MemoryKind, MemoryScope } from "app-types/memory";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { memoryContentHash, normalizeMemoryText } from "lib/ai/memory/curator";
+import {
+  isSafeMemoryContent,
+  sanitizeMemoryContent,
+} from "lib/ai/memory/guardrails";
+import {
+  contentMatches,
+  contentRank,
+  lexicalTerms,
+} from "lib/ai/memory/lexical-search";
 import {
   MEMORY_TOPIC_LABELS,
   type MemoryCuratorMode,
@@ -9,18 +18,12 @@ import {
   type MemorySearchCandidate,
   type MemoryTopicKey,
 } from "lib/ai/memory/reviewer";
-import {
-  isSafeMemoryContent,
-  sanitizeMemoryContent,
-} from "lib/ai/memory/guardrails";
-import { memoryContentHash, normalizeMemoryText } from "lib/ai/memory/curator";
 import { memoryScopeKey } from "lib/ai/memory/scope";
-import { getMemoryRecallMode } from "lib/ai/memory/reviewer";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
 import {
-  MemoryEdgeTable,
   MemoryCuratorRunTable,
+  MemoryEdgeTable,
   MemoryEntityTable,
   MemoryEvidenceTable,
   MemoryTopicTable,
@@ -29,47 +32,6 @@ import {
 } from "../schema.pg";
 
 type MemoryRow = typeof UserMemoryTable.$inferSelect;
-
-const LEXICAL_STOPWORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "are",
-  "but",
-  "not",
-  "you",
-  "aku",
-  "saya",
-  "kamu",
-  "dan",
-  "yang",
-  "dengan",
-  "untuk",
-  "tidak",
-  "sudah",
-]);
-
-function lexicalTerms(query: string) {
-  return normalizeMemoryText(query)
-    .split(" ")
-    .filter((term) => term.length > 2 && !LEXICAL_STOPWORDS.has(term))
-    .slice(0, 10);
-}
-
-/** websearch_to_tsquery treats spaces as AND, so lexical recall joins terms with OR. */
-function lexicalTsQuery(terms: string[]) {
-  return terms.join(" OR ");
-}
-
-function contentMatchesTerms(terms: string[]) {
-  return terms.length
-    ? sql`${UserMemoryTable.content} @@ websearch_to_tsquery('simple', ${lexicalTsQuery(terms)})`
-    : undefined;
-}
-
-function contentRank(terms: string[]) {
-  return sql`ts_rank(to_tsvector('simple', ${UserMemoryTable.content}), websearch_to_tsquery('simple', ${lexicalTsQuery(terms)}))`;
-}
 
 function exactScope(
   table: { scopeType: any; scopeId: any },
@@ -101,32 +63,6 @@ function toCandidate(row: MemoryRow): MemorySearchCandidate {
   };
 }
 
-async function semanticCandidateIds(
-  userId: string,
-  query: string,
-  scopes: MemoryScope[],
-  limit: number,
-) {
-  if (getMemoryRecallMode() === "keyword") return [];
-  try {
-    const { customModelProvider } = await import("lib/ai/models");
-    const configured = await customModelProvider.getEmbeddingModel();
-    if (!configured) return [];
-    const result = await embed({ model: configured.model, value: query });
-    const vector = `[${result.embedding.join(",")}]`;
-    const ids: string[] = [];
-    for (const scope of scopes) {
-      const rows = await db.execute<{ node_id: string }>(
-        sql`SELECT node_id FROM memory_embedding WHERE user_id = ${userId} AND scope_type = ${scope.scopeType} AND scope_id IS NOT DISTINCT FROM ${scope.scopeId} AND node_type = 'claim' AND model = ${configured.modelId} AND vector_value IS NOT NULL ORDER BY vector_value <=> ${vector}::vector LIMIT ${limit}`,
-      );
-      ids.push(...rows.rows.map((row) => row.node_id));
-    }
-    return [...new Set(ids)].slice(0, limit);
-  } catch {
-    return [];
-  }
-}
-
 async function findCandidates(input: {
   userId: string;
   query: string;
@@ -135,7 +71,9 @@ async function findCandidates(input: {
 }) {
   const limit = Math.min(12, Math.max(1, input.limit ?? 12));
   const terms = lexicalTerms(input.query);
-  const lexical: MemoryRow[] = [];
+  const matches = await contentMatches(terms);
+  const rank = await contentRank(terms);
+  const candidates: MemoryRow[] = [];
   for (const scope of input.scopes) {
     const rows = await db
       .select()
@@ -146,39 +84,18 @@ async function findCandidates(input: {
           exactScope(UserMemoryTable, scope),
           inArray(UserMemoryTable.status, ["active", "pending"]),
           isNull(UserMemoryTable.deletedAt),
-          contentMatchesTerms(terms),
+          matches,
         ),
       )
       .orderBy(
-        ...(terms.length ? [sql`${contentRank(terms)} DESC`] : []),
+        ...(rank ? [sql`${rank} DESC`] : []),
         desc(UserMemoryTable.updatedAt),
       )
       .limit(limit);
-    lexical.push(...rows);
+    candidates.push(...rows);
   }
-  const semanticIds = await semanticCandidateIds(
-    input.userId,
-    input.query,
-    input.scopes,
-    limit,
-  );
-  const semantic = semanticIds.length
-    ? await db
-        .select()
-        .from(UserMemoryTable)
-        .where(
-          and(
-            eq(UserMemoryTable.userId, input.userId),
-            inArray(UserMemoryTable.id, semanticIds),
-            inArray(UserMemoryTable.status, ["active", "pending"]),
-            isNull(UserMemoryTable.deletedAt),
-          ),
-        )
-    : [];
   return [
-    ...new Map(
-      [...lexical, ...semantic].map((row) => [row.id, toCandidate(row)]),
-    ).values(),
+    ...new Map(candidates.map((row) => [row.id, toCandidate(row)])).values(),
   ].slice(0, limit);
 }
 

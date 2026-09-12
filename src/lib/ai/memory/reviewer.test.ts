@@ -1,11 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import {
-  getMemoryCuratorMode,
-  getMemoryRecallMode,
-  MemoryOperationBatchSchema,
-} from "./reviewer";
+import { describe, expect, it, vi } from "vitest";
 import { runMemoryReviewAgent } from "./review-agent";
+import { MemoryOperationBatchSchema, getMemoryCuratorMode } from "./reviewer";
 
 const usage = {
   inputTokens: {
@@ -25,19 +21,6 @@ describe("agentic memory reviewer", () => {
     );
     expect(getMemoryCuratorMode({ IRIS_MEMORY_CURATOR_MODE: "invalid" })).toBe(
       "shadow",
-    );
-  });
-
-  it("defaults memory recall to keyword and accepts hybrid mode", () => {
-    expect(getMemoryRecallMode({})).toBe("keyword");
-    expect(getMemoryRecallMode({ IRIS_MEMORY_RECALL_MODE: "keyword" })).toBe(
-      "keyword",
-    );
-    expect(getMemoryRecallMode({ IRIS_MEMORY_RECALL_MODE: "hybrid" })).toBe(
-      "hybrid",
-    );
-    expect(getMemoryRecallMode({ IRIS_MEMORY_RECALL_MODE: "invalid" })).toBe(
-      "keyword",
     );
   });
 

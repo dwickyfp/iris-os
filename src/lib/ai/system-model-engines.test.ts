@@ -16,14 +16,13 @@ const chatModel = {
 };
 
 describe("system model engine registry", () => {
-  test("registers every configurable internal engine", () => {
+  test("registers every internal engine", () => {
     expect(SYSTEM_MODEL_ENGINES.map((engine) => engine.key)).toEqual([
       "memory-curator",
       "automation-runner",
       "delegation-runner",
       "context-summary",
       "thread-title",
-      "memory-embedding",
     ]);
   });
 
@@ -37,10 +36,10 @@ describe("system model engine registry", () => {
       }),
     ).toBe(false);
     expect(
-      isSystemEngineModelCompatible(
-        getSystemModelEngine("memory-embedding"),
-        chatModel,
-      ),
+      isSystemEngineModelCompatible(curator, {
+        ...chatModel,
+        modelKind: "embedding" as const,
+      }),
     ).toBe(false);
   });
 
@@ -73,11 +72,12 @@ describe("system model engine registry", () => {
 
   test("returns no effective model when no compatible fallback exists", () => {
     const resolved = resolveSystemEngineModels(
-      getSystemModelEngine("memory-embedding"),
+      getSystemModelEngine("memory-curator"),
       [
         {
           ...chatModel,
-          id: "chat",
+          id: "embedding-only",
+          modelKind: "embedding" as const,
           enabled: true,
           providerEnabled: true,
           isDefault: true,

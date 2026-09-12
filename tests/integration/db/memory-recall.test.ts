@@ -10,8 +10,12 @@ process.env.POSTGRES_URL = connectionString;
 vi.mock("server-only", () => ({}));
 
 const client = new Client({ connectionString });
-type MemoryGraphRepository = typeof import("lib/db/pg/repositories/memory-graph-repository.pg")["pgMemoryGraphRepository"];
-type MemoryReviewRepository = typeof import("lib/db/pg/repositories/memory-review-repository.pg")["pgMemoryReviewRepository"];
+type MemoryGraphRepository = typeof import(
+  "lib/db/pg/repositories/memory-graph-repository.pg"
+)["pgMemoryGraphRepository"];
+type MemoryReviewRepository = typeof import(
+  "lib/db/pg/repositories/memory-review-repository.pg"
+)["pgMemoryReviewRepository"];
 type MemoryService = typeof import("lib/ai/memory/service");
 let repository: MemoryGraphRepository;
 let reviewRepository: MemoryReviewRepository;
@@ -79,7 +83,7 @@ afterAll(async () => {
 });
 
 describe("keyword-only memory recall", () => {
-  test("ranks lexical matches with ts_rank and confidence/updatedAt tiebreakers", async () => {
+  test("ranks lexical matches with ts_rank_cd and confidence/updatedAt tiebreakers", async () => {
     const strong = await insertClaim("User suka jus jambu dan jus mangga", {
       confidence: 95,
     });
@@ -105,35 +109,27 @@ describe("keyword-only memory recall", () => {
     );
   });
 
-  test("keyword mode skips semantic retrieval and embedding model calls", async () => {
-    process.env.IRIS_MEMORY_RECALL_MODE = "keyword";
-    const models = await import("lib/ai/models");
-    const modelSpy = vi
-      .spyOn(models.customModelProvider, "getEmbeddingModel")
-      .mockResolvedValue(undefined);
-    try {
-      const claim = await insertClaim("User suka teh melati");
-      const recall = await repository.hybridRecall(userId, "teh melati", 8, {
-        scopeType: "global",
-        scopeId: null,
-      });
-      expect(recall.nodes.some((node) => node.id === claim)).toBe(true);
+  test("recall matches term prefixes and fuzzy variants lexically", async () => {
+    const prefixClaim = await insertClaim("User suka teh melati");
+    const fuzzyClaim = await insertClaim("User suka kopi pahit");
+    const recall = await repository.hybridRecall(
+      userId,
+      "teh melat kopi pahit",
+      8,
+      { scopeType: "global", scopeId: null },
+    );
+    const ids = recall.nodes.map((node) => node.id);
+    expect(ids).toContain(prefixClaim);
+    expect(ids).toContain(fuzzyClaim);
 
-      const candidates = await reviewRepository.findCandidates({
-        userId,
-        query: "teh melati",
-        scopes: [{ scopeType: "global", scopeId: null }],
-      });
-      expect(candidates.some((candidate) => candidate.id === claim)).toBe(true);
-
-      const overview = await repository.overview(userId);
-      expect(overview.degradedSemanticSearch).toBe(true);
-
-      expect(modelSpy).not.toHaveBeenCalled();
-    } finally {
-      modelSpy.mockRestore();
-      delete process.env.IRIS_MEMORY_RECALL_MODE;
-    }
+    const candidates = await reviewRepository.findCandidates({
+      userId,
+      query: "teh melat",
+      scopes: [{ scopeType: "global", scopeId: null }],
+    });
+    expect(candidates.some((candidate) => candidate.id === prefixClaim)).toBe(
+      true,
+    );
   });
 
   test("chat message search uses ts_rank ordering", async () => {

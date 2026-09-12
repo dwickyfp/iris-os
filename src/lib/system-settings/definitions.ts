@@ -137,7 +137,9 @@ export const SYSTEM_SETTING_DEFINITIONS = {
     env: "DEFAULT_USER_ROLE",
     schema: z.enum(["admin", "editor", "user"]),
     sensitivity: "public",
-    default: "editor",
+    // Least privilege by default: "editor" grants create/delete on agents,
+    // workflows, skills, and MCP and must be an explicit admin grant.
+    default: "user",
     restartRequired: true,
   }),
   "features.workspaces": define({
@@ -180,13 +182,6 @@ export const SYSTEM_SETTING_DEFINITIONS = {
     schema: z.enum(["off", "shadow", "write"]),
     sensitivity: "public",
     default: "shadow",
-    restartRequired: false,
-  }),
-  "memory.recallMode": define({
-    env: "IRIS_MEMORY_RECALL_MODE",
-    schema: z.enum(["keyword", "hybrid"]),
-    sensitivity: "public",
-    default: "keyword",
     restartRequired: false,
   }),
   "capabilityRouter.threshold": define({

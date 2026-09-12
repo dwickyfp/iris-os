@@ -28,12 +28,9 @@ export const SystemModelEngineKeySchema = z.enum([
   "thread-title",
   "automation-runner",
   "delegation-runner",
-  "memory-embedding",
 ]);
 
-export type SystemModelEngineKey = z.infer<
-  typeof SystemModelEngineKeySchema
->;
+export type SystemModelEngineKey = z.infer<typeof SystemModelEngineKeySchema>;
 
 export const SystemModelEngineAssignmentSchema = z.object({
   engineKey: SystemModelEngineKeySchema,
@@ -58,8 +55,6 @@ export const ModelInputSchema = z.object({
   isDefault: z.boolean().default(false),
   modelKind: z.enum(["chat", "embedding"]).default("chat"),
   isCurator: z.boolean().default(false),
-  isEmbeddingDefault: z.boolean().default(false),
-  embeddingDimensions: z.number().int().min(1).max(65535).optional(),
   capabilities: ModelCapabilitiesSchema.default({
     toolCalls: true,
     vision: false,

@@ -10,6 +10,12 @@ export type SystemModelEngineDefinition = {
   category: "background" | "auxiliary" | "vector";
   modelKind: "chat" | "embedding";
   requiredCapabilities: Partial<ModelCapabilities>;
+  /**
+   * Non-configurable engines are hidden from admin settings and always
+   * inherit a model (thread-title follows the caller's chat model;
+   * context-summary falls back to the default model).
+   */
+  configurable: boolean;
 };
 
 export const SYSTEM_MODEL_ENGINES: readonly SystemModelEngineDefinition[] = [
@@ -21,14 +27,17 @@ export const SYSTEM_MODEL_ENGINES: readonly SystemModelEngineDefinition[] = [
     category: "background",
     modelKind: "chat",
     requiredCapabilities: { toolCalls: true, structuredOutput: true },
+    configurable: true,
   },
   {
     key: "automation-runner",
     label: "Automation Runner",
-    description: "Runs headless skills and agents started by durable automations.",
+    description:
+      "Runs headless skills and agents started by durable automations.",
     category: "background",
     modelKind: "chat",
     requiredCapabilities: { toolCalls: true },
+    configurable: true,
   },
   {
     key: "delegation-runner",
@@ -37,6 +46,7 @@ export const SYSTEM_MODEL_ENGINES: readonly SystemModelEngineDefinition[] = [
     category: "background",
     modelKind: "chat",
     requiredCapabilities: { toolCalls: true },
+    configurable: true,
   },
   {
     key: "context-summary",
@@ -46,6 +56,7 @@ export const SYSTEM_MODEL_ENGINES: readonly SystemModelEngineDefinition[] = [
     category: "auxiliary",
     modelKind: "chat",
     requiredCapabilities: {},
+    configurable: false,
   },
   {
     key: "thread-title",
@@ -54,14 +65,7 @@ export const SYSTEM_MODEL_ENGINES: readonly SystemModelEngineDefinition[] = [
     category: "auxiliary",
     modelKind: "chat",
     requiredCapabilities: {},
-  },
-  {
-    key: "memory-embedding",
-    label: "Memory Embedding",
-    description: "Creates vectors used by memory search and graph recall.",
-    category: "vector",
-    modelKind: "embedding",
-    requiredCapabilities: {},
+    configurable: false,
   },
 ] as const;
 

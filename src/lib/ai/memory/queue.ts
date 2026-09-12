@@ -1,11 +1,10 @@
-import PgBoss from "pg-boss";
 import type { ChatModel } from "app-types/chat";
 import type { MemoryScopeType } from "app-types/memory";
+import { getStartedPgBoss } from "lib/jobs/pg-boss";
 
 export const MEMORY_EXTRACT_QUEUE = "memory-extract";
 export const MEMORY_CURATE_QUEUE = "memory-curate";
 export const MEMORY_SWEEP_QUEUE = "memory-sweep";
-export const MEMORY_REEMBED_QUEUE = "memory-reembed";
 export const MEMORY_REVIEW_QUEUE = "memory-review-v2";
 export const MEMORY_CONSOLIDATE_QUEUE = "memory-consolidate-v2";
 
@@ -41,18 +40,9 @@ export type MemoryConsolidationJob = {
   mode: "shadow" | "write";
 };
 
-let boss: PgBoss | undefined;
-
-function getBoss() {
-  if (!process.env.POSTGRES_URL) return undefined;
-  boss ??= new PgBoss({ connectionString: process.env.POSTGRES_URL });
-  return boss;
-}
-
 export async function enqueueMemoryReview(job: MemoryReviewJob) {
-  const queue = getBoss();
+  const queue = await getStartedPgBoss();
   if (!queue) return;
-  await queue.start();
   await queue.createQueue(MEMORY_REVIEW_QUEUE);
   await queue.send(MEMORY_REVIEW_QUEUE, job, {
     singletonKey: `${job.threadId}:${job.assistantMessageId}`,
@@ -64,9 +54,8 @@ export async function enqueueMemoryReview(job: MemoryReviewJob) {
 }
 
 export async function enqueueMemoryConsolidation(job: MemoryConsolidationJob) {
-  const queue = getBoss();
+  const queue = await getStartedPgBoss();
   if (!queue) throw new Error("POSTGRES_URL is required");
-  await queue.start();
   await queue.createQueue(MEMORY_CONSOLIDATE_QUEUE);
   await queue.send(MEMORY_CONSOLIDATE_QUEUE, job, {
     singletonKey: job.id,

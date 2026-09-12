@@ -80,9 +80,9 @@ describe("system setting definitions", () => {
     });
     expect(JSON.stringify(secret)).not.toContain("do-not-return");
     expect(
-      toRedactedSystemSettingDto("memory.recallMode", undefined),
+      toRedactedSystemSettingDto("memory.curatorMode", undefined),
     ).toMatchObject({
-      value: "keyword",
+      value: "shadow",
       configured: false,
       redacted: false,
     });

@@ -32,7 +32,6 @@ export const SystemSettingKeySchema = z.enum([
   "features.delegation",
   "features.remoteAgents",
   "memory.curatorMode",
-  "memory.recallMode",
   "capabilityRouter.threshold",
   "capabilityRouter.topN",
   "capabilityRouter.minScore",

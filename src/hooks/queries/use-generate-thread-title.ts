@@ -54,6 +54,7 @@ export function useGenerateThreadTitle(option: {
           body: {
             message,
             threadId,
+            model: appStore.getState().chatModel,
           },
         });
       })

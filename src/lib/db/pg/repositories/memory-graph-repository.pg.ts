@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { embed } from "ai";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type {
   MemoryConflict,
   MemoryEdge,
@@ -10,14 +8,18 @@ import type {
   MemoryProvenance,
   MemoryScope,
 } from "app-types/memory";
-import type { MemoryGraphAdapter } from "lib/ai/memory/graph-adapter";
-import { customModelProvider } from "lib/ai/models";
-import { getMemoryRecallMode } from "lib/ai/memory/reviewer";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import {
   defaultMemoryTopic,
   memoryContentHash,
   normalizeMemoryText,
 } from "lib/ai/memory/curator";
+import type { MemoryGraphAdapter } from "lib/ai/memory/graph-adapter";
+import {
+  contentMatches,
+  contentRank,
+  lexicalTerms,
+} from "lib/ai/memory/lexical-search";
 import { memoryScopeKey } from "lib/ai/memory/scope";
 import { generateUUID } from "lib/utils";
 import { pgDb as db } from "../db.pg";
@@ -37,47 +39,6 @@ function confidence(value: number) {
 }
 
 const GLOBAL_SCOPE: MemoryScope = { scopeType: "global", scopeId: null };
-
-const LEXICAL_STOPWORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "are",
-  "but",
-  "not",
-  "you",
-  "aku",
-  "saya",
-  "kamu",
-  "dan",
-  "yang",
-  "dengan",
-  "untuk",
-  "tidak",
-  "sudah",
-]);
-
-function lexicalTerms(query: string) {
-  return normalizeMemoryText(query)
-    .split(" ")
-    .filter((term) => term.length > 2 && !LEXICAL_STOPWORDS.has(term))
-    .slice(0, 10);
-}
-
-/** websearch_to_tsquery treats spaces as AND, so lexical recall joins terms with OR. */
-function lexicalTsQuery(terms: string[]) {
-  return terms.join(" OR ");
-}
-
-function contentMatchesTerms(terms: string[]) {
-  return terms.length
-    ? sql`${UserMemoryTable.content} @@ websearch_to_tsquery('simple', ${lexicalTsQuery(terms)})`
-    : undefined;
-}
-
-function contentRank(terms: string[]) {
-  return sql`ts_rank(to_tsvector('simple', ${UserMemoryTable.content}), websearch_to_tsquery('simple', ${lexicalTsQuery(terms)}))`;
-}
 
 function exactScope(
   table: { scopeType: any; scopeId: any },
@@ -113,27 +74,6 @@ function claimNode(
     confidence: row.confidence / 100,
     evidenceCount,
   };
-}
-
-async function vectorAvailable() {
-  try {
-    const result = await db.execute<{ available: boolean }>(
-      sql`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS available`,
-    );
-    return Boolean(result.rows[0]?.available);
-  } catch {
-    return false;
-  }
-}
-
-async function semanticSearchAvailable() {
-  if (getMemoryRecallMode() === "keyword") return false;
-  try {
-    const configured = await customModelProvider.getEmbeddingModel();
-    return Boolean(configured) && (await vectorAvailable());
-  } catch {
-    return false;
-  }
 }
 
 async function nodesByIds(
@@ -276,7 +216,6 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
     return {
       nodes,
       edges: edges.map(toEdge),
-      degradedSemanticSearch: !(await semanticSearchAvailable()),
     };
   },
   async neighbors(userId, nodeId, depth, scope = GLOBAL_SCOPE) {
@@ -314,7 +253,6 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
     return {
       nodes: await nodesByIds(userId, scope, [...visited]),
       edges: [...edgeMap.values()].map(toEdge),
-      degradedSemanticSearch: !(await semanticSearchAvailable()),
     };
   },
   async conflicts(userId, scope = GLOBAL_SCOPE) {
@@ -580,6 +518,8 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
   },
   async hybridRecall(userId, query, limit = 8, scope = GLOBAL_SCOPE) {
     const terms = lexicalTerms(query);
+    const matches = await contentMatches(terms);
+    const rank = await contentRank(terms);
     const claims = await db
       .select()
       .from(UserMemoryTable)
@@ -589,52 +529,17 @@ export const pgMemoryGraphRepository: MemoryGraphAdapter & {
           exactScope(UserMemoryTable, scope),
           eq(UserMemoryTable.status, "active"),
           isNull(UserMemoryTable.deletedAt),
-          contentMatchesTerms(terms),
+          matches,
         ),
       )
       .orderBy(
-        ...(terms.length ? [sql`${contentRank(terms)} DESC`] : []),
+        ...(rank ? [sql`${rank} DESC`] : []),
         desc(UserMemoryTable.confidence),
         desc(UserMemoryTable.updatedAt),
       )
       .limit(limit);
-    let semanticIds: string[] = [];
-    if (getMemoryRecallMode() !== "keyword") {
-      try {
-        const configured = await customModelProvider.getEmbeddingModel();
-        if (configured && (await vectorAvailable())) {
-          const result = await embed({ model: configured.model, value: query });
-          const vector = `[${result.embedding.join(",")}]`;
-          const semantic = await db.execute<{ node_id: string }>(
-            sql`SELECT node_id FROM memory_embedding WHERE user_id = ${userId} AND scope_type = ${scope.scopeType} AND scope_id IS NOT DISTINCT FROM ${scope.scopeId} AND model = ${configured.modelId} AND vector_value IS NOT NULL ORDER BY vector_value <=> ${vector}::vector LIMIT ${limit}`,
-          );
-          semanticIds = semantic.rows.map((row) => row.node_id);
-        }
-      } catch {
-        // Semantic retrieval is optional; lexical and graph traversal remain live.
-      }
-    }
-    const semanticClaims = semanticIds.length
-      ? await db
-          .select()
-          .from(UserMemoryTable)
-          .where(
-            and(
-              eq(UserMemoryTable.userId, userId),
-              exactScope(UserMemoryTable, scope),
-              eq(UserMemoryTable.status, "active"),
-              inArray(UserMemoryTable.id, semanticIds),
-            ),
-          )
-      : [];
-    const mergedClaims = [
-      ...claims,
-      ...semanticClaims.filter(
-        (candidate) => !claims.some((claim) => claim.id === candidate.id),
-      ),
-    ].slice(0, limit);
-    const seeds = mergedClaims.length
-      ? mergedClaims
+    const seeds = claims.length
+      ? claims
       : await db
           .select()
           .from(UserMemoryTable)

@@ -1,10 +1,6 @@
+import { createHash } from "node:crypto";
 import { WorkspaceUpdateSchema } from "app-types/workspace";
 import { getSession } from "auth/server";
-import { workspaceRepository } from "lib/db/repository";
-import { isV2FeatureEnabled } from "lib/feature-flags";
-import { workspaceService } from "lib/workspace/server";
-import { z } from "zod";
-import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
@@ -12,7 +8,11 @@ import {
   WorkspaceDeletionTombstoneTable,
   WorkspaceTable,
 } from "lib/db/pg/schema.pg";
+import { workspaceRepository } from "lib/db/repository";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 import { generateUUID } from "lib/utils";
+import { workspaceService } from "lib/workspace/server";
+import { z } from "zod";
 
 function unavailable() {
   return Response.json({ error: "Not found" }, { status: 404 });
@@ -145,9 +145,6 @@ export async function DELETE(
       );
       await tx.execute(
         sql`DELETE FROM memory_evidence WHERE ${scopedToWorkspaceOrTask}`,
-      );
-      await tx.execute(
-        sql`DELETE FROM memory_embedding WHERE ${scopedToWorkspaceOrTask}`,
       );
       await tx.execute(
         sql`DELETE FROM memory_topic WHERE ${scopedToWorkspaceOrTask}`,

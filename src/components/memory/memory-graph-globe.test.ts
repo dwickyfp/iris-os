@@ -61,7 +61,6 @@ const graph: MemoryGraphView = {
       status: "active",
     },
   ],
-  degradedSemanticSearch: false,
 };
 
 describe("memory graph globe", () => {
@@ -112,7 +111,6 @@ describe("memory graph globe", () => {
     const empty = buildMemoryGraphModel({
       nodes: [],
       edges: [],
-      degradedSemanticSearch: false,
     });
     liftLayoutToSphere(empty);
     projectMemoryGlobe(empty, palette);
@@ -121,7 +119,6 @@ describe("memory graph globe", () => {
     const single = buildMemoryGraphModel({
       nodes: [memoryNode("only", "claim")],
       edges: [],
-      degradedSemanticSearch: false,
     });
     liftLayoutToSphere(single);
     projectMemoryGlobe(single, palette);

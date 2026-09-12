@@ -4,7 +4,7 @@ import { TEST_USERS } from "../constants/test-users";
 test.describe("System model engines", () => {
   test.use({ storageState: TEST_USERS.admin.authFile });
 
-  test("lists every engine and its effective assignment status", async ({
+  test("lists every configurable engine and its effective assignment status", async ({
     page,
   }) => {
     const response = await page.request.get(
@@ -16,25 +16,18 @@ test.describe("System model engines", () => {
       "memory-curator",
       "automation-runner",
       "delegation-runner",
-      "context-summary",
-      "thread-title",
-      "memory-embedding",
     ]);
 
     await page.goto("/admin/models");
-    await page.getByRole("tab", { name: "System Engines" }).click();
     await expect(
-      page.getByRole("heading", { name: "Background Agents" }),
+      page.getByRole("heading", { name: "System Engines" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Memory Curator" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Context Summary" }),
-    ).toBeVisible();
-    await expect(
       page.getByRole("heading", { name: "Memory Embedding" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 });
 

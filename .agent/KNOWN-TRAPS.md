@@ -68,3 +68,13 @@ design.
   keep assignment resolution fallback limited to enabled compatible models.
 - **Evidence:** Migration, backfill, production build, and admin Playwright
   checks passed on 2026-08-14.
+
+## Biome formatter breaks multi-line `typeof import(...)` type calls
+
+Biome's formatter (default `trailingCommas: all`) rewrites a multi-line
+`type X = typeof import("mod")["member"];` into a trailing comma inside the
+type-level import call — `typeof import("mod",)["member"]`. esbuild (vitest)
+and `tsc` reject that syntax (TS1005), so a repo-wide `biome check --write` /
+`pnpm format` silently breaks any file using this pattern
+(e.g. `tests/integration/db/memory-recall.test.ts`). Do not run repo-wide
+biome writes; if forced, re-check `typeof import(` occurrences afterwards.

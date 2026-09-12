@@ -56,7 +56,6 @@ function graph(): MemoryGraphView {
       edge("edge-a", "claim-a", "topic-a"),
       edge("edge-b", "claim-b", "topic-b", "RELATED_TO"),
     ],
-    degradedSemanticSearch: false,
   };
 }
 
@@ -83,7 +82,6 @@ describe("memory graph model", () => {
     const model = buildMemoryGraphModel({
       nodes: [],
       edges: [],
-      degradedSemanticSearch: false,
     });
 
     expect(model.order).toBe(0);

@@ -1,99 +1,35 @@
 import "load-env";
-import { startRuntimeSystemSettingsRefresh } from "lib/system-settings/runtime";
-import PgBoss from "pg-boss";
-import { embed, generateObject } from "ai";
-import { z } from "zod";
 import type { MemoryScope } from "app-types/memory";
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import {
+  MEMORY_CONSOLIDATE_QUEUE,
+  MEMORY_REVIEW_QUEUE,
+  MEMORY_SWEEP_QUEUE,
+  type MemoryConsolidationJob,
+  type MemoryReviewJob,
+} from "lib/ai/memory/queue";
+import { runMemoryReviewAgent } from "lib/ai/memory/review-agent";
+import { getMemoryCuratorMode } from "lib/ai/memory/reviewer";
+import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
 import {
   customModelProvider,
   getCuratorModelConfiguration,
 } from "lib/ai/models";
-import { memoryContentHash } from "lib/ai/memory/curator";
-import { runMemoryReviewAgent } from "lib/ai/memory/review-agent";
-import {
-  getMemoryCuratorMode,
-  getMemoryRecallMode,
-} from "lib/ai/memory/reviewer";
-import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
-import {
-  isSafeMemoryContent,
-  sanitizeMemoryContent,
-} from "lib/ai/memory/guardrails";
-import {
-  MEMORY_CURATE_QUEUE,
-  MEMORY_CONSOLIDATE_QUEUE,
-  MEMORY_EXTRACT_QUEUE,
-  MEMORY_REEMBED_QUEUE,
-  MEMORY_REVIEW_QUEUE,
-  MEMORY_SWEEP_QUEUE,
-  type LegacyMemoryReviewJob,
-  type MemoryConsolidationJob,
-  type MemoryReviewJob,
-} from "lib/ai/memory/queue";
 import { pgDb } from "lib/db/pg/db.pg";
-import {
-  MemoryCuratorRunTable,
-  MemoryEmbeddingTable,
-  UserMemoryTable,
-} from "lib/db/pg/schema.pg";
+import { MemoryCuratorRunTable, UserMemoryTable } from "lib/db/pg/schema.pg";
 import {
   chatRepository,
   memoryGraphRepository,
   memoryReviewRepository,
 } from "lib/db/repository";
-import { generateUUID } from "lib/utils";
+import { getStartedPgBoss } from "lib/jobs/pg-boss";
 import { getLearningSettings } from "lib/learning/settings";
-import { isV2FeatureEnabled } from "lib/feature-flags";
-
-const CandidateSchema = z.object({
-  kind: z.enum([
-    "identity",
-    "preference",
-    "semantic",
-    "episodic",
-    "decision",
-    "procedure",
-    "operational",
-    "relationship",
-    "goal",
-  ]),
-  content: z.string().min(1).max(2_000),
-  confidence: z.number().min(0).max(1),
-});
-const ReviewSchema = z.object({ candidates: z.array(CandidateSchema).max(5) });
-type Candidate = z.infer<typeof CandidateSchema>;
-type CurateJob = {
-  id: string;
-  userId: string;
-  threadId: string;
-  workspaceId?: string;
-  messageId?: string;
-  candidate: Candidate;
-};
-
-async function isMemoryLearningAllowed(
-  userId: string,
-  scopeType: MemoryScope["scopeType"],
-) {
-  if (!isV2FeatureEnabled("learning")) return true;
-  const settings = await getLearningSettings(userId);
-  return (
-    settings.enabled &&
-    settings.allowedCategories.includes("memory") &&
-    settings.allowedScopes.includes(scopeType)
-  );
-}
+import { startRuntimeSystemSettingsRefresh } from "lib/system-settings/runtime";
+import { generateUUID } from "lib/utils";
 
 async function startRun(
   userId: string,
-  jobType:
-    | "extract"
-    | "curate"
-    | "sweep"
-    | "reembed"
-    | "review"
-    | "consolidate",
+  jobType: "extract" | "curate" | "sweep" | "review" | "consolidate",
   scope: MemoryScope = {
     scopeType: "global",
     scopeId: null,
@@ -121,7 +57,8 @@ async function startRun(
     .where(eq(MemoryCuratorRunTable.jobKey, jobKey))
     .limit(1);
   if (!existing) throw new Error("Unable to resume memory curator run");
-  if (existing.status === "completed") return { id: existing.id, completed: true };
+  if (existing.status === "completed")
+    return { id: existing.id, completed: true };
   await pgDb
     .update(MemoryCuratorRunTable)
     .set({ status: "running", error: null, completedAt: null })
@@ -152,92 +89,18 @@ async function completeRun(
     .where(eq(MemoryCuratorRunTable.id, id));
 }
 
-async function extract(job: LegacyMemoryReviewJob, boss: PgBoss) {
-  const { id: runId } = await startRun(job.userId, "extract");
-  try {
-    const scopeType = job.workspaceId ? "workspace" : "global";
-    if (!(await isMemoryLearningAllowed(job.userId, scopeType))) {
-      await completeRun(runId, { skippedByPolicy: 1 });
-      return;
-    }
-    const { object } = await generateObject({
-      model: await customModelProvider.getCuratorModel(),
-      schema: ReviewSchema,
-      instructions:
-        "Legacy queue drain only. Extract durable explicit atomic facts stated by the user. Never save questions, hypotheticals, quoted content, third-party facts, temporary state, sensitive data, or uncertain implications. Return no candidate when uncertain.",
-      prompt: `User message:\n${job.userText}\n\nAssistant response (context only):\n${job.assistantText}`,
-    });
-    let candidates = object.candidates;
-    candidates = candidates
-      .map((candidate) => ({
-        ...candidate,
-        content: sanitizeMemoryContent(candidate.content),
-      }))
-      .filter((candidate) => isSafeMemoryContent(candidate.content));
-    for (const candidate of candidates) {
-      const curateJob: CurateJob = {
-        id: `${job.id}:${candidate.content}`,
-        userId: job.userId,
-        threadId: job.threadId,
-        workspaceId: job.workspaceId,
-        messageId: job.userMessageId,
-        candidate,
-      };
-      await boss.send(MEMORY_CURATE_QUEUE, curateJob, {
-        singletonKey: curateJob.id,
-        retryLimit: 5,
-        retryDelay: 30,
-        expireInHours: 23,
-      });
-    }
-    await completeRun(runId, { extracted: candidates.length });
-  } catch (error) {
-    await completeRun(runId, {}, error);
-    throw error;
-  }
-}
-
-async function curate(job: CurateJob) {
-  const scope = await resolveOwnedMemoryScope(job.userId, {
-    scopeType: job.workspaceId ? "workspace" : "global",
-    scopeId: job.workspaceId,
-  });
-  const { id: runId } = await startRun(job.userId, "curate", scope);
-  try {
-    if (!(await isMemoryLearningAllowed(job.userId, scope.scopeType))) {
-      await completeRun(runId, { skippedByPolicy: 1 });
-      return;
-    }
-    const result = await memoryGraphRepository.curateClaim({
-      ...job.candidate,
-      userId: job.userId,
-      provenance: "background_review",
-      threadId: job.threadId,
-      messageId: job.messageId,
-      scope,
-    });
-    await embedNode(job.userId, result.memoryId, job.candidate.content, scope);
-    await memoryGraphRepository.sweep(job.userId, scope);
-    await completeRun(runId, { [result.action]: 1 });
-  } catch (error) {
-    await completeRun(runId, {}, error);
-    throw error;
-  }
-}
-
 function messageText(message: { parts: unknown }) {
   if (!Array.isArray(message.parts)) return "";
   return message.parts
-    .filter(
-      (part): part is { type: string; text: string } =>
-        Boolean(
-          part &&
-            typeof part === "object" &&
-            "type" in part &&
-            part.type === "text" &&
-            "text" in part &&
-            typeof part.text === "string",
-        ),
+    .filter((part): part is { type: string; text: string } =>
+      Boolean(
+        part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string",
+      ),
     )
     .map((part) => part.text)
     .join(" ")
@@ -386,21 +249,6 @@ async function review(
       },
     });
     if (memoryIds.length) {
-      const memories = await pgDb
-        .select()
-        .from(UserMemoryTable)
-        .where(
-          and(
-            eq(UserMemoryTable.userId, job.userId),
-            inArray(UserMemoryTable.id, memoryIds),
-            eq(UserMemoryTable.status, "active"),
-          ),
-        );
-      for (const memory of memories)
-        await embedNode(job.userId, memory.id, memory.content, {
-          scopeType: memory.scopeType,
-          scopeId: memory.scopeId,
-        });
       for (const scope of allowedScopes)
         await memoryGraphRepository.sweep(job.userId, scope);
     }
@@ -411,12 +259,14 @@ async function review(
       result.proposal,
     );
   } catch (error) {
-    if (await pgDb
-      .select({ status: MemoryCuratorRunTable.status })
-      .from(MemoryCuratorRunTable)
-      .where(eq(MemoryCuratorRunTable.id, runId))
-      .limit(1)
-      .then(([run]) => commitSucceeded && run?.status === "completed")) {
+    if (
+      await pgDb
+        .select({ status: MemoryCuratorRunTable.status })
+        .from(MemoryCuratorRunTable)
+        .where(eq(MemoryCuratorRunTable.id, runId))
+        .limit(1)
+        .then(([run]) => commitSucceeded && run?.status === "completed")
+    ) {
       console.warn(
         `Memory review agent ended after a committed batch: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -481,7 +331,10 @@ async function consolidate(job: MemoryConsolidationJob) {
         assistantMessageId: assistant.id,
         workspaceId: thread.workspaceId ?? undefined,
         taskId: thread.taskId ?? undefined,
-        agentId: scope.scopeType === "agent" ? scope.scopeId ?? undefined : undefined,
+        agentId:
+          scope.scopeType === "agent"
+            ? (scope.scopeId ?? undefined)
+            : undefined,
       },
       {
         jobType: "consolidate",
@@ -493,88 +346,6 @@ async function consolidate(job: MemoryConsolidationJob) {
     );
   }
   await memoryGraphRepository.sweep(job.userId, scope);
-}
-
-async function embedNode(
-  userId: string,
-  nodeId: string,
-  content: string,
-  scope: MemoryScope,
-) {
-  try {
-    if (getMemoryRecallMode() === "keyword") return false;
-    const configured = await customModelProvider.getEmbeddingModel();
-    if (!configured) return false;
-    const result = await embed({ model: configured.model, value: content });
-    const dimensions = result.embedding.length;
-    const [row] = await pgDb
-      .insert(MemoryEmbeddingTable)
-      .values({
-        id: generateUUID(),
-        userId,
-        ...scope,
-        nodeId,
-        nodeType: "claim",
-        model: configured.modelId,
-        dimensions,
-        values: result.embedding,
-        contentHash: memoryContentHash(content),
-      })
-      .onConflictDoUpdate({
-        target: [
-          MemoryEmbeddingTable.userId,
-          MemoryEmbeddingTable.scopeType,
-          MemoryEmbeddingTable.scopeId,
-          MemoryEmbeddingTable.nodeId,
-          MemoryEmbeddingTable.model,
-        ],
-        set: {
-          dimensions,
-          values: result.embedding,
-          contentHash: memoryContentHash(content),
-          updatedAt: new Date(),
-        },
-      })
-      .returning({ id: MemoryEmbeddingTable.id });
-    try {
-      const vector = `[${result.embedding.join(",")}]`;
-      await pgDb.execute(
-        sql`UPDATE memory_embedding SET vector_value = ${vector}::vector WHERE id = ${row.id} AND user_id = ${userId}`,
-      );
-    } catch {
-      // JSON remains available when the vector extension is unavailable.
-    }
-    return true;
-  } catch (error) {
-    console.warn(
-      `Memory embedding failed; lexical retrieval remains active: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return false;
-  }
-}
-
-async function reembedAll() {
-  if (getMemoryRecallMode() === "keyword") return;
-  const claims = await pgDb
-    .select({
-      id: UserMemoryTable.id,
-      userId: UserMemoryTable.userId,
-      content: UserMemoryTable.content,
-      scopeType: UserMemoryTable.scopeType,
-      scopeId: UserMemoryTable.scopeId,
-    })
-    .from(UserMemoryTable)
-    .where(
-      and(
-        eq(UserMemoryTable.status, "active"),
-        isNull(UserMemoryTable.deletedAt),
-      ),
-    );
-  for (const claim of claims)
-    await embedNode(claim.userId, claim.id, claim.content, {
-      scopeType: claim.scopeType,
-      scopeId: claim.scopeId,
-    });
 }
 
 async function sweepAll() {
@@ -600,15 +371,12 @@ async function sweepAll() {
 await startRuntimeSystemSettingsRefresh();
 if (!process.env.POSTGRES_URL)
   throw new Error("POSTGRES_URL is required for the memory worker");
-const boss = new PgBoss({ connectionString: process.env.POSTGRES_URL });
-await boss.start();
+const boss = await getStartedPgBoss();
+if (!boss) throw new Error("POSTGRES_URL is required for the memory worker");
 for (const queue of [
-  MEMORY_EXTRACT_QUEUE,
-  MEMORY_CURATE_QUEUE,
   MEMORY_CONSOLIDATE_QUEUE,
   MEMORY_REVIEW_QUEUE,
   MEMORY_SWEEP_QUEUE,
-  MEMORY_REEMBED_QUEUE,
 ])
   await boss.createQueue(queue);
 await boss.schedule(
@@ -617,18 +385,11 @@ await boss.schedule(
   { global: true },
   { tz: "UTC" },
 );
-await boss.work<LegacyMemoryReviewJob>(
-  MEMORY_EXTRACT_QUEUE,
-  { batchSize: 2 },
-  async (jobs) => {
-    for (const job of jobs) await extract(job.data, boss);
-  },
-);
 await boss.work<MemoryReviewJob>(
   MEMORY_REVIEW_QUEUE,
   { batchSize: 2 },
   async (jobs) => {
-    for (const job of jobs) await review(job.data);
+    await Promise.all(jobs.map((job) => review(job.data)));
   },
 );
 await boss.work<MemoryConsolidationJob>(
@@ -638,15 +399,7 @@ await boss.work<MemoryConsolidationJob>(
     for (const job of jobs) await consolidate(job.data);
   },
 );
-await boss.work<CurateJob>(
-  MEMORY_CURATE_QUEUE,
-  { batchSize: 4 },
-  async (jobs) => {
-    for (const job of jobs) await curate(job.data);
-  },
-);
 await boss.work(MEMORY_SWEEP_QUEUE, async () => sweepAll());
-await boss.work(MEMORY_REEMBED_QUEUE, async () => reembedAll());
 console.info(
-  "Memory graph worker started (agentic review, legacy drain, sweep, reembed)",
+  "Memory graph worker started (agentic review, consolidate, sweep)",
 );

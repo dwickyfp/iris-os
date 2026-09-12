@@ -1,15 +1,14 @@
 import type { SystemSettingKey } from "app-types/system-settings";
 import { requireAdminActor } from "auth/permissions";
-import { SYSTEM_SETTING_DEFINITIONS } from "lib/system-settings/definitions";
-import { systemSettingsService } from "lib/system-settings/server";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ModelProviderTable } from "lib/db/pg/schema.pg";
+import { SYSTEM_SETTING_DEFINITIONS } from "lib/system-settings/definitions";
+import { systemSettingsService } from "lib/system-settings/server";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
 const SELECT_OPTIONS: Partial<Record<SystemSettingKey, string[]>> = {
   "memory.curatorMode": ["off", "shadow", "write"],
-  "memory.recallMode": ["keyword", "hybrid"],
 };
 
 const GROUP_LABELS: Record<string, string> = {

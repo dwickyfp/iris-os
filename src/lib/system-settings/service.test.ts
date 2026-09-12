@@ -15,9 +15,9 @@ const { createSystemSettingsService, SystemSettingRevisionConflictError } =
 
 function stored(overrides: Record<string, unknown> = {}) {
   return {
-    key: "memory.recallMode" as const,
+    key: "memory.curatorMode" as const,
     valueKind: "plain" as const,
-    value: "hybrid" as const,
+    value: "write" as const,
     encryptedValue: null,
     encryptionKeyId: null,
     revision: 2,
@@ -60,8 +60,8 @@ describe("system settings service", () => {
     const settings = await createSystemSettingsService(repo).list();
 
     expect(
-      settings.find(({ key }) => key === "memory.recallMode"),
-    ).toMatchObject({ value: "hybrid", configured: true, revision: 2 });
+      settings.find(({ key }) => key === "memory.curatorMode"),
+    ).toMatchObject({ value: "write", configured: true, revision: 2 });
     expect(settings.find(({ key }) => key === "exa.apiKey")).toMatchObject({
       value: null,
       configured: true,
@@ -103,7 +103,9 @@ describe("system settings service", () => {
     const service = createSystemSettingsService(repo);
 
     await expect(service.getSecret("exa.apiKey")).resolves.toBeNull();
-    await expect(service.getPlain("auth.emailSignInEnabled")).resolves.toBe(true);
+    await expect(service.getPlain("auth.emailSignInEnabled")).resolves.toBe(
+      true,
+    );
     vi.stubEnv("EXA_API_KEY", "rotated-environment-secret");
     await expect(service.getSecret("exa.apiKey")).resolves.toBeNull();
     vi.unstubAllEnvs();
@@ -148,8 +150,8 @@ describe("system settings service", () => {
       createSystemSettingsService(repo).mutate(
         {
           operation: "set",
-          key: "memory.recallMode",
-          value: "keyword",
+          key: "memory.curatorMode",
+          value: "shadow",
         },
         "admin-1",
         1,
@@ -162,13 +164,13 @@ describe("system settings service", () => {
     repo.mutate.mockResolvedValue({ setting: null, revision: 3 });
     const mutation: SystemSettingMutation = {
       operation: "clear",
-      key: "memory.recallMode",
+      key: "memory.curatorMode",
     };
     await expect(
       createSystemSettingsService(repo).mutate(mutation, "admin-1", 2),
     ).resolves.toMatchObject({
       configured: false,
-      value: "keyword",
+      value: "shadow",
       revision: 3,
     });
   });
