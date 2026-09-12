@@ -1,6 +1,12 @@
 "use client";
-import { McpToolCustomization, MCPToolInfo } from "app-types/mcp";
+import { MCPToolInfo, McpToolCustomization } from "app-types/mcp";
+import { cn, fetcher } from "lib/utils";
+import { Info, Loader, Pencil, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { PropsWithChildren, ReactNode, useState } from "react";
+import useSWR from "swr";
+import { safe } from "ts-safe";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,18 +16,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "ui/dialog";
-import { Separator } from "ui/separator";
 import JsonView from "ui/json-view";
-import { Textarea } from "ui/textarea";
-import { Button } from "ui/button";
-import { Pencil, Trash2, Loader, Info } from "lucide-react";
-import { safe } from "ts-safe";
+import { Separator } from "ui/separator";
 import { handleErrorWithToast } from "ui/shared-toast";
-import useSWR from "swr";
-import { cn, fetcher } from "lib/utils";
-import { useTranslations } from "next-intl";
 import { Skeleton } from "ui/skeleton";
-import { Tooltip, TooltipTrigger, TooltipContent } from "ui/tooltip";
+import { Textarea } from "ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
 import { z } from "zod";
 

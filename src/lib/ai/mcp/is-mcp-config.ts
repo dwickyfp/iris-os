@@ -1,6 +1,6 @@
 import type {
-  MCPServerConfig,
   MCPRemoteConfig,
+  MCPServerConfig,
   MCPStdioConfig,
 } from "app-types/mcp";
 

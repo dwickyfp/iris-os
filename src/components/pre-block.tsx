@@ -1,22 +1,22 @@
 "use client";
 
+import { useCopy } from "@/hooks/use-copy";
+import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import { cn } from "lib/utils";
+import { CheckIcon, CopyIcon } from "lucide-react";
+import { useTheme } from "next-themes";
+import dynamic from "next/dynamic";
 import type { JSX } from "react";
-import {
-  bundledLanguages,
-  codeToHast,
-  type BundledLanguage,
-} from "shiki/bundle/web";
 import { Fragment, useLayoutEffect, useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
-import { toJsxRuntime } from "hast-util-to-jsx-runtime";
+import {
+  type BundledLanguage,
+  bundledLanguages,
+  codeToHast,
+} from "shiki/bundle/web";
 import { safe } from "ts-safe";
-import { cn } from "lib/utils";
-import { useTheme } from "next-themes";
 import { Button } from "ui/button";
-import { CheckIcon, CopyIcon } from "lucide-react";
 import JsonView from "ui/json-view";
-import { useCopy } from "@/hooks/use-copy";
-import dynamic from "next/dynamic";
 
 // Dynamically import MermaidDiagram component
 const MermaidDiagram = dynamic(

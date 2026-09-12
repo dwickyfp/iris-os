@@ -2,10 +2,10 @@ import {
   ChatExportCommentWithUser,
   ChatExportWithUser,
 } from "app-types/chat-export";
-import { PreviewMessage } from "../message";
+import { formatAppDate } from "lib/date-time";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { formatAppDate } from "lib/date-time";
+import { PreviewMessage } from "../message";
 
 import Particles from "ui/particles";
 import Comments from "./comments";

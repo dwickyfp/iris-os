@@ -62,10 +62,10 @@ export async function PATCH(
 
   try {
     const updated = await systemSettingsService.mutate(
-        mutation.data,
-        actor.id,
-        parsed.data.expectedRevision ?? parsed.data.revision ?? 0,
-      );
+      mutation.data,
+      actor.id,
+      parsed.data.expectedRevision ?? parsed.data.revision ?? 0,
+    );
     if (!updated.restartRequired) {
       const { refreshRuntimeSystemSettings } = await import(
         "lib/system-settings/runtime"

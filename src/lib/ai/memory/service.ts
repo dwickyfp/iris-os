@@ -1,11 +1,11 @@
 import "server-only";
 
+import type { UIMessage } from "ai";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { ChatMessageSearchTable, ChatThreadTable } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
 import { buildRecallScopes } from "./scope";
-import type { UIMessage } from "ai";
 
 const MAX_MEMORY_CHARS = 3_200;
 

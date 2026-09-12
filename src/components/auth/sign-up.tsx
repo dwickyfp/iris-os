@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -9,14 +8,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { cn } from "lib/utils";
-import { useTranslations } from "next-intl";
 import { SocialAuthenticationProvider } from "app-types/authentication";
-import SocialProviders from "./social-providers";
-import { Mail } from "lucide-react";
 import { authClient } from "auth/client";
-import { toast } from "sonner";
+import { cn } from "lib/utils";
+import { Mail } from "lucide-react";
+import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { startTransition } from "react";
+import { toast } from "sonner";
+import SocialProviders from "./social-providers";
 
 export default function SignUpPage({
   emailAndPasswordEnabled,

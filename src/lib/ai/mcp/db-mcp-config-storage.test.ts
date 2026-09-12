@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createDbBasedMCPConfigsStorage } from "./db-mcp-config-storage";
-import type { MCPClientsManager } from "./create-mcp-clients-manager";
 import type { MCPServerConfig } from "app-types/mcp";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MCPClientsManager } from "./create-mcp-clients-manager";
+import { createDbBasedMCPConfigsStorage } from "./db-mcp-config-storage";
 
 // Mock dependencies
 vi.mock("lib/db/repository", () => ({

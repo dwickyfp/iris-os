@@ -1,11 +1,11 @@
 import "server-only";
 
-import { getSession } from "lib/auth/server";
-import { AdminUsersQuery, AdminUsersPaginated } from "app-types/admin";
+import { AdminUsersPaginated, AdminUsersQuery } from "app-types/admin";
 import {
   requireAdminPermission,
   requireUserListPermission,
 } from "lib/auth/permissions";
+import { getSession } from "lib/auth/server";
 import pgAdminRepository from "lib/db/pg/repositories/admin-respository.pg";
 
 export const ADMIN_USER_LIST_LIMIT = 10;

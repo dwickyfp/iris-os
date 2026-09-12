@@ -12,20 +12,20 @@ import {
 
 import { NodeRuntimeHistory } from "lib/ai/workflow/workflow.interface";
 
-import { Badge } from "ui/badge";
+import { useCopy } from "@/hooks/use-copy";
+import { formatAppDateTime } from "lib/date-time";
+import { cn, errorToString } from "lib/utils";
 import {
   CheckIcon,
   CopyIcon,
   Loader2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
-import JsonView from "ui/json-view";
-import { useCopy } from "@/hooks/use-copy";
-import { Button } from "ui/button";
-import { cn, errorToString } from "lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { useTranslations } from "next-intl";
-import { formatAppDateTime } from "lib/date-time";
+import { Alert, AlertDescription, AlertTitle } from "ui/alert";
+import { Badge } from "ui/badge";
+import { Button } from "ui/button";
+import JsonView from "ui/json-view";
 
 export function NodeResultPopup({
   history,

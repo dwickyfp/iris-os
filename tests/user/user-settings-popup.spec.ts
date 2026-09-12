@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { ensureSidebarOpen } from "../helpers/sidebar-helper";
 
 // Use regular user auth state for user settings tests

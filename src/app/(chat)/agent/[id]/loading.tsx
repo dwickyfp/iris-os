@@ -1,5 +1,5 @@
-import { getTranslations } from "next-intl/server";
 import { EditShareableLoading } from "@/components/edit-shareable-loading";
+import { getTranslations } from "next-intl/server";
 
 export default async function AgentLoading() {
   const t = await getTranslations();

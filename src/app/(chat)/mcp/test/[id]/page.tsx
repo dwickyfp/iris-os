@@ -1,9 +1,17 @@
 "use client";
 
+import { generateExampleToolSchemaAction } from "@/app/api/chat/actions";
 import {
   callMcpToolAction,
   selectMcpClientAction,
 } from "@/app/api/mcp/actions";
+import { appStore } from "@/app/store";
+import JsonView from "@/components/ui/json-view";
+import { useChatModels } from "@/hooks/queries/use-chat-models";
+import { useObjectState } from "@/hooks/use-object-state";
+import { ChatModel } from "app-types/chat";
+import { MCPToolInfo } from "app-types/mcp";
+import { isNull, isString, safeJSONParse } from "lib/utils";
 import {
   ArrowLeft,
   ChevronDown,
@@ -13,29 +21,21 @@ import {
   Search,
   WandSparkles,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import useSWR from "swr";
 import {
   PropsWithChildren,
+  useCallback,
   useEffect,
   useMemo,
   useState,
-  useCallback,
 } from "react";
-import { Input } from "ui/input";
-import { Separator } from "ui/separator";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "ui/resizable";
-import { Skeleton } from "ui/skeleton";
-import { Button } from "ui/button";
-import { Textarea } from "ui/textarea";
-import JsonView from "@/components/ui/json-view";
+import useSWR from "swr";
+import { safe } from "ts-safe";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
-import { safeJSONParse, isNull, isString } from "lib/utils";
+import { Badge } from "ui/badge";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogClose,
@@ -47,10 +47,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "ui/dialog";
-import { Badge } from "ui/badge";
-import { handleErrorWithToast } from "ui/shared-toast";
-import { generateExampleToolSchemaAction } from "@/app/api/chat/actions";
-import { appStore } from "@/app/store";
+import { Input } from "ui/input";
+import { Label } from "ui/label";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "ui/resizable";
 import {
   Select,
   SelectContent,
@@ -60,13 +63,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "ui/select";
-import { MCPToolInfo } from "app-types/mcp";
-import { Label } from "ui/label";
-import { safe } from "ts-safe";
-import { useObjectState } from "@/hooks/use-object-state";
-import { useTranslations } from "next-intl";
-import { useChatModels } from "@/hooks/queries/use-chat-models";
-import { ChatModel } from "app-types/chat";
+import { Separator } from "ui/separator";
+import { handleErrorWithToast } from "ui/shared-toast";
+import { Skeleton } from "ui/skeleton";
+import { Textarea } from "ui/textarea";
 
 // Type definitions
 type SchemaProperty = {

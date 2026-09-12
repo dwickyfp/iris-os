@@ -2,6 +2,8 @@
 
 import { appStore } from "@/app/store";
 import { useWorkspaces } from "@/hooks/queries/use-workspaces";
+import { Check, ChevronDown, PanelsTopLeft, Settings2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,8 +13,6 @@ import {
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "ui/sidebar";
-import { Check, ChevronDown, PanelsTopLeft, Settings2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 function ScopeAperture({ scoped }: { scoped: boolean }) {
   return (

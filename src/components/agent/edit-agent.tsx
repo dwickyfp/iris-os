@@ -1,24 +1,29 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { toast } from "sonner";
+import { ShareableActions, Visibility } from "@/components/shareable-actions";
 import { useMutateAgents } from "@/hooks/queries/use-agents";
+import { useBookmark } from "@/hooks/queries/use-bookmark";
 import { useMcpList } from "@/hooks/queries/use-mcp-list";
 import { useWorkflowToolList } from "@/hooks/queries/use-workflow-tool-list";
 import { useObjectState } from "@/hooks/use-object-state";
-import { useBookmark } from "@/hooks/queries/use-bookmark";
 import { Agent, AgentCreateSchema, AgentUpdateSchema } from "app-types/agent";
 import { ChatMention } from "app-types/chat";
 import { MCPServerInfo } from "app-types/mcp";
 import { WorkflowSummary } from "app-types/workflow";
+import {
+  RandomDataGeneratorExample,
+  WeatherExample,
+} from "lib/ai/agent/example";
 import { DefaultToolName } from "lib/ai/tools";
 import { BACKGROUND_COLORS } from "lib/const";
+import { notify } from "lib/notify";
 import { cn, fetcher, objectFlow } from "lib/utils";
-import { safe } from "ts-safe";
-import { handleErrorWithToast } from "ui/shared-toast";
 import { ChevronDownIcon, Loader, WandSparklesIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { safe } from "ts-safe";
 import { Button } from "ui/button";
 import {
   DropdownMenu,
@@ -28,20 +33,15 @@ import {
 } from "ui/dropdown-menu";
 import { Input } from "ui/input";
 import { Label } from "ui/label";
-import { Textarea } from "ui/textarea";
 import { ScrollArea } from "ui/scroll-area";
+import { handleErrorWithToast } from "ui/shared-toast";
 import { Skeleton } from "ui/skeleton";
 import { TextShimmer } from "ui/text-shimmer";
-import { ShareableActions, Visibility } from "@/components/shareable-actions";
-import { GenerateAgentDialog } from "./generate-agent-dialog";
+import { Textarea } from "ui/textarea";
 import { AgentIconPicker } from "./agent-icon-picker";
-import { AgentToolSelector } from "./agent-tool-selector";
 import { AgentSkillSelector } from "./agent-skill-selector";
-import {
-  RandomDataGeneratorExample,
-  WeatherExample,
-} from "lib/ai/agent/example";
-import { notify } from "lib/notify";
+import { AgentToolSelector } from "./agent-tool-selector";
+import { GenerateAgentDialog } from "./generate-agent-dialog";
 
 const defaultConfig = (): PartialBy<
   Omit<Agent, "createdAt" | "updatedAt" | "userId">,

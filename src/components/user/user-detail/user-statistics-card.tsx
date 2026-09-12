@@ -1,7 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from "ui/card";
-import { MessageCircle, Zap, TrendingUp, Cpu } from "lucide-react";
-import { useProfileTranslations } from "@/hooks/use-profile-translations";
 import { PieChart } from "@/components/tool-invocation/pie-chart";
+import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { Cpu, MessageCircle, TrendingUp, Zap } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "ui/card";
 
 import { ModelProviderIcon } from "ui/model-provider-icon";
 

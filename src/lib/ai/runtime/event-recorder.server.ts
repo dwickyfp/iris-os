@@ -1,10 +1,10 @@
 import "server-only";
 
-import { pgDb } from "lib/db/pg/db.pg";
-import logger from "logger";
-import { generateUUID } from "lib/utils";
 import { enqueueActivityEvent } from "lib/activity/queue";
 import { sanitizeActivityPayload } from "lib/activity/sanitize";
+import { pgDb } from "lib/db/pg/db.pg";
+import { generateUUID } from "lib/utils";
+import logger from "logger";
 import { EventRecorder } from "./event-recorder";
 
 export const eventRecorder = new EventRecorder({

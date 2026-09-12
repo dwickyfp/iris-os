@@ -1,6 +1,6 @@
+import type { ChatAttachment } from "app-types/chat";
 import { describe, expect, it, vi } from "vitest";
 import { buildCsvIngestionPreviewParts } from "./csv-ingest";
-import type { ChatAttachment } from "app-types/chat";
 
 const attachmentFactory = (
   overrides: Partial<ChatAttachment> = {},

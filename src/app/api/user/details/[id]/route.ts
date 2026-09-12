@@ -1,7 +1,7 @@
 import { getSession } from "auth/server";
-import { getUser } from "lib/user/server";
 import { canManageUser } from "lib/auth/permissions";
-import { NextResponse, NextRequest } from "next/server";
+import { getUser } from "lib/user/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   _request: NextRequest,

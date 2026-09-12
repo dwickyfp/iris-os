@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
 import { removeMcpClientAction } from "@/app/api/mcp/actions";
-import { pgMcpRepository } from "lib/db/pg/repositories/mcp-repository.pg";
 import { getSession } from "auth/server";
 import { canManageMCPServer } from "lib/auth/permissions";
+import { pgMcpRepository } from "lib/db/pg/repositories/mcp-repository.pg";
 import logger from "lib/logger";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function DELETE(
   _request: NextRequest,

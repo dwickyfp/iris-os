@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 describe("User Actions - Business Logic", () => {
   describe("User Update Flow Logic", () => {

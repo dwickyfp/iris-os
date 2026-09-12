@@ -56,31 +56,31 @@ import { MCPIcon } from "ui/mcp-icon";
 
 import { useTranslations } from "next-intl";
 
-import { Switch } from "ui/switch";
-import { useShallow } from "zustand/shallow";
 import { useMcpList } from "@/hooks/queries/use-mcp-list";
 import { useWorkflowToolList } from "@/hooks/queries/use-workflow-tool-list";
-import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
-import { WorkflowSummary } from "app-types/workflow";
-import { WorkflowGreeting } from "./workflow/workflow-greeting";
-import { AppDefaultToolkit } from "lib/ai/tools";
 import { ChatMention } from "app-types/chat";
+import { WorkflowSummary } from "app-types/workflow";
+import { AppDefaultToolkit } from "lib/ai/tools";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { CountAnimation } from "ui/count-animation";
+import { Switch } from "ui/switch";
+import { useShallow } from "zustand/shallow";
+import { WorkflowGreeting } from "./workflow/workflow-greeting";
 
-import { Separator } from "ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { AgentSummary } from "app-types/agent";
 import { authClient } from "auth/client";
+import { Separator } from "ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
-import { Alert, AlertDescription, AlertTitle } from "ui/alert";
-import { safe } from "ts-safe";
-import { mutate } from "swr";
-import { handleErrorWithToast } from "ui/shared-toast";
 import { useAgents } from "@/hooks/queries/use-agents";
-import { redriectMcpOauth } from "lib/ai/mcp/oauth-redirect";
-import { GeminiIcon } from "ui/gemini-icon";
 import { useChatModels } from "@/hooks/queries/use-chat-models";
+import { redriectMcpOauth } from "lib/ai/mcp/oauth-redirect";
+import { mutate } from "swr";
+import { safe } from "ts-safe";
+import { Alert, AlertDescription, AlertTitle } from "ui/alert";
+import { GeminiIcon } from "ui/gemini-icon";
 import { OpenAIIcon } from "ui/openai-icon";
+import { handleErrorWithToast } from "ui/shared-toast";
 
 interface ToolSelectDropdownProps {
   align?: "start" | "end" | "center";

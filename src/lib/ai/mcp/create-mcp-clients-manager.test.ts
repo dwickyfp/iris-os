@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { MCPServerConfig } from "app-types/mcp";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createMCPClientsManager,
   MCPClientsManager,
+  createMCPClientsManager,
 } from "./create-mcp-clients-manager";
 import type { MCPConfigStorage } from "./create-mcp-clients-manager";
-import type { MCPServerConfig } from "app-types/mcp";
 
 // Mock dependencies
 vi.mock("./create-mcp-client", () => ({

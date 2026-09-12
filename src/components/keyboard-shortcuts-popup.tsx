@@ -1,21 +1,21 @@
 "use client";
 
 import {
+  Shortcuts,
   getShortcutKeyList,
   isShortcutEvent,
-  Shortcuts,
 } from "lib/keyboard-shortcuts";
 
+import { appStore } from "@/app/store";
+import { useTranslations } from "next-intl";
+import { useEffect } from "react";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
 } from "ui/dialog";
-import { useTranslations } from "next-intl";
 import { useShallow } from "zustand/shallow";
-import { appStore } from "@/app/store";
-import { useEffect } from "react";
 
 export function KeyboardShortcutsPopup({}) {
   const [openShortcutsPopup, appStoreMutate] = appStore(

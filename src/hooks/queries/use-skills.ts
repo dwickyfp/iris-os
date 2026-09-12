@@ -1,7 +1,7 @@
 "use client";
 
-import { authClient } from "auth/client";
 import type { SkillSummary } from "app-types/skill";
+import { authClient } from "auth/client";
 import { fetcher } from "lib/utils";
 import useSWR, { type SWRConfiguration, useSWRConfig } from "swr";
 import { handleErrorWithToast } from "ui/shared-toast";

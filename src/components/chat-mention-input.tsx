@@ -13,24 +13,24 @@ import { MCPIcon } from "ui/mcp-icon";
 
 import { ChatMention } from "app-types/chat";
 
-import MentionInput from "./mention-input";
 import { useTranslations } from "next-intl";
 import { Popover, PopoverContent, PopoverTrigger } from "ui/popover";
+import MentionInput from "./mention-input";
 
 import { appStore } from "@/app/store";
-import { cn, toAny } from "lib/utils";
-import { useShallow } from "zustand/shallow";
-import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
-import { Editor } from "@tiptap/react";
-import { DefaultToolName } from "lib/ai/tools";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { DefaultToolIcon } from "./default-tool-icon";
-import equal from "lib/equal";
-import { EMOJI_DATA } from "lib/const";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { useRemoteAgents } from "@/hooks/queries/use-remote-agents";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Editor } from "@tiptap/react";
 import type { PublicRemoteAgent } from "app-types/remote-agent";
+import { DefaultToolName } from "lib/ai/tools";
+import { EMOJI_DATA } from "lib/const";
+import equal from "lib/equal";
 import { remoteAgentCapabilityRef } from "lib/remote-agent/capability";
+import { cn, toAny } from "lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { useShallow } from "zustand/shallow";
+import { DefaultToolIcon } from "./default-tool-icon";
 
 type MentionItemType = {
   id: string;

@@ -1,31 +1,31 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { formatInAppTimeZone } from "lib/date-time";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "ui/card";
-import { Label } from "ui/label";
-import { Input } from "ui/input";
-import { Badge } from "ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { User } from "lucide-react";
-import { toast } from "sonner";
-import Form from "next/form";
 import {
   updateUserDetailsAction,
   updateUserImageAction,
 } from "@/app/api/user/actions";
 import { UpdateUserActionState } from "@/app/api/user/validations";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { getUserAvatar } from "lib/user/utils";
-import { SubmitButton } from "./user-submit-button";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { formatInAppTimeZone } from "lib/date-time";
+import { getUserAvatar } from "lib/user/utils";
+import { User } from "lucide-react";
+import Form from "next/form";
+import { useActionState, useState } from "react";
+import { toast } from "sonner";
+import { Badge } from "ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "ui/card";
+import { Input } from "ui/input";
+import { Label } from "ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { UserAvatarUpload } from "./user-avatar-upload";
+import { SubmitButton } from "./user-submit-button";
 
 interface UserDetailFormCardProps {
   user: BasicUserWithLastLogin;

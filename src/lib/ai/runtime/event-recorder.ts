@@ -1,6 +1,6 @@
 import {
-  ActivityEventInputSchema,
   type ActivityEventInput,
+  ActivityEventInputSchema,
 } from "app-types/activity";
 import { IrisActivityEventTable } from "lib/db/pg/schema.pg";
 

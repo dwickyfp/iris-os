@@ -1,6 +1,6 @@
+import { DBNode } from "app-types/workflow";
 import { describe, expect, it } from "vitest";
 import { createGraphStore } from "./graph-store";
-import { DBNode } from "app-types/workflow";
 
 describe("workflow-store", () => {
   it("source", () => {

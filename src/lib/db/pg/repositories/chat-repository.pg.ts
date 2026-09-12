@@ -2,10 +2,10 @@ import { ChatMessage, ChatRepository, ChatThread } from "app-types/chat";
 
 import { pgDb as db } from "../db.pg";
 import {
+  ArchiveItemTable,
   ChatMessageTable,
   ChatThreadTable,
   UserTable,
-  ArchiveItemTable,
 } from "../schema.pg";
 
 import { and, desc, eq, gte, sql } from "drizzle-orm";

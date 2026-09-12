@@ -1,9 +1,9 @@
+import Workflow from "@/components/workflow/workflow";
+import { getSession } from "auth/server";
 import {
   convertDBEdgeToUIEdge,
   convertDBNodeToUINode,
 } from "lib/ai/workflow/shared.workflow";
-import Workflow from "@/components/workflow/workflow";
-import { getSession } from "auth/server";
 import { workflowRepository } from "lib/db/repository";
 import { notFound, redirect } from "next/navigation";
 

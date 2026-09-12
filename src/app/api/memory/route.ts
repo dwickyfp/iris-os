@@ -1,11 +1,11 @@
-import { getSession } from "auth/server";
-import { memoryGraphRepository, memoryRepository } from "lib/db/repository";
 import { MemoryScopeTypeSchema, UserMemoryInputSchema } from "app-types/memory";
-import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
+import { getSession } from "auth/server";
 import {
   isSafeMemoryContent,
   sanitizeMemoryContent,
 } from "lib/ai/memory/guardrails";
+import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
+import { memoryGraphRepository, memoryRepository } from "lib/db/repository";
 import { z } from "zod";
 
 export async function GET(request: Request) {

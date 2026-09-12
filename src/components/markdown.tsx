@@ -1,22 +1,22 @@
 "use client";
 
-import { memo, PropsWithChildren } from "react";
+import { isJson, isString, toAny } from "lib/utils";
+import { LinkIcon } from "lucide-react";
+import { PropsWithChildren, memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
-import { PreBlock } from "./pre-block";
-import { isJson, isString, toAny } from "lib/utils";
 import JsonView from "ui/json-view";
-import { LinkIcon } from "lucide-react";
 import {
   Table,
-  TableHeader,
   TableBody,
-  TableRow,
-  TableHead,
   TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "ui/table";
+import { PreBlock } from "./pre-block";
 
 const FadeIn = memo(({ children }: PropsWithChildren) => {
   return <span className="fade-in animate-in duration-1000">{children} </span>;

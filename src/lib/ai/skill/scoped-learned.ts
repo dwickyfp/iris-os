@@ -7,8 +7,8 @@ import {
   SkillRevisionTable,
   SkillTable,
 } from "lib/db/pg/schema.pg";
-import type { SkillManifestEntry } from "./types";
 import { rankScopedLearnedSkills } from "./scoped-ranking";
+import type { SkillManifestEntry } from "./types";
 
 export async function selectScopedLearnedSkillSummaries(input: {
   userId: string;

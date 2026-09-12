@@ -1,6 +1,6 @@
 import "load-env";
-import { z } from "zod";
 import { enqueueMemoryConsolidation } from "lib/ai/memory/queue";
+import { z } from "zod";
 
 function argument(name: string) {
   const index = process.argv.indexOf(name);

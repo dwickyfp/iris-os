@@ -1,13 +1,13 @@
-import { describe, it, expect } from "vitest";
 import { Edge } from "@xyflow/react";
+import { describe, expect, it } from "vitest";
 import {
-  validateSchema,
   allNodeValidate,
   inputNodeValidate,
-  outputNodeValidate,
   llmNodeValidate,
+  outputNodeValidate,
+  validateSchema,
 } from "./node-validate";
-import { UINode, NodeKind } from "./workflow.interface";
+import { NodeKind, UINode } from "./workflow.interface";
 
 describe("node-validate", () => {
   const createInputNodeData = (

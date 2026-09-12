@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+  VerificationEngine,
   capabilityResultVerifier,
   nonEmptyStructuredOutput,
   toolResultVerifier,
-  VerificationEngine,
 } from "./verification";
 
 describe("VerificationEngine", () => {

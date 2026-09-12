@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { groupBy, errorToString, objectFlow, parseEnvBoolean } from "./utils";
+import { errorToString, groupBy, objectFlow, parseEnvBoolean } from "./utils";
 
 describe("groupBy", () => {
   test("group by function key", () => {

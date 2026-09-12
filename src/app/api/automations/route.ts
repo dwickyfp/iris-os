@@ -1,11 +1,11 @@
-import { getSession } from "auth/server";
 import { AutomationCreateSchema } from "app-types/automation";
-import { isV2FeatureEnabled } from "lib/feature-flags";
-import { z } from "zod";
+import { getSession } from "auth/server";
 import {
   createManagedAutomation,
   listManagedAutomations,
 } from "lib/automation/management";
+import { isV2FeatureEnabled } from "lib/feature-flags";
+import { z } from "zod";
 
 export async function GET() {
   const session = await getSession();

@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "ui/button";
-import MentionInput from "../mention-input";
 import { TipTapMentionJsonContent } from "app-types/util";
 import { LoaderIcon, SendIcon } from "lucide-react";
+import { useState } from "react";
 import { useSWRConfig } from "swr";
+import { Button } from "ui/button";
+import MentionInput from "../mention-input";
 
 export default function CommentForm({
   exportId,

@@ -1,7 +1,7 @@
 import "server-only";
 
+import { type MemoryScopeType, MemoryScopeTypeSchema } from "app-types/memory";
 import { and, eq } from "drizzle-orm";
-import { MemoryScopeTypeSchema, type MemoryScopeType } from "app-types/memory";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentTable } from "lib/db/pg/schema.pg";
 import { taskRepository, workspaceRepository } from "lib/db/repository";

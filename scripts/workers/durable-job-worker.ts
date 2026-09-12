@@ -1,4 +1,5 @@
 import type { RunInbox } from "lib/jobs/contracts";
+import { productionCapabilityOrchestrationTarget } from "lib/jobs/orchestration-target.server";
 import {
   DURABLE_JOB_OUTBOX_QUEUE,
   DURABLE_JOB_QUEUE,
@@ -8,10 +9,9 @@ import type { DurableJobPgRepository } from "lib/jobs/repository.pg";
 import { pgDurableJobRepository } from "lib/jobs/repository.pg";
 import { serverRunInbox } from "lib/jobs/server";
 import {
-  DurableJobTargetRegistry,
   CAPABILITY_ORCHESTRATION_JOB_TYPE,
+  DurableJobTargetRegistry,
 } from "lib/jobs/targets";
-import { productionCapabilityOrchestrationTarget } from "lib/jobs/orchestration-target.server";
 import type PgBoss from "pg-boss";
 
 const LEASE_MS = 60_000;

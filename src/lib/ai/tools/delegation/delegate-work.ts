@@ -1,8 +1,8 @@
 import { jsonSchema, tool } from "ai";
-import { createDelegatedRun, DELEGATION_LIMITS } from "lib/delegation/service";
+import { DELEGATION_LIMITS, createDelegatedRun } from "lib/delegation/service";
 import {
-  delegationTargetId,
   type DelegationTarget,
+  delegationTargetId,
 } from "lib/delegation/targets";
 
 export const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";

@@ -1,20 +1,20 @@
 import { getSession } from "auth/server";
 import { and, eq } from "drizzle-orm";
-import { z } from "zod";
+import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
+  AutomationTable,
   LearningCandidateTable,
   LearningFeedbackTable,
   LearningSettingTable,
   LearningSuppressionTable,
   SkillRevisionTable,
   SkillTable,
-  AutomationTable,
 } from "lib/db/pg/schema.pg";
 import { memoryGraphRepository } from "lib/db/repository";
-import { generateUUID } from "lib/utils";
-import { resolveOwnedMemoryScope } from "lib/ai/memory/scope-server";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import { generateUUID } from "lib/utils";
+import { z } from "zod";
 
 const ReviewSchema = z.object({
   action: z.enum(["confirm", "edit", "ignore", "change_scope"]),

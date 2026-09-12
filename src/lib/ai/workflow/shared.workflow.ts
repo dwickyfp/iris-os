@@ -1,19 +1,19 @@
+import { Edge } from "@xyflow/react";
+import { UIMessage } from "ai";
 import {
   ObjectJsonSchema7,
   TipTapMentionJsonContent,
   TipTapMentionJsonContentPart,
 } from "app-types/util";
+import { DBEdge, DBNode } from "app-types/workflow";
 import { JSONSchema7 } from "json-schema";
+import { exclude, isString } from "lib/utils";
+import { GraphEvent } from "ts-edge";
 import {
-  UINode,
   OutputSchemaSourceKey,
+  UINode,
   WorkflowNodeData,
 } from "./workflow.interface";
-import { exclude, isString } from "lib/utils";
-import { DBEdge, DBNode } from "app-types/workflow";
-import { Edge } from "@xyflow/react";
-import { GraphEvent } from "ts-edge";
-import { UIMessage } from "ai";
 
 export const defaultObjectJsonSchema: ObjectJsonSchema7 = {
   type: "object",

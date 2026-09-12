@@ -1,12 +1,12 @@
-import { getSession } from "auth/server";
-import { memoryRepository } from "lib/db/repository";
 import { UserMemoryUpdateSchema } from "app-types/memory";
+import { getSession } from "auth/server";
 import {
   isSafeMemoryContent,
   sanitizeMemoryContent,
 } from "lib/ai/memory/guardrails";
-import { z } from "zod";
 import { resolveMemoryScopeFromRequest } from "lib/ai/memory/scope-server";
+import { memoryRepository } from "lib/db/repository";
+import { z } from "zod";
 
 export async function PATCH(
   request: Request,

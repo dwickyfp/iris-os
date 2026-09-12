@@ -1,12 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the @ai-sdk/openai-compatible module before importing
 vi.mock("@ai-sdk/openai-compatible", () => ({
   createOpenAICompatible: vi.fn(() => vi.fn()),
 }));
 
-import { createAzureOpenAICompatible } from "./azure-openai-compatible";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createAzureOpenAICompatible } from "./azure-openai-compatible";
 
 const mockCreateOpenAICompatible = vi.mocked(createOpenAICompatible);
 

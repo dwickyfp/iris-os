@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
 import {
   Card,
@@ -6,7 +7,6 @@ import {
   CardHeader,
   CardTitle,
 } from "ui/card";
-import { getTranslations } from "next-intl/server";
 
 interface UsersLayoutProps {
   children: ReactNode;

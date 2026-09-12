@@ -1,5 +1,12 @@
 import { deleteUserAction } from "@/app/api/user/actions";
 import { DeleteUserActionState } from "@/app/api/user/validations";
+import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { useTranslations } from "next-intl";
+import Form from "next/form";
+import { useRouter } from "next/navigation";
+import { useActionState, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,15 +18,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "ui/alert-dialog";
-import { SubmitButton } from "./user-submit-button";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { useActionState, useState } from "react";
-import Form from "next/form";
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
 import { Input } from "ui/input";
-import { useTranslations } from "next-intl";
-import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { SubmitButton } from "./user-submit-button";
 
 export function UserDeleteDialog({
   user,

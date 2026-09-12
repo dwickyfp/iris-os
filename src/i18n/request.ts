@@ -1,7 +1,7 @@
+import deepmerge from "deepmerge";
 import { getRequestConfig } from "next-intl/server";
 import { safe } from "ts-safe";
 import { getLocaleAction } from "./get-locale";
-import deepmerge from "deepmerge";
 
 let defaultMessages: any = undefined;
 

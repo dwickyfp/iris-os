@@ -1,19 +1,19 @@
+import { useUpdate } from "@/hooks/use-update";
 import { Edge, useReactFlow } from "@xyflow/react";
 import {
   ConditionNodeData,
   NodeKind,
   UINode,
 } from "lib/ai/workflow/workflow.interface";
-import { ReactNode, useCallback, useMemo } from "react";
-import { Label } from "ui/label";
-import { NodeIcon } from "./node-icon";
-import { Button } from "ui/button";
 import { PlusIcon, Unlink } from "lucide-react";
-import { NodeSelect } from "./node-select";
-import { useUpdate } from "@/hooks/use-update";
-import { createAppendNode } from "./create-append-node";
 import { useTranslations } from "next-intl";
+import { ReactNode, useCallback, useMemo } from "react";
+import { Button } from "ui/button";
+import { Label } from "ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { createAppendNode } from "./create-append-node";
+import { NodeIcon } from "./node-icon";
+import { NodeSelect } from "./node-select";
 
 interface NextNodeInfoProps {
   node: UINode;

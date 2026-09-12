@@ -1,9 +1,9 @@
 import { getSession } from "auth/server";
 import { and, desc, eq } from "drizzle-orm";
+import { updateManagedAutomation } from "lib/automation/management";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable, AutomationTable } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";
-import { updateManagedAutomation } from "lib/automation/management";
 
 export async function GET(
   _request: Request,

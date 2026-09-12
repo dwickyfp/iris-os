@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { addEdgeBranchLabel } from "./add-edge-branch-label";
-import { NodeKind } from "../workflow.interface";
 import { DBEdge, DBNode } from "app-types/workflow";
-import { convertUINodeToDBNode } from "../shared.workflow";
+import { describe, expect, it } from "vitest";
 import { createUINode } from "../create-ui-node";
+import { convertUINodeToDBNode } from "../shared.workflow";
+import { NodeKind } from "../workflow.interface";
+import { addEdgeBranchLabel } from "./add-edge-branch-label";
 
 describe("addEdgeBranchLabel", () => {
   // Helper function to create a node

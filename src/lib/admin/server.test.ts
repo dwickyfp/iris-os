@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { USER_ROLES } from "app-types/roles";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock server-only module
 vi.mock("server-only", () => ({}));
@@ -29,22 +29,22 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
 
+import {
+  canListUsers,
+  hasAdminPermission,
+  requireAdminPermission,
+  requireUserListPermission,
+} from "lib/auth/permissions";
+import { getSession } from "lib/auth/server";
+import pgAdminRepository from "lib/db/pg/repositories/admin-respository.pg";
 // Import after mocks
 import {
-  requireAdminSession,
-  getAdminUsers,
   ADMIN_USER_LIST_LIMIT,
   DEFAULT_SORT_BY,
   DEFAULT_SORT_DIRECTION,
+  getAdminUsers,
+  requireAdminSession,
 } from "./server";
-import { getSession } from "lib/auth/server";
-import {
-  requireAdminPermission,
-  requireUserListPermission,
-  hasAdminPermission,
-  canListUsers,
-} from "lib/auth/permissions";
-import pgAdminRepository from "lib/db/pg/repositories/admin-respository.pg";
 
 describe("Admin Server - Business Logic", () => {
   beforeEach(() => {

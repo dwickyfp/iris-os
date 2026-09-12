@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  createOpenAICompatibleModels,
   type OpenAICompatibleProvider,
+  createOpenAICompatibleModels,
 } from "./create-openai-compatiable";
 
 // Mock the @ai-sdk/openai-compatible module

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
-import { Renderer, Camera, Geometry, Program, Mesh } from "ogl";
 import { useTheme } from "next-themes";
+import { Camera, Geometry, Mesh, Program, Renderer } from "ogl";
+import React, { useEffect, useRef } from "react";
 
 interface ParticlesProps {
   particleCount?: number;

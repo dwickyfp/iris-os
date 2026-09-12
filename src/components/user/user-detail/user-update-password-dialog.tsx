@@ -1,18 +1,3 @@
-import {
-  AlertDialog,
-  AlertDialogDescription,
-  AlertDialogContent,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from "ui/alert-dialog";
-import { AlertDialogHeader } from "ui/alert-dialog";
-import { useActionState, useState } from "react";
-import { toast } from "sonner";
-import { SubmitButton } from "./user-submit-button";
-import Form from "next/form";
 import { updateUserPasswordAction } from "@/app/api/user/actions";
 import {
   UpdateUserPasswordActionState,
@@ -22,10 +7,25 @@ import {
   passwordRegexPattern,
   passwordRequirementsText,
 } from "lib/validations/password";
+import Form from "next/form";
+import { useActionState, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "ui/alert-dialog";
+import { AlertDialogHeader } from "ui/alert-dialog";
+import { SubmitButton } from "./user-submit-button";
 
-import { Input } from "ui/input";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
 import { useTranslations } from "next-intl";
+import { Input } from "ui/input";
 
 export function UpdateUserPasswordDialog({
   children,

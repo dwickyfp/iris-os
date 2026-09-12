@@ -4,8 +4,8 @@ import {
   hasArtifactClaims,
 } from "../artifacts";
 import type {
-  CompletionRequirement,
   CapabilityVerification,
+  CompletionRequirement,
   VerificationResult,
 } from "./verification";
 import { VerificationEngine, nonEmptyStructuredOutput } from "./verification";

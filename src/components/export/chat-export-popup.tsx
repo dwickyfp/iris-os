@@ -1,5 +1,6 @@
 import { exportChatAction } from "@/app/api/chat/actions";
 import { LinkIcon, Loader } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -13,7 +14,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "ui/dialog";
-import { useTranslations } from "next-intl";
 
 type Props = {
   threadId: string;

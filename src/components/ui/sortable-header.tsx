@@ -1,6 +1,6 @@
+import { cn } from "lib/utils";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { TableHead } from "./table";
-import { cn } from "lib/utils";
 
 // Sort icon component
 interface SortIconProps {

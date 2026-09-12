@@ -1,11 +1,11 @@
 import { getSession } from "auth/server";
 import { and, eq } from "drizzle-orm";
+import { resolveAutomationAuthority } from "lib/automation/authority";
 import { enqueueAutomationRun } from "lib/automation/queue";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AutomationRunTable } from "lib/db/pg/schema.pg";
-import { isV2FeatureEnabled } from "lib/feature-flags";
-import { resolveAutomationAuthority } from "lib/automation/authority";
 import { AutomationTable } from "lib/db/pg/schema.pg";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 
 export async function POST(
   _request: Request,

@@ -1,8 +1,8 @@
-import { z } from "zod";
 import { passwordSchema } from "lib/validations/password";
+import { z } from "zod";
 
-import { UserEntity } from "lib/db/pg/schema.pg";
 import { getSession } from "auth/server";
+import { UserEntity } from "lib/db/pg/schema.pg";
 
 export type UserPreferences = {
   displayName?: string;

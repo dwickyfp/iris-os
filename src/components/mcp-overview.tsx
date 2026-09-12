@@ -1,20 +1,20 @@
 "use client";
 import { ArrowUpRight } from "lucide-react";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { MCPIcon } from "ui/mcp-icon";
 
-import { NotionIcon } from "ui/notion-icon";
-import { LinearIcon } from "ui/linear-icon";
-import { PlaywrightIcon } from "ui/playwright-icon";
-import { NeonIcon } from "ui/neon-icon";
-import { StripeIcon } from "ui/stripe-icon";
-import { CanvaIcon } from "ui/canva-icon";
-import { PaypalIcon } from "ui/paypal-icon";
-import { Button } from "ui/button";
-import { AtlassianIcon } from "ui/atlassian-icon";
 import { AsanaIcon } from "ui/asana-icon";
+import { AtlassianIcon } from "ui/atlassian-icon";
+import { Button } from "ui/button";
+import { CanvaIcon } from "ui/canva-icon";
 import { GithubIcon } from "ui/github-icon";
+import { LinearIcon } from "ui/linear-icon";
+import { NeonIcon } from "ui/neon-icon";
+import { NotionIcon } from "ui/notion-icon";
+import { PaypalIcon } from "ui/paypal-icon";
+import { PlaywrightIcon } from "ui/playwright-icon";
+import { StripeIcon } from "ui/stripe-icon";
 
 export const RECOMMENDED_MCPS = [
   {

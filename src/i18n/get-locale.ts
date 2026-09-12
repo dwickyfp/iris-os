@@ -1,6 +1,6 @@
 "use server";
-import { cookies, headers } from "next/headers";
 import { COOKIE_KEY_LOCALE, SUPPORTED_LOCALES } from "lib/const";
+import { cookies, headers } from "next/headers";
 
 function validateLocale(locale?: string): boolean {
   return SUPPORTED_LOCALES.some((v) => v.code === locale);

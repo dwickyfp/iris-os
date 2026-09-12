@@ -1,16 +1,16 @@
 "use client";
 
 import { NodeKind } from "lib/ai/workflow/workflow.interface";
-import { useMemo } from "react";
-import { useTranslations } from "next-intl";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { NodeIcon } from "./node-icon";
 import {
   BlocksIcon,
   ChevronsLeftRightEllipsisIcon,
   Terminal,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useMemo } from "react";
 import { TextShimmer } from "ui/text-shimmer";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { NodeIcon } from "./node-icon";
 
 export function WorkflowGreeting() {
   const t = useTranslations();

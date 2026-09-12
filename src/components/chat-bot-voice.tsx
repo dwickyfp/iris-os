@@ -1,6 +1,6 @@
 "use client";
 
-import { getToolName, isToolUIPart, TextPart } from "ai";
+import { TextPart, getToolName, isToolUIPart } from "ai";
 import { DEFAULT_VOICE_TOOLS, UIMessageWithCompleted } from "lib/ai/speech";
 
 import {
@@ -10,17 +10,17 @@ import {
 import { cn, groupBy, isNull } from "lib/utils";
 import {
   CheckIcon,
+  ChevronRight,
   Loader,
+  MessageSquareMoreIcon,
+  MessagesSquareIcon,
   MicIcon,
   MicOffIcon,
   PhoneIcon,
   Settings2Icon,
   TriangleAlertIcon,
-  XIcon,
-  MessagesSquareIcon,
-  MessageSquareMoreIcon,
   WrenchIcon,
-  ChevronRight,
+  XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -46,16 +46,16 @@ import { OpenAIIcon } from "ui/openai-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { ToolMessagePart } from "./message-parts";
 
-import { EnabledTools, EnabledToolsDropdown } from "./enabled-tools-dropdown";
 import { appStore } from "@/app/store";
-import { useShallow } from "zustand/shallow";
-import { useTranslations } from "next-intl";
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "ui/dialog";
-import JsonView from "ui/json-view";
-import { isShortcutEvent, Shortcuts } from "lib/keyboard-shortcuts";
 import { useAgent } from "@/hooks/queries/use-agent";
 import { ChatMention } from "app-types/chat";
+import { Shortcuts, isShortcutEvent } from "lib/keyboard-shortcuts";
+import { useTranslations } from "next-intl";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "ui/dialog";
+import JsonView from "ui/json-view";
+import { useShallow } from "zustand/shallow";
+import { EnabledTools, EnabledToolsDropdown } from "./enabled-tools-dropdown";
 
 const prependTools: EnabledTools[] = [
   {

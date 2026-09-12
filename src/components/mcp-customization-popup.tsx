@@ -9,17 +9,16 @@ import {
   DialogTitle,
 } from "ui/dialog";
 
-import useSWR from "swr";
 import { cn, fetcher } from "lib/utils";
+import useSWR from "swr";
 
-import { useTranslations } from "next-intl";
+import { appStore } from "@/app/store";
 import {
-  McpServerCustomization,
   MCPServerInfo,
-  McpToolCustomization,
   MCPToolInfo,
+  McpServerCustomization,
+  McpToolCustomization,
 } from "app-types/mcp";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import {
   ArrowLeft,
   ChevronRight,
@@ -28,18 +27,19 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { Button } from "ui/button";
-import { Textarea } from "ui/textarea";
+import { useTranslations } from "next-intl";
 import { safe } from "ts-safe";
-import { z } from "zod";
-import { handleErrorWithToast } from "ui/shared-toast";
-import { Skeleton } from "ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
-import { ToolDetailPopupContent } from "./tool-detail-popup";
+import { Button } from "ui/button";
 import { ExamplePlaceholder } from "ui/example-placeholder";
 import { Input } from "ui/input";
-import { appStore } from "@/app/store";
+import { handleErrorWithToast } from "ui/shared-toast";
+import { Skeleton } from "ui/skeleton";
+import { Textarea } from "ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { z } from "zod";
 import { useShallow } from "zustand/shallow";
+import { ToolDetailPopupContent } from "./tool-detail-popup";
 
 export function McpCustomizationPopup() {
   const [mcpCustomizationPopup, appStoreMutate] = appStore(

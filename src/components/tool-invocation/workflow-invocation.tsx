@@ -1,15 +1,15 @@
 import { useCopy } from "@/hooks/use-copy";
 import { VercelAIWorkflowToolStreamingResult } from "app-types/workflow";
 import equal from "lib/equal";
+import { cn } from "lib/utils";
 import { AlertTriangleIcon, Check, Copy, Loader2, XIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef } from "react";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { Button } from "ui/button";
 import JsonView from "ui/json-view";
-import { NodeResultPopup } from "../workflow/node-result-popup";
-import { cn } from "lib/utils";
-import { NodeIcon } from "../workflow/node-icon";
 import { TextShimmer } from "ui/text-shimmer";
+import { NodeIcon } from "../workflow/node-icon";
+import { NodeResultPopup } from "../workflow/node-result-popup";
 
 interface WorkflowInvocationProps {
   result: VercelAIWorkflowToolStreamingResult;

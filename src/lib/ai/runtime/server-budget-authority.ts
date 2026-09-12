@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, lte, sql } from "drizzle-orm";
+import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   lockRootBudget,
@@ -11,7 +12,6 @@ import {
   RootRunBudgetReservationTable,
   RootRunBudgetTable,
 } from "lib/db/pg/schema.pg";
-import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
 import { BudgetExhaustedError, type BudgetKind } from "./budget";
 
 export type DurableBudgetKind =

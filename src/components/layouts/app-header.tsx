@@ -1,7 +1,5 @@
 "use client";
 
-import { useSidebar } from "ui/sidebar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import {
   AudioWaveformIcon,
   ChevronDown,
@@ -10,17 +8,19 @@ import {
 } from "lucide-react";
 import { Button } from "ui/button";
 import { Separator } from "ui/separator";
+import { useSidebar } from "ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
-import { useEffect, useMemo } from "react";
-import { ThreadDropdown } from "../thread-dropdown";
 import { appStore } from "@/app/store";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useShallow } from "zustand/shallow";
-import { getShortcutKeyList, Shortcuts } from "lib/keyboard-shortcuts";
-import { useTranslations } from "next-intl";
-import { TextShimmer } from "ui/text-shimmer";
-import { buildReturnUrl } from "lib/admin/navigation-utils";
 import { BackButton } from "@/components/layouts/back-button";
+import { buildReturnUrl } from "lib/admin/navigation-utils";
+import { Shortcuts, getShortcutKeyList } from "lib/keyboard-shortcuts";
+import { useTranslations } from "next-intl";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useMemo } from "react";
+import { TextShimmer } from "ui/text-shimmer";
+import { useShallow } from "zustand/shallow";
+import { ThreadDropdown } from "../thread-dropdown";
 
 export function AppHeader() {
   const t = useTranslations();

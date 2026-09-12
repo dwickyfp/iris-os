@@ -1,11 +1,11 @@
 import type { UIMessage } from "ai";
 import type { AgentRuntimeContext } from "../agent/runtime-context";
 import type { RunBudget } from "./budget";
-import {
-  ContextPressureManager,
-  type ContextPressureDiagnostics,
-} from "./context-pressure";
 import type { ContextEngine, ResolvedContext } from "./context-engine";
+import {
+  type ContextPressureDiagnostics,
+  ContextPressureManager,
+} from "./context-pressure";
 import type { ResolvedPolicySnapshot } from "./contracts";
 import {
   type GoalCapability,

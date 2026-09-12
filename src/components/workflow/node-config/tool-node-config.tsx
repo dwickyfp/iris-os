@@ -5,30 +5,30 @@ import {
   UINode,
   WorkflowToolKey,
 } from "lib/ai/workflow/workflow.interface";
-import { memo, useEffect, useMemo } from "react";
 import { InfoIcon, VariableIcon, WrenchIcon } from "lucide-react";
+import { memo, useEffect, useMemo } from "react";
 
-import { useEdges, useNodes, useReactFlow } from "@xyflow/react";
 import { appStore } from "@/app/store";
+import { useEdges, useNodes, useReactFlow } from "@xyflow/react";
 
-import { WorkflowToolSelect } from "../workflow-tool-select";
-import { isString, toAny } from "lib/utils";
-import { Separator } from "ui/separator";
-import { SelectModel } from "@/components/select-model";
-import { OutputSchemaMentionInput } from "../output-schema-mention-input";
 import { useWorkflowStore } from "@/app/store/workflow.store";
-import { MCPIcon } from "ui/mcp-icon";
-import { useTranslations } from "next-intl";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { SelectModel } from "@/components/select-model";
 import { useMcpList } from "@/hooks/queries/use-mcp-list";
+import { isString, toAny } from "lib/utils";
+import { useTranslations } from "next-intl";
+import { MCPIcon } from "ui/mcp-icon";
+import { Separator } from "ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { OutputSchemaMentionInput } from "../output-schema-mention-input";
+import { WorkflowToolSelect } from "../workflow-tool-select";
 
+import { DefaultToolName } from "lib/ai/tools";
 import {
-  exaSearchSchema,
-  exaSearchTool,
   exaContentsSchema,
   exaContentsTool,
+  exaSearchSchema,
+  exaSearchTool,
 } from "lib/ai/tools/web/web-search";
-import { DefaultToolName } from "lib/ai/tools";
 
 export const ToolNodeDataConfig = memo(function ({
   data,

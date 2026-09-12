@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  type MemoryScopeOwnership,
   buildRecallScopes,
   memoryScopeKey,
   resolveMemoryScope,
-  type MemoryScopeOwnership,
 } from "./scope";
 
 const owner: MemoryScopeOwnership = {

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { del, head, put } from "@vercel/blob";
 import { FileNotFoundError } from "lib/errors";
+import { generateUUID } from "lib/utils";
 import type {
   FileMetadata,
   FileStorage,
@@ -11,7 +12,6 @@ import {
   sanitizeFilename,
   toBuffer,
 } from "./storage-utils";
-import { generateUUID } from "lib/utils";
 
 const STORAGE_PREFIX = resolveStoragePrefix();
 

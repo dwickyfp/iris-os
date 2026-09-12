@@ -1,9 +1,9 @@
 import * as fs from "fs";
-import * as path from "path";
 import { pathToFileURL } from "node:url";
+import * as path from "path";
 import "load-env";
-import logger from "logger";
 import { openaiCompatibleModelsSafeParse } from "lib/ai/create-openai-compatiable";
+import logger from "logger";
 
 const ROOT = process.cwd();
 const FILE_NAME = "openai-compatible.config.ts";

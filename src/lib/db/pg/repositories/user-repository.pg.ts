@@ -4,6 +4,7 @@ import {
   UserPreferences,
   UserRepository,
 } from "app-types/user";
+import { count, eq, getTableColumns, sql } from "drizzle-orm";
 import { pgDb as db, pgDb } from "../db.pg";
 import {
   AccountTable,
@@ -12,7 +13,6 @@ import {
   SessionTable,
   UserTable,
 } from "../schema.pg";
-import { count, eq, getTableColumns, sql } from "drizzle-orm";
 
 // Helper function to get user columns without password
 const getUserColumnsWithoutPassword = () => {

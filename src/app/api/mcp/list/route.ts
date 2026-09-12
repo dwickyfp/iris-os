@@ -1,7 +1,7 @@
 import { MCPServerInfo } from "app-types/mcp";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
-import { mcpRepository } from "lib/db/repository";
 import { getCurrentUser } from "lib/auth/permissions";
+import { mcpRepository } from "lib/db/repository";
 
 export async function GET() {
   const currentUser = await getCurrentUser();

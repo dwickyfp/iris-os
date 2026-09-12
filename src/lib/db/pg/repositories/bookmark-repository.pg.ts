@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { pgDb as db } from "../db.pg";
-import { BookmarkTable, AgentTable, SkillTable } from "../schema.pg";
+import { AgentTable, BookmarkTable, SkillTable } from "../schema.pg";
 
 type BookmarkItemType = "agent" | "workflow" | "skill";
 

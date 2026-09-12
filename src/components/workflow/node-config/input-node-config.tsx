@@ -1,23 +1,23 @@
 "use client";
 
+import { useReactFlow } from "@xyflow/react";
 import {
   InputNodeData,
   WorkflowNodeData,
 } from "lib/ai/workflow/workflow.interface";
-import { memo, useCallback } from "react";
-import {
-  Feild,
-  EditJsonSchemaFieldPopup,
-  getFieldKey,
-} from "../../edit-json-schema-field-popup";
+import { objectFlow } from "lib/utils";
 import { InfoIcon, PlusIcon, TrashIcon, VariableIcon } from "lucide-react";
 import { PencilIcon } from "lucide-react";
-import { objectFlow } from "lib/utils";
+import { useTranslations } from "next-intl";
+import { memo, useCallback } from "react";
 import { Button } from "ui/button";
 import { Label } from "ui/label";
-import { useReactFlow } from "@xyflow/react";
-import { useTranslations } from "next-intl";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import {
+  EditJsonSchemaFieldPopup,
+  Feild,
+  getFieldKey,
+} from "../../edit-json-schema-field-popup";
 
 export const InputNodeDataConfig = memo(function ({
   data,

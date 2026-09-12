@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
-import { memoryRepository } from "lib/db/repository";
 import { resolveMemoryScopeFromRequest } from "lib/ai/memory/scope-server";
+import { memoryRepository } from "lib/db/repository";
 
 export async function POST(
   request: Request,

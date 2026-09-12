@@ -1,27 +1,27 @@
 "use client";
 
-import { useState, useActionState, useMemo } from "react";
-import { Badge } from "ui/badge";
-import { cn } from "lib/utils";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { toast } from "sonner";
 import { updateUserBanStatusAction } from "@/app/api/admin/actions";
 import { UpdateUserBanStatusActionState } from "@/app/api/admin/validations";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
-import { useTranslations } from "next-intl";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { cn } from "lib/utils";
 import { Edit2 } from "lucide-react";
+import { useTranslations } from "next-intl";
+import Form from "next/form";
+import { useActionState, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogCancel,
-  AlertDialogAction,
   AlertDialogTrigger,
 } from "ui/alert-dialog";
-import Form from "next/form";
+import { Badge } from "ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { SubmitButton } from "./user-submit-button";
 
 export function UserStatusBadge({

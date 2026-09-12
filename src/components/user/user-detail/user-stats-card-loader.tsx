@@ -1,7 +1,7 @@
 import { getUserStats } from "lib/user/server";
-import { UserStatisticsCard } from "./user-statistics-card";
 import { Card, CardContent, CardHeader, CardTitle } from "ui/card";
 import { Skeleton } from "ui/skeleton";
+import { UserStatisticsCard } from "./user-statistics-card";
 
 export const UserStatsCardLoader = async ({
   userId,

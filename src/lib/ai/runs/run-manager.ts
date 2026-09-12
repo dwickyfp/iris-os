@@ -132,11 +132,7 @@ export class RunManager {
     });
   }
 
-  exhaustBudget(
-    runId: string,
-    error: string,
-    errorCode = "BUDGET_EXHAUSTED",
-  ) {
+  exhaustBudget(runId: string, error: string, errorCode = "BUDGET_EXHAUSTED") {
     const leaseToken = this.foregroundLeases.get(runId);
     if (!leaseToken) return Promise.resolve(null);
     return this.exhaustBudgetWithLease(runId, leaseToken, error, errorCode);
@@ -258,6 +254,10 @@ export class RunManager {
 
   reconcileTerminalDelegatedRuns(limit = 100) {
     return this.repository.reconcileTerminalDelegatedRuns(limit);
+  }
+
+  reapStaleForegroundRuns(limit = 100) {
+    return this.repository.reapStaleForegroundRuns(limit);
   }
 
   listPendingDispatchRunIds(limit = 100) {

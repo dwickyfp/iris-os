@@ -1,8 +1,8 @@
 "use client";
 
-import { TemplateNodeData, UINode } from "lib/ai/workflow/workflow.interface";
 import { useEdges, useNodes, useReactFlow } from "@xyflow/react";
-import { useCallback, memo } from "react";
+import { TemplateNodeData, UINode } from "lib/ai/workflow/workflow.interface";
+import { memo, useCallback } from "react";
 import { Label } from "ui/label";
 
 import { OutputSchemaMentionInput } from "../output-schema-mention-input";
@@ -11,9 +11,9 @@ import { InfoIcon } from "lucide-react";
 
 import { TipTapMentionJsonContent } from "app-types/util";
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { useTranslations } from "next-intl";
 import { useWorkflowStore } from "@/app/store/workflow.store";
+import { useTranslations } from "next-intl";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
 interface TemplateNodeConfigProps {
   data: TemplateNodeData;

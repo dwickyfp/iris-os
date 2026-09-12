@@ -1,5 +1,7 @@
 import { getSession } from "auth/server";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { buildRunProjection } from "lib/ai/runs/projection";
+import { summarizeAgentRunStatuses } from "lib/ai/runs/status";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
   AgentRunCheckpointTable,
@@ -7,8 +9,6 @@ import {
   AgentRunTable,
   DelegationRunTable,
 } from "lib/db/pg/schema.pg";
-import { buildRunProjection } from "lib/ai/runs/projection";
-import { summarizeAgentRunStatuses } from "lib/ai/runs/status";
 
 export async function GET() {
   const session = await getSession();

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { wouldCreateCycle } from "./would-create-cycle";
 import { Connection, Edge } from "@xyflow/react";
+import { describe, expect, it } from "vitest";
+import { wouldCreateCycle } from "./would-create-cycle";
 
 describe("wouldCreateCycle", () => {
   // Helper function to create a connection

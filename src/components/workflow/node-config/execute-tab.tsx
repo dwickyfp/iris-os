@@ -1,35 +1,37 @@
+import { generateObjectAction } from "@/app/api/chat/actions";
+import { appStore } from "@/app/store";
 import { useWorkflowStore } from "@/app/store/workflow.store";
+import { SelectModel } from "@/components/select-model";
+import { useObjectState } from "@/hooks/use-object-state";
+import { useReactFlow } from "@xyflow/react";
+import { allNodeValidate } from "lib/ai/workflow/node-validate";
+import { decodeWorkflowEvents } from "lib/ai/workflow/shared.workflow";
 import {
   NodeKind,
   NodeRuntimeHistory,
 } from "lib/ai/workflow/workflow.interface";
-import { useReactFlow } from "@xyflow/react";
-import { useObjectState } from "@/hooks/use-object-state";
 import { UINode } from "lib/ai/workflow/workflow.interface";
+import { notify } from "lib/notify";
 import { cn, createDebounce, errorToString } from "lib/utils";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { GraphEndEvent } from "ts-edge";
-import { allNodeValidate } from "lib/ai/workflow/node-validate";
-import { toast } from "sonner";
-import { decodeWorkflowEvents } from "lib/ai/workflow/shared.workflow";
-import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import {
   AlertTriangleIcon,
+  Check,
+  Copy,
   Loader,
   Loader2,
-  Copy,
-  Check,
+  Maximize2,
   WandSparklesIcon,
   XIcon,
-  Maximize2,
 } from "lucide-react";
-import JsonView from "ui/json-view";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { GraphEndEvent } from "ts-edge";
+import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { Button } from "ui/button";
-import { Separator } from "ui/separator";
 import { FlipWords } from "ui/flip-words";
-import { Label } from "ui/label";
 import { Input } from "ui/input";
-import { Switch } from "ui/switch";
+import JsonView from "ui/json-view";
+import { Label } from "ui/label";
 import {
   Select,
   SelectContent,
@@ -37,17 +39,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "ui/select";
+import { Separator } from "ui/separator";
+import { Switch } from "ui/switch";
+import { TextShimmer } from "ui/text-shimmer";
 import { Textarea } from "ui/textarea";
 import { NodeIcon } from "../node-icon";
-import { TextShimmer } from "ui/text-shimmer";
-import { generateObjectAction } from "@/app/api/chat/actions";
-import { appStore } from "@/app/store";
-import { notify } from "lib/notify";
-import { SelectModel } from "@/components/select-model";
 
 import { useCopy } from "@/hooks/use-copy";
-import { NodeResultPopup } from "../node-result-popup";
 import { useTranslations } from "next-intl";
+import { NodeResultPopup } from "../node-result-popup";
 
 const debounce = createDebounce();
 

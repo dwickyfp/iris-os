@@ -1,8 +1,8 @@
-import { getSession } from "auth/server";
 import { TaskCreateSchema } from "app-types/task";
+import { getSession } from "auth/server";
 import { taskRepository, workspaceRepository } from "lib/db/repository";
-import { z } from "zod";
 import { isV2FeatureEnabled } from "lib/feature-flags";
+import { z } from "zod";
 
 export async function GET(request: Request) {
   const session = await getSession();

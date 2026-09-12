@@ -4,12 +4,12 @@ import {
   getUserIdAndCheckAccess,
 } from "lib/user/server";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { UserDetail } from "./user-detail";
 import {
   UserStatsCardLoader,
   UserStatsCardLoaderSkeleton,
 } from "./user-stats-card-loader";
-import { Suspense } from "react";
 
 export async function UserDetailContent({
   userId,

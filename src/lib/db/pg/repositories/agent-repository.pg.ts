@@ -1,8 +1,8 @@
 import { Agent, AgentRepository, AgentSummary } from "app-types/agent";
-import { pgDb as db } from "../db.pg";
-import { AgentTable, BookmarkTable, UserTable } from "../schema.pg";
 import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { generateUUID } from "lib/utils";
+import { pgDb as db } from "../db.pg";
+import { AgentTable, BookmarkTable, UserTable } from "../schema.pg";
 
 export const pgAgentRepository: AgentRepository = {
   async insertAgent(agent) {

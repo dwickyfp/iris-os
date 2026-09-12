@@ -1,7 +1,7 @@
 "use client";
-import useSWR, { SWRConfiguration } from "swr";
 import { appStore } from "@/app/store";
 import { fetcher } from "lib/utils";
+import useSWR, { SWRConfiguration } from "swr";
 
 export function useWorkflowToolList(options?: SWRConfiguration) {
   return useSWR("/api/workflow/tools", fetcher, {

@@ -1,8 +1,8 @@
+import type { McpServerInsert, McpServerSelect } from "app-types/mcp";
 import type {
   MCPClientsManager,
   MCPConfigStorage,
 } from "./create-mcp-clients-manager";
-import type { McpServerInsert, McpServerSelect } from "app-types/mcp";
 
 /**
  * In-memory implementation of MCPConfigStorage.

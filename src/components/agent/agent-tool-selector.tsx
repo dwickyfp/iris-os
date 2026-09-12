@@ -1,16 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
-import { ChatMention } from "app-types/chat";
-import { DefaultToolName } from "lib/ai/tools";
-import { cn, noop } from "lib/utils";
-import equal from "lib/equal";
-import { ChevronDownIcon, HammerIcon, Loader, XIcon } from "lucide-react";
 import { ChatMentionInputSuggestion } from "@/components/chat-mention-input";
 import { DefaultToolIcon } from "@/components/default-tool-icon";
-import { MCPIcon } from "ui/mcp-icon";
+import { ChatMention } from "app-types/chat";
+import { DefaultToolName } from "lib/ai/tools";
+import equal from "lib/equal";
+import { cn, noop } from "lib/utils";
+import { ChevronDownIcon, HammerIcon, Loader, XIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { MCPIcon } from "ui/mcp-icon";
 
 interface AgentToolSelectorProps {
   mentions: ChatMention[];

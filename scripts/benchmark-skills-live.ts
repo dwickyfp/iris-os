@@ -1,9 +1,6 @@
 import "load-env";
 
 import { generateText, isStepCount } from "ai";
-import { buildSkillManifestPrompt } from "../src/lib/ai/skill/manifest";
-import { createSkillsRuntime } from "../src/lib/ai/skill/runtime";
-import type { AssignedSkillsRepository } from "../src/lib/ai/skill/types";
 import {
   type ActivationScore,
   type AnswerScore,
@@ -11,6 +8,9 @@ import {
   scoreSkillAnswer,
   summarizeSkillEval,
 } from "../src/lib/ai/skill/evaluation";
+import { buildSkillManifestPrompt } from "../src/lib/ai/skill/manifest";
+import { createSkillsRuntime } from "../src/lib/ai/skill/runtime";
+import type { AssignedSkillsRepository } from "../src/lib/ai/skill/types";
 import {
   loadSkillEvalFixture,
   skip,

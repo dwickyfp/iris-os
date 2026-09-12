@@ -1,5 +1,8 @@
 "use client";
 
+import { UploadedFile, appStore } from "@/app/store";
+import { UIMessage, UseChatHelpers } from "@ai-sdk/react";
+import { CapabilityHintMode, ChatMention, ChatModel } from "app-types/chat";
 import {
   AudioWaveformIcon,
   ChevronDown,
@@ -13,30 +16,22 @@ import {
   Square,
   XIcon,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "ui/button";
-import { UIMessage, UseChatHelpers } from "@ai-sdk/react";
-import { SelectModel } from "./select-model";
-import { appStore, UploadedFile } from "@/app/store";
 import { useShallow } from "zustand/shallow";
-import { CapabilityHintMode, ChatMention, ChatModel } from "app-types/chat";
-import dynamic from "next/dynamic";
+import { SelectModel } from "./select-model";
 import { ToolModeDropdown } from "./tool-mode-dropdown";
 
-import { ToolSelectDropdown } from "./tool-select-dropdown";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { useTranslations } from "next-intl";
+import { useThreadFileUploader } from "@/hooks/use-thread-file-uploader";
+import { cn } from "@/lib/utils";
 import { Editor } from "@tiptap/react";
 import { WorkflowSummary } from "app-types/workflow";
-import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
-import equal from "lib/equal";
-import { MCPIcon } from "ui/mcp-icon";
 import { DefaultToolName } from "lib/ai/tools";
-import { DefaultToolIcon } from "./default-tool-icon";
-import { OpenAIIcon } from "ui/openai-icon";
-import { GrokIcon } from "ui/grok-icon";
+import equal from "lib/equal";
+import { useTranslations } from "next-intl";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { ClaudeIcon } from "ui/claude-icon";
-import { GeminiIcon } from "ui/gemini-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,15 +42,20 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
-import { cn } from "@/lib/utils";
-import { useThreadFileUploader } from "@/hooks/use-thread-file-uploader";
+import { GeminiIcon } from "ui/gemini-icon";
+import { GrokIcon } from "ui/grok-icon";
+import { MCPIcon } from "ui/mcp-icon";
+import { OpenAIIcon } from "ui/openai-icon";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { DefaultToolIcon } from "./default-tool-icon";
+import { ToolSelectDropdown } from "./tool-select-dropdown";
 
-import { EMOJI_DATA } from "lib/const";
-import { AgentSummary } from "app-types/agent";
-import { FileUIPart, TextUIPart } from "ai";
-import { toast } from "sonner";
-import { isFilePartSupported, isIngestSupported } from "@/lib/ai/file-support";
 import { useChatModels } from "@/hooks/queries/use-chat-models";
+import { isFilePartSupported, isIngestSupported } from "@/lib/ai/file-support";
+import { FileUIPart, TextUIPart } from "ai";
+import { AgentSummary } from "app-types/agent";
+import { EMOJI_DATA } from "lib/const";
+import { toast } from "sonner";
 
 interface PromptInputProps {
   placeholder?: string;

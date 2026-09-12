@@ -2,42 +2,42 @@
 import {
   ChevronRight,
   FlaskConical,
-  ShieldAlertIcon,
   Loader,
   RotateCw,
   Settings,
   Settings2,
+  ShieldAlertIcon,
   Wrench,
 } from "lucide-react";
+import Link from "next/link";
+import { memo, useCallback, useMemo, useState } from "react";
+import { useSWRConfig } from "swr";
+import { safe } from "ts-safe";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { Button } from "ui/button";
 import { Card, CardContent, CardHeader } from "ui/card";
 import JsonView from "ui/json-view";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { memo, useCallback, useMemo, useState } from "react";
-import Link from "next/link";
-import { useSWRConfig } from "swr";
-import { safe } from "ts-safe";
 
-import { handleErrorWithToast } from "ui/shared-toast";
 import {
   refreshMcpClientAction,
   removeMcpClientAction,
   shareMcpServerAction,
 } from "@/app/api/mcp/actions";
+import { handleErrorWithToast } from "ui/shared-toast";
 import { ShareableActions, type Visibility } from "./shareable-actions";
 
 import type { MCPServerInfo, MCPToolInfo } from "app-types/mcp";
 
-import { ToolDetailPopup } from "./tool-detail-popup";
-import { useTranslations } from "next-intl";
-import { Separator } from "ui/separator";
-import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { appStore } from "@/app/store";
-import { isString } from "lib/utils";
-import { redriectMcpOauth } from "lib/ai/mcp/oauth-redirect";
 import { BasicUser } from "app-types/user";
+import { redriectMcpOauth } from "lib/ai/mcp/oauth-redirect";
 import { canChangeVisibilityMCP } from "lib/auth/client-permissions";
+import { isString } from "lib/utils";
+import { useTranslations } from "next-intl";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Separator } from "ui/separator";
+import { ToolDetailPopup } from "./tool-detail-popup";
 
 // Main MCPCard component
 export const MCPCard = memo(function MCPCard({

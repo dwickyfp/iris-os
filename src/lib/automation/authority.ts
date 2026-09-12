@@ -2,8 +2,8 @@ import "server-only";
 
 import type { CapabilityRef } from "app-types/chat";
 import {
-  assertSupportedWorkflowNodeKind,
   NodeKind,
+  assertSupportedWorkflowNodeKind,
 } from "lib/ai/workflow/workflow.interface";
 import {
   agentRepository,

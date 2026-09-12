@@ -1,11 +1,11 @@
 import { UsersTable } from "@/components/admin/users-table";
+import { requireAdminPermission } from "auth/permissions";
 import {
   ADMIN_USER_LIST_LIMIT,
   DEFAULT_SORT_BY,
   DEFAULT_SORT_DIRECTION,
 } from "lib/admin/server";
 import { getAdminUsers } from "lib/admin/server";
-import { requireAdminPermission } from "auth/permissions";
 import { getSession } from "lib/auth/server";
 import { redirect, unauthorized } from "next/navigation";
 

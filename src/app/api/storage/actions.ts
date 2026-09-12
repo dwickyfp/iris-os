@@ -1,7 +1,7 @@
 "use server";
 
-import { storageDriver } from "lib/file-storage";
 import { pgStorageProfileRepository } from "lib/db/pg/repositories/storage-profile-repository.pg";
+import { storageDriver } from "lib/file-storage";
 
 /**
  * Get storage configuration info.

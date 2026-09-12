@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
-import type { UploadContent } from "./file-storage.interface";
-import logger from "logger";
 import { withTimeout } from "lib/utils";
+import logger from "logger";
+import type { UploadContent } from "./file-storage.interface";
 
 export const sanitizeFilename = (filename: string) => {
   const base = filename.split(/[/\\]/).pop() ?? "file";

@@ -18,9 +18,9 @@ if (process.env.CI) {
 }
 
 import { sql } from "drizzle-orm";
+import { like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { UserTable } from "../src/lib/db/pg/schema.pg";
-import { like } from "drizzle-orm";
 
 // Create database connection
 const db = drizzle(process.env.POSTGRES_URL!);

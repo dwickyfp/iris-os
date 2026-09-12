@@ -1,9 +1,9 @@
 import "server-only";
 
 import type { Tool } from "ai";
-import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
 import { eq } from "drizzle-orm";
 import { createBaseAgentRuntimeContext } from "lib/ai/agent/runtime-context";
+import { isTerminalAgentRunStatus } from "lib/ai/runs/status";
 import {
   buildServerCapabilityResolutionInput,
   resolveServerCapabilities,
@@ -29,7 +29,8 @@ export const productionCapabilityOrchestrationTarget: DurableJobTargetHandler =
     if (
       isTerminalAgentRunStatus(run.status) ||
       run.cancelRequestedAt ||
-      (run.status === "waiting_input" || run.status === "waiting_approval")
+      run.status === "waiting_input" ||
+      run.status === "waiting_approval"
     )
       throw new Error("DURABLE_JOB_RUN_NOT_EXECUTABLE");
     const persistedIds = new Set(
@@ -58,7 +59,8 @@ export const productionCapabilityOrchestrationTarget: DurableJobTargetHandler =
           (descriptor) =>
             persistedIds.has(descriptor.id) &&
             run.allowedTools.includes(descriptor.key) &&
-            typeof (descriptor.value as Tool | undefined)?.execute === "function",
+            typeof (descriptor.value as Tool | undefined)?.execute ===
+              "function",
         )
         .map((descriptor) => [descriptor.id, descriptor]),
     );
@@ -132,9 +134,7 @@ export const productionCapabilityOrchestrationTarget: DurableJobTargetHandler =
     return { status: "completed", result };
   };
 
-function persistedPolicySnapshot(
-  value: unknown,
-): ResolvedPolicySnapshot {
+function persistedPolicySnapshot(value: unknown): ResolvedPolicySnapshot {
   if (
     !value ||
     typeof value !== "object" ||

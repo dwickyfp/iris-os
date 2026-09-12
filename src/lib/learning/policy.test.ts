@@ -2,10 +2,10 @@ import { describe, expect, test } from "vitest";
 import {
   canAutoPromoteSkill,
   extractLearningSignal,
+  isChatCorrection,
   isLearningAllowed,
   learningConfidence,
   learningSuppressionKey,
-  isChatCorrection,
   procedureSimilarity,
 } from "./policy";
 

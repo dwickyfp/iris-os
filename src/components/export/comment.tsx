@@ -1,15 +1,15 @@
 "use client";
 
 import { ChatExportCommentWithUser } from "app-types/chat-export";
-import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
-import { Button } from "ui/button";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Button } from "ui/button";
 
+import { notify } from "lib/notify";
+import { CornerDownRightIcon } from "lucide-react";
 import { mutate } from "swr";
 import MentionInput from "../mention-input";
-import { CornerDownRightIcon } from "lucide-react";
-import { notify } from "lib/notify";
 
 export default function Comment({
   comment,

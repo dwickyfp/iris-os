@@ -3,17 +3,17 @@ import { AppSidebar } from "@/components/layouts/app-sidebar";
 import { cookies } from "next/headers";
 import { SidebarProvider } from "ui/sidebar";
 
+import { ChatSessionHost } from "@/components/chat-session-host";
 import { AppPopupProvider } from "@/components/layouts/app-popup-provider";
 import { UserDetailContent } from "@/components/user/user-detail/user-detail-content";
 import { UserDetailContentSkeleton } from "@/components/user/user-detail/user-detail-content-skeleton";
 import { getSession } from "lib/auth/server";
 import { COOKIE_KEY_SIDEBAR_STATE } from "lib/const";
 import { SWRConfigProvider } from "./swr-config";
-import { ChatSessionHost } from "@/components/chat-session-host";
 
+import { isV2FeatureEnabled } from "lib/feature-flags";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import { isV2FeatureEnabled } from "lib/feature-flags";
 export default async function ChatLayout({
   children,
 }: { children: React.ReactNode }) {

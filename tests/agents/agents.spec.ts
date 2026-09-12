@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { TEST_USERS } from "../constants/test-users";
 
 test.describe("Agent Access Spec", () => {

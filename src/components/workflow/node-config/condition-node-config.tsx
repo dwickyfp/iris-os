@@ -9,8 +9,6 @@ import {
 } from "lib/ai/workflow/workflow.interface";
 import { PlusIcon, TrashIcon } from "lucide-react";
 import { Button } from "ui/button";
-import { Separator } from "ui/separator";
-import { VariableSelect } from "../variable-select";
 import {
   Select,
   SelectContent,
@@ -18,26 +16,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "ui/select";
+import { Separator } from "ui/separator";
+import { VariableSelect } from "../variable-select";
 
-import { VariableMentionItem } from "../variable-mention-item";
+import { useUpdate } from "@/hooks/use-update";
 import {
   BooleanConditionOperator,
   ConditionBranch,
   ConditionOperator,
   ConditionRule,
-  getFirstConditionOperator,
   NumberConditionOperator,
   StringConditionOperator,
+  getFirstConditionOperator,
 } from "lib/ai/workflow/condition";
-import { useCallback, useMemo, useState } from "react";
 import { findJsonSchemaByPath } from "lib/ai/workflow/shared.workflow";
-import { Badge } from "ui/badge";
 import { cn, generateUUID } from "lib/utils";
-import { NodeSelect } from "../node-select";
-import { useUpdate } from "@/hooks/use-update";
-import { createAppendNode } from "../create-append-node";
 import { useTranslations } from "next-intl";
+import { useCallback, useMemo, useState } from "react";
+import { Badge } from "ui/badge";
 import { Input } from "ui/input";
+import { createAppendNode } from "../create-append-node";
+import { NodeSelect } from "../node-select";
+import { VariableMentionItem } from "../variable-mention-item";
 
 export function ConditionNodeDataConfig({
   data,

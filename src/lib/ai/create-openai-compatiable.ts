@@ -1,9 +1,9 @@
-import { createAzureOpenAICompatible } from "./azure-openai-compatible";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { LanguageModel } from "ai";
 import { isString } from "lib/utils";
 import logger from "logger";
 import { z } from "zod";
+import { createAzureOpenAICompatible } from "./azure-openai-compatible";
 
 /**
  * OpenAI-compatible models from an environment variable.

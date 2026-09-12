@@ -1,22 +1,22 @@
 import "server-only";
 
-import type {
-  OAuthTokens,
-  OAuthClientInformationFull,
-  OAuthClientMetadata,
-  OAuthClientInformation,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
   OAuthClientProvider,
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
+import type {
+  OAuthClientInformation,
+  OAuthClientInformationFull,
+  OAuthClientMetadata,
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 
-import globalLogger from "lib/logger";
-import { colorize } from "consola/utils";
-import { generateUUID } from "lib/utils";
-import { pgMcpOAuthRepository } from "lib/db/pg/repositories/mcp-oauth-repository.pg";
 import { McpOAuthSession } from "app-types/mcp";
 import { ConsolaInstance } from "consola";
+import { colorize } from "consola/utils";
+import { pgMcpOAuthRepository } from "lib/db/pg/repositories/mcp-oauth-repository.pg";
+import globalLogger from "lib/logger";
+import { generateUUID } from "lib/utils";
 
 /**
  * PostgreSQL-based OAuth client provider for MCP servers

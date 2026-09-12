@@ -1,6 +1,6 @@
+import type { MemoryScope, UserMemory } from "app-types/memory";
 import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { generateUUID } from "lib/utils";
-import type { MemoryScope, UserMemory } from "app-types/memory";
 import { pgDb as db } from "../db.pg";
 import {
   MemoryEdgeTable,

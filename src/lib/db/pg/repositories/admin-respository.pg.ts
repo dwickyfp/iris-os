@@ -1,10 +1,8 @@
 import {
   AdminRepository,
-  AdminUsersQuery,
   AdminUsersPaginated,
+  AdminUsersQuery,
 } from "app-types/admin";
-import { pgDb as db } from "../db.pg";
-import { UserTable, SessionTable } from "../schema.pg";
 import {
   and,
   asc,
@@ -16,6 +14,8 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { pgDb as db } from "../db.pg";
+import { SessionTable, UserTable } from "../schema.pg";
 
 // Helper function to get user columns without password
 const getUserColumnsWithoutPassword = () => {

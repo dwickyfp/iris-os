@@ -1,4 +1,4 @@
-import { useRef, useEffect, memo } from "react";
+import { memo, useEffect, useRef } from "react";
 
 const LetterGlitch = ({
   glitchColors = ["#d1d5db", "#6b7280", "#374151"],

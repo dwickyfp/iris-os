@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  SkillEvalFixtureSchema,
   type SkillEvalFixture,
+  SkillEvalFixtureSchema,
 } from "../src/lib/ai/skill/evaluation";
 
 export const reportDirectory = join(process.cwd(), "artifacts", "skills");

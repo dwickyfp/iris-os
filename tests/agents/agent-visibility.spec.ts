@@ -1,10 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { TEST_USERS } from "../constants/test-users";
 import {
   clickAndWaitForNavigation,
   openDropdown,
   selectDropdownOption,
 } from "../utils/test-helpers";
-import { TEST_USERS } from "../constants/test-users";
 
 // Test names to ensure uniqueness across test runs
 const testSuffix =

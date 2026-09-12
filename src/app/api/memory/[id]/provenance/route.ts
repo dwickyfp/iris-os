@@ -1,7 +1,7 @@
 import { MemoryNodeTypeSchema } from "app-types/memory";
 import { getSession } from "auth/server";
-import { memoryGraphRepository } from "lib/db/repository";
 import { resolveMemoryScopeFromRequest } from "lib/ai/memory/scope-server";
+import { memoryGraphRepository } from "lib/db/repository";
 
 export async function GET(
   request: Request,

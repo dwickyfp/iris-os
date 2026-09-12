@@ -1,7 +1,7 @@
+import { getDatabaseAuthConfig } from "auth/config.server";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { Button } from "ui/button";
-import { getDatabaseAuthConfig } from "auth/config.server";
 
 export default async function SignUpLayout({
   children,

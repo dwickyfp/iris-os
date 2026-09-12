@@ -1,5 +1,5 @@
-import { JSONSchema7 } from "json-schema";
 import { tool as createTool } from "ai";
+import { JSONSchema7 } from "json-schema";
 import { jsonSchemaToZod } from "lib/json-schema-to-zod";
 
 const codeDescription = `JavaScript code that will be executed in the user's browser. You can use await directly since the code runs in an async context (e.g., await fetch('https://api.example.com/data')).

@@ -1,10 +1,12 @@
+import { JSONSchema7 } from "json-schema";
+import { cleanVariableName } from "lib/utils";
 import {
   CheckIcon,
   CopyCheckIcon,
   HashIcon,
-  TypeIcon,
   PlusIcon,
   TrashIcon,
+  TypeIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
@@ -17,6 +19,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Button } from "ui/button";
+import { Checkbox } from "ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -28,18 +31,15 @@ import {
   DialogTrigger,
 } from "ui/dialog";
 import { Input } from "ui/input";
-import { Checkbox } from "ui/checkbox";
 import { Label } from "ui/label";
-import { JSONSchema7 } from "json-schema";
-import { Switch } from "ui/switch";
 import {
   Select,
-  SelectTrigger,
   SelectContent,
   SelectItem,
+  SelectTrigger,
   SelectValue,
 } from "ui/select";
-import { cleanVariableName } from "lib/utils";
+import { Switch } from "ui/switch";
 
 type FieldType = "string" | "number" | "boolean";
 export type Feild = {

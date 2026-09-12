@@ -1,5 +1,5 @@
-import { getSession } from "auth/server";
 import { UserPreferencesZodSchema } from "app-types/user";
+import { getSession } from "auth/server";
 import { userRepository } from "lib/db/repository";
 import { NextResponse } from "next/server";
 

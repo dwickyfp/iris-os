@@ -1,7 +1,7 @@
 "use client";
 
-import { ShareableCard } from "@/components/shareable-card";
 import type { Visibility } from "@/components/shareable-actions";
+import { ShareableCard } from "@/components/shareable-card";
 import { useBookmark } from "@/hooks/queries/use-bookmark";
 import { useMutateSkills } from "@/hooks/queries/use-skills";
 import { useSkills } from "@/hooks/queries/use-skills";

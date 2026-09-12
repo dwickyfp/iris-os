@@ -1,7 +1,7 @@
-import { Skeleton } from "ui/skeleton";
-import { Card, CardDescription, CardHeader, CardTitle } from "ui/card";
-import { BackgroundPaths } from "ui/background-paths";
 import { getTranslations } from "next-intl/server";
+import { BackgroundPaths } from "ui/background-paths";
+import { Card, CardDescription, CardHeader, CardTitle } from "ui/card";
+import { Skeleton } from "ui/skeleton";
 
 export default async function AgentsLoading() {
   const t = await getTranslations();

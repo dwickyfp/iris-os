@@ -1,9 +1,9 @@
-import { Think } from "ui/think";
-import { getTranslations } from "next-intl/server";
-import { FlipWords } from "ui/flip-words";
-import { BackgroundPaths } from "ui/background-paths";
 import { getSession } from "lib/auth/server";
+import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
+import { BackgroundPaths } from "ui/background-paths";
+import { FlipWords } from "ui/flip-words";
+import { Think } from "ui/think";
 
 export default async function AuthLayout({
   children,

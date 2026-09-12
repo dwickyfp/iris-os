@@ -1,8 +1,8 @@
-import type { z } from "zod";
 import { LearningSettingsSchema } from "app-types/learning";
 import { eq } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import { LearningSettingTable } from "lib/db/pg/schema.pg";
+import type { z } from "zod";
 
 export const DEFAULT_LEARNING_SETTINGS = LearningSettingsSchema.parse({
   enabled: true,

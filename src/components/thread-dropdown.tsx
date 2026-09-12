@@ -1,4 +1,5 @@
 "use client";
+import { addItemToArchiveAction } from "@/app/api/archive/actions";
 import { deleteThreadAction, updateThreadAction } from "@/app/api/chat/actions";
 import { appStore } from "@/app/store";
 import { useToRef } from "@/hooks/use-latest";
@@ -10,12 +11,20 @@ import {
   Trash,
   UploadIcon,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { type PropsWithChildren, useState } from "react";
 import { toast } from "sonner";
 import { mutate } from "swr";
 import { safe } from "ts-safe";
 import { Button } from "ui/button";
+import {
+  Command,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "ui/command";
 import {
   Dialog,
   DialogClose,
@@ -26,23 +35,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "ui/dialog";
-import { Input } from "ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "ui/popover";
-import {
-  Command,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "ui/command";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
-import { useTranslations } from "next-intl";
-import { addItemToArchiveAction } from "@/app/api/archive/actions";
+import { Input } from "ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "ui/popover";
 import { useShallow } from "zustand/shallow";
 import { ChatExportPopup } from "./export/chat-export-popup";
 

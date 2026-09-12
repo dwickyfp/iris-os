@@ -4,7 +4,7 @@ import type {
   WorkspaceUpdateInput,
 } from "app-types/workspace";
 import { describe, expect, it } from "vitest";
-import { createWorkspaceService, type WorkspaceRepository } from "./service";
+import { type WorkspaceRepository, createWorkspaceService } from "./service";
 
 function createMemoryRepository(seed: Workspace[] = []): WorkspaceRepository {
   const rows = new Map(seed.map((workspace) => [workspace.id, workspace]));

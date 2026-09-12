@@ -1,5 +1,5 @@
-import type { WorkspaceRepository } from "lib/workspace/service";
 import { and, desc, eq } from "drizzle-orm";
+import type { WorkspaceRepository } from "lib/workspace/service";
 import { pgDb as db } from "../db.pg";
 import { WorkspaceTable } from "../schema.pg";
 

@@ -1,11 +1,11 @@
-import { test, expect, Page } from "@playwright/test";
+import { Page, expect, test } from "@playwright/test";
+import { TEST_USERS } from "../constants/test-users";
 import {
-  uniqueTestName,
   clickAndWaitForNavigation,
   openDropdown,
   selectDropdownOption,
+  uniqueTestName,
 } from "../utils/test-helpers";
-import { TEST_USERS } from "../constants/test-users";
 
 async function createAgent(
   page: Page,

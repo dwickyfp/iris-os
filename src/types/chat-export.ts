@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { UIMessage } from "ai";
+import { z } from "zod";
 import { ChatMetadata } from "./chat";
 import { TipTapMentionJsonContent } from "./util";
 

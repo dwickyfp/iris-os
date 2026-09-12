@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Button } from "./button";
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./dialog";
-import { Button } from "./button";
 
 const AlertDialog = Dialog;
 const AlertDialogTrigger = DialogTrigger;

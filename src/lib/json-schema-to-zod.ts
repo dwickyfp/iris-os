@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { JSONSchema7 } from "json-schema";
+import { z } from "zod";
 
 /**
  * Converts a JSON Schema to a Zod schema (simplified version)

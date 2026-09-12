@@ -436,7 +436,7 @@ export async function registerParentResumeWorkers(boss: PgBoss) {
   await boss.work<{ parentRunId: string }>(
     PARENT_RESUME_QUEUE,
     async (jobs) => {
-      for (const job of jobs) await execute(job.data.parentRunId);
+      await Promise.all(jobs.map((job) => execute(job.data.parentRunId)));
     },
   );
   await boss.work(PARENT_RESUME_SWEEP_QUEUE, async () => {

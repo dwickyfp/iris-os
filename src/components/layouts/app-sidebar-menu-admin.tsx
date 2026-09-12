@@ -1,17 +1,17 @@
-import { useMemo } from "react";
+import { Activity, Settings, Shield, Users } from "lucide-react";
+import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useMemo } from "react";
 import {
   SidebarMenu,
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "ui/sidebar";
-import { Tooltip } from "ui/tooltip";
 import { SidebarMenuItem } from "ui/sidebar";
 import { SidebarMenuButton } from "ui/sidebar";
-import { Activity, Settings, Shield, Users } from "lucide-react";
-import Link from "next/link";
-import { useTranslations } from "next-intl";
+import { Tooltip } from "ui/tooltip";
 
 const AppSidebarAdmin = () => {
   const router = useRouter();

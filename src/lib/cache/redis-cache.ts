@@ -1,6 +1,6 @@
 import Redis, { type RedisOptions } from "ioredis";
-import { Cache } from "./cache.interface";
 import logger from "logger";
+import { Cache } from "./cache.interface";
 
 export interface RedisCacheOptions {
   redis?: Redis;

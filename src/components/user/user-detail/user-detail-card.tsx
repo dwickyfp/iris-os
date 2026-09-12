@@ -1,16 +1,16 @@
 "use client";
 
-import { Card, CardHeader } from "ui/card";
+import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { getUserAvatar } from "lib/user/utils";
 import { Avatar } from "ui/avatar";
 import { AvatarImage } from "ui/avatar";
 import { AvatarFallback } from "ui/avatar";
+import { Badge } from "ui/badge";
+import { Card, CardHeader } from "ui/card";
 import { CardTitle } from "ui/card";
 import { CardDescription } from "ui/card";
-import { Badge } from "ui/badge";
-import { BasicUserWithLastLogin } from "app-types/user";
 import { UserRoleBadges } from "./user-role-badges";
-import { getUserAvatar } from "lib/user/utils";
-import { useProfileTranslations } from "@/hooks/use-profile-translations";
 
 export function UserDetailCard({
   user,

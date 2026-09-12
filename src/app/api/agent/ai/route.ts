@@ -1,19 +1,19 @@
 import { streamObject } from "ai";
 
+import { ChatModel } from "app-types/chat";
 import { customModelProvider } from "lib/ai/models";
 import { buildAgentGenerationPrompt } from "lib/ai/prompts";
 import globalLogger from "logger";
-import { ChatModel } from "app-types/chat";
 
+import { AgentGenerateSchema } from "app-types/agent";
 import { getSession } from "auth/server";
 import { colorize } from "consola/utils";
-import { AgentGenerateSchema } from "app-types/agent";
+import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
+import { workflowRepository } from "lib/db/repository";
+import { objectFlow } from "lib/utils";
+import { safe } from "ts-safe";
 import { z } from "zod";
 import { loadAppDefaultTools } from "../../chat/shared.chat";
-import { workflowRepository } from "lib/db/repository";
-import { safe } from "ts-safe";
-import { objectFlow } from "lib/utils";
-import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
 
 const logger = globalLogger.withDefaults({
   message: colorize("blackBright", `Agent Generate API: `),

@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DBEdge, DBNode } from "app-types/workflow";
-import { NodeKind } from "../workflow.interface";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  StringConditionOperator,
   BooleanConditionOperator,
+  StringConditionOperator,
 } from "../condition";
+import { NodeKind } from "../workflow.interface";
 
 // Mock MCP modules to avoid server-only imports
 vi.mock("lib/ai/mcp/mcp-manager", () => ({

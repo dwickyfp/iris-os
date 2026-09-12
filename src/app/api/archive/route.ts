@@ -1,7 +1,7 @@
-import { archiveRepository } from "lib/db/repository";
-import { getSession } from "auth/server";
-import { z } from "zod";
 import { ArchiveCreateSchema } from "app-types/archive";
+import { getSession } from "auth/server";
+import { archiveRepository } from "lib/db/repository";
+import { z } from "zod";
 
 export async function GET() {
   const session = await getSession();

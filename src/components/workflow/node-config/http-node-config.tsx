@@ -1,9 +1,9 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -11,21 +11,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link, Plus, TriangleAlertIcon, VariableIcon } from "lucide-react";
+import { useReactFlow } from "@xyflow/react";
+import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
 import {
-  HttpNodeData,
   HttpMethod,
+  HttpNodeData,
   OutputSchemaSourceKey,
 } from "lib/ai/workflow/workflow.interface";
 import { UINode } from "lib/ai/workflow/workflow.interface";
-import { HttpValueInput } from "../http-value-input";
-import { useState } from "react";
-import { useReactFlow } from "@xyflow/react";
 import { capitalizeFirstLetter, cn } from "lib/utils";
+import { Link, Plus, TriangleAlertIcon, VariableIcon } from "lucide-react";
+import { useState } from "react";
 import { Textarea } from "ui/textarea";
-import { VariableSelect } from "../variable-select";
+import { HttpValueInput } from "../http-value-input";
 import { VariableMentionItem } from "../variable-mention-item";
-import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
+import { VariableSelect } from "../variable-select";
 
 const HTTP_METHODS: HttpMethod[] = [
   "GET",

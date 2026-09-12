@@ -5,8 +5,8 @@ import equal from "lib/equal";
 import { cn } from "lib/utils";
 import { ImagesIcon } from "lucide-react";
 import { memo, useMemo } from "react";
-import { TextShimmer } from "ui/text-shimmer";
 import LetterGlitch from "ui/letter-glitch";
+import { TextShimmer } from "ui/text-shimmer";
 
 interface ImageGeneratorToolInvocationProps {
   part: ToolUIPart;

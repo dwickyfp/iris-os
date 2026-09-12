@@ -1,11 +1,11 @@
-import { Badge } from "ui/badge";
+import { useProfileTranslations } from "@/hooks/use-profile-translations";
 import { userRolesInfo } from "app-types/roles";
 import { UserRoleNames } from "app-types/roles";
 import { BasicUserWithLastLogin } from "app-types/user";
 import { cn } from "lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { Edit2 } from "lucide-react";
-import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { Badge } from "ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 
 export function UserRoleBadges({
   user,

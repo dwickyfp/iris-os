@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
 import { requireAdminPermission } from "auth/permissions";
 import { unauthorized } from "next/navigation";
+import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 

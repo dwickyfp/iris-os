@@ -1,9 +1,9 @@
-import { objectFlow, toAny } from "lib/utils";
-import { OutputSchemaSourceKey } from "../workflow.interface";
-import { graphStore } from "ts-edge";
-import { DBEdge, DBNode } from "app-types/workflow";
 import { ObjectJsonSchema7 } from "app-types/util";
+import { DBEdge, DBNode } from "app-types/workflow";
+import { objectFlow, toAny } from "lib/utils";
+import { graphStore } from "ts-edge";
 import { defaultObjectJsonSchema } from "../shared.workflow";
+import { OutputSchemaSourceKey } from "../workflow.interface";
 
 export interface WorkflowRuntimeState {
   query: Record<string, unknown>;

@@ -4,12 +4,12 @@ import * as React from "react";
 
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart as RechartsLineChart,
+  ResponsiveContainer,
   XAxis,
   YAxis,
-  Legend,
-  ResponsiveContainer,
 } from "recharts";
 
 import {
@@ -26,9 +26,9 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 
+import { generateUniqueKey } from "lib/utils";
 import { JsonViewPopup } from "../json-view-popup";
 import { sanitizeCssVariableName } from "./shared.tool-invocation";
-import { generateUniqueKey } from "lib/utils";
 // LineChart component props interface
 export interface LineChartProps {
   // Chart title (required)

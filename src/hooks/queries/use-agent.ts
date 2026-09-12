@@ -1,8 +1,8 @@
 "use client";
 import { Agent } from "app-types/agent";
+import { fetcher } from "lib/utils";
 import useSWR, { SWRConfiguration } from "swr";
 import { handleErrorWithToast } from "ui/shared-toast";
-import { fetcher } from "lib/utils";
 
 interface UseAgentOptions extends SWRConfiguration {
   enabled?: boolean;

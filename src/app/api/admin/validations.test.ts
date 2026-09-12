@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { UpdateUserRoleSchema } from "./validations";
 import { USER_ROLES } from "app-types/roles";
+import { describe, expect, it } from "vitest";
+import { UpdateUserRoleSchema } from "./validations";
 
 describe("Admin Validations", () => {
   describe("UpdateUserRoleSchema", () => {

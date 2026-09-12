@@ -1,7 +1,7 @@
 import "server-only";
 
-import { contextEngine } from "lib/ai/context-compaction";
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
+import { contextEngine } from "lib/ai/context-compaction";
 import { goalRequirementResolver } from "./goal-requirement-resolver";
 import { type RunPreparationDependencies, RunPreparer } from "./run-preparer";
 import { serverBudgetResolver } from "./server-budget-resolver";

@@ -1,27 +1,27 @@
-import { NodeKind, UINode } from "lib/ai/workflow/workflow.interface";
 import { useReactFlow } from "@xyflow/react";
-import { NodeIcon } from "./node-icon";
-import { Input } from "ui/input";
+import { NodeKind, UINode } from "lib/ai/workflow/workflow.interface";
+import { nextTick } from "lib/utils";
+import { MoreHorizontalIcon, XIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
-import { MoreHorizontalIcon, XIcon } from "lucide-react";
-import { NodeContextMenuContent } from "./node-context-menu-content";
-import { Textarea } from "ui/textarea";
-import { Separator } from "ui/separator";
-import { InputNodeDataConfig } from "./node-config/input-node-config";
-import { OutputNodeDataConfig } from "./node-config/output-node-config";
-import { LLMNodeDataConfig } from "./node-config/llm-node-config";
-import { ConditionNodeDataConfig } from "./node-config/condition-node-config";
+import { Input } from "ui/input";
 import { Label } from "ui/label";
+import { Separator } from "ui/separator";
+import { Textarea } from "ui/textarea";
 import { NextNodeInfo } from "./next-node-info";
-import { nextTick } from "lib/utils";
-import { ToolNodeDataConfig } from "./node-config/tool-node-config";
+import { ConditionNodeDataConfig } from "./node-config/condition-node-config";
 import { HttpNodeConfig } from "./node-config/http-node-config";
+import { InputNodeDataConfig } from "./node-config/input-node-config";
+import { LLMNodeDataConfig } from "./node-config/llm-node-config";
+import { OutputNodeDataConfig } from "./node-config/output-node-config";
 import { TemplateNodeConfig } from "./node-config/template-node-config";
-import { useTranslations } from "next-intl";
+import { ToolNodeDataConfig } from "./node-config/tool-node-config";
+import { NodeContextMenuContent } from "./node-context-menu-content";
+import { NodeIcon } from "./node-icon";
 
 export function SelectedNodeConfigTab({ node }: { node: UINode }) {
   const t = useTranslations();

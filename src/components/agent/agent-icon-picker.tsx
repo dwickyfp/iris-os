@@ -1,16 +1,16 @@
 "use client";
 
-import { useTheme } from "next-themes";
+import { AgentIcon } from "app-types/agent";
 import EmojiPicker, { Theme } from "emoji-picker-react";
 import { BACKGROUND_COLORS } from "lib/const";
-import { createDebounce, cn } from "lib/utils";
+import { cn, createDebounce } from "lib/utils";
+import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
-import { AgentIcon } from "app-types/agent";
 
 const colorUpdateDebounce = createDebounce();
 

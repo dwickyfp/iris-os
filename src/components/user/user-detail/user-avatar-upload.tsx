@@ -1,24 +1,24 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Avatar, AvatarImage, AvatarFallback } from "ui/avatar";
+import { useFileUpload } from "@/hooks/use-presigned-upload";
+import { cn } from "@/lib/utils";
 import {
   Camera,
+  ImageIcon,
   Loader2,
-  Upload,
   Smile,
   Sparkles,
-  ImageIcon,
+  Upload,
 } from "lucide-react";
-import { useFileUpload } from "@/hooks/use-presigned-upload";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "ui/popover";
-import { Button } from "ui/button";
 import { useTranslations } from "next-intl";
+import { useRef, useState } from "react";
+import { toast } from "sonner";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Button } from "ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "ui/popover";
 
-import { EmojiAvatarDialog } from "./emoji-avatar-dialog";
 import { DefaultAvatarDialog } from "./default-avatar-dialog";
+import { EmojiAvatarDialog } from "./emoji-avatar-dialog";
 import { GenerateAvatarDialog } from "./generate-avatar-dialog";
 
 interface UserAvatarUploadProps {

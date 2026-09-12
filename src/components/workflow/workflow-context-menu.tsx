@@ -1,5 +1,7 @@
 "use client";
 import { DBWorkflow } from "app-types/workflow";
+import { useState } from "react";
+import { safe } from "ts-safe";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,13 +9,11 @@ import {
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
 import { EditWorkflowPopup } from "./edit-workflow-popup";
-import { useState } from "react";
-import { safe } from "ts-safe";
 
+import { PencilIcon, Trash2Icon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { mutate } from "swr";
-import { useTranslations } from "next-intl";
-import { PencilIcon, Trash2Icon } from "lucide-react";
 
 interface WorkflowContextMenuProps {
   children: React.ReactNode;

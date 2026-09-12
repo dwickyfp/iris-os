@@ -33,11 +33,12 @@ describe("Exa web search settings", () => {
     }));
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockImplementation(async () =>
-        new Response(JSON.stringify({ results: [] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+      vi.fn().mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ results: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
       ),
     );
   });
@@ -97,16 +98,15 @@ describe("Exa web search settings", () => {
     );
   });
 
-  it.each([
-    "",
-    "file:///tmp/exa",
-    `https://api.exa.ai/${"a".repeat(2048)}`,
-  ])("rejects an unsafe base URL: %s", async (baseUrl) => {
-    getPlain.mockResolvedValueOnce(baseUrl);
+  it.each(["", "file:///tmp/exa", `https://api.exa.ai/${"a".repeat(2048)}`])(
+    "rejects an unsafe base URL: %s",
+    async (baseUrl) => {
+      getPlain.mockResolvedValueOnce(baseUrl);
 
-    await expect(executeSearch()).rejects.toThrow(
-      "Exa API base URL is invalid",
-    );
-    expect(fetch).not.toHaveBeenCalled();
-  });
+      await expect(executeSearch()).rejects.toThrow(
+        "Exa API base URL is invalid",
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 });

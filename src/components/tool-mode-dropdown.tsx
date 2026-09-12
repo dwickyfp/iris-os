@@ -2,9 +2,9 @@
 
 import { appStore } from "@/app/store";
 import {
+  Shortcuts,
   getShortcutKeyList,
   isShortcutEvent,
-  Shortcuts,
 } from "lib/keyboard-shortcuts";
 import {
   Check,
@@ -14,9 +14,9 @@ import {
   PenOff,
   Settings2,
 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { Button } from "ui/button";
-import { useTranslations } from "next-intl";
 
 import {
   DropdownMenu,
@@ -29,8 +29,8 @@ import {
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
 
-import { useShallow } from "zustand/shallow";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { useShallow } from "zustand/shallow";
 
 import { cn, createDebounce } from "lib/utils";
 

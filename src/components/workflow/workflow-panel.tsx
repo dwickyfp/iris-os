@@ -6,28 +6,28 @@ import { Separator } from "@/components/ui/separator";
 
 import { UINode } from "lib/ai/workflow/workflow.interface";
 
-import { Loader, PlayIcon, AlignHorizontalSpaceAround } from "lucide-react";
+import { AlignHorizontalSpaceAround, Loader, PlayIcon } from "lucide-react";
 import { Button } from "ui/button";
 
 import equal from "lib/equal";
 
+import { ShareableActions } from "@/components/shareable-actions";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { ShareableActions } from "@/components/shareable-actions";
 
 import { DBWorkflow } from "app-types/workflow";
 
-import { SelectedNodeConfigTab } from "./selected-node-config-tab";
-import { ExecuteTab } from "./node-config/execute-tab";
 import { useReactFlow } from "@xyflow/react";
+import { arrangeNodes } from "lib/ai/workflow/arrange-nodes";
+import { allNodeValidate } from "lib/ai/workflow/node-validate";
+import { useTranslations } from "next-intl";
+import { toast } from "sonner";
+import { mutate } from "swr";
 import { safe } from "ts-safe";
 import { handleErrorWithToast } from "ui/shared-toast";
-import { mutate } from "swr";
-import { allNodeValidate } from "lib/ai/workflow/node-validate";
-import { toast } from "sonner";
-import { useTranslations } from "next-intl";
-import { arrangeNodes } from "lib/ai/workflow/arrange-nodes";
 import { EditWorkflowPopup } from "./edit-workflow-popup";
+import { ExecuteTab } from "./node-config/execute-tab";
+import { SelectedNodeConfigTab } from "./selected-node-config-tab";
 
 export const WorkflowPanel = memo(
   function WorkflowPanel({

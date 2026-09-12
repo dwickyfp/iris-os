@@ -4,10 +4,10 @@ import * as React from "react";
 import {
   Bar,
   CartesianGrid,
-  XAxis,
-  YAxis,
   BarChart as RechartsBarChart,
   ResponsiveContainer,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 import {
@@ -24,9 +24,9 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 
+import { generateUniqueKey } from "lib/utils";
 import { JsonViewPopup } from "../json-view-popup";
 import { sanitizeCssVariableName } from "./shared.tool-invocation";
-import { generateUniqueKey } from "lib/utils";
 
 // BarChart component props interface
 export interface BarChartProps {

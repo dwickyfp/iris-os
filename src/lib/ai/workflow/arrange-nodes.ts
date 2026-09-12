@@ -1,5 +1,5 @@
 import { Edge } from "@xyflow/react";
-import { UINode, NodeKind } from "./workflow.interface";
+import { NodeKind, UINode } from "./workflow.interface";
 
 const LEVEL_GAP = 360; // Gap between levels on X axis
 const NODE_PADDING = 120; // Padding between nodes to prevent overlap

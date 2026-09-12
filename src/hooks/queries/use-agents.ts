@@ -1,10 +1,10 @@
 "use client";
 import { appStore } from "@/app/store";
-import useSWR, { SWRConfiguration, useSWRConfig } from "swr";
-import { handleErrorWithToast } from "ui/shared-toast";
-import { fetcher } from "lib/utils";
 import { AgentSummary } from "app-types/agent";
 import { authClient } from "auth/client";
+import { fetcher } from "lib/utils";
+import useSWR, { SWRConfiguration, useSWRConfig } from "swr";
+import { handleErrorWithToast } from "ui/shared-toast";
 
 interface UseAgentsOptions extends SWRConfiguration {
   filters?: ("all" | "mine" | "shared" | "bookmarked")[];

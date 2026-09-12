@@ -3,7 +3,7 @@
 
 import { admin, editor, user as userRole } from "./roles";
 import type { BetterAuthRole } from "./types";
-import { parseRoleString, isBetterAuthRole } from "./types";
+import { isBetterAuthRole, parseRoleString } from "./types";
 
 /**
  * Get the role permissions based on user's role string

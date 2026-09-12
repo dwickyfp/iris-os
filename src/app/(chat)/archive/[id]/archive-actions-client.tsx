@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
-import { Button } from "ui/button";
+import { ArchiveDialog } from "@/components/archive-dialog";
 import { Settings2, Trash2 } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,11 +14,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "ui/dialog";
-import { ArchiveDialog } from "@/components/archive-dialog";
 
-import { toast } from "sonner";
-import { Archive } from "app-types/archive";
 import { deleteArchiveAction } from "@/app/api/archive/actions";
+import { Archive } from "app-types/archive";
+import { toast } from "sonner";
 import { mutate } from "swr";
 
 interface ArchiveActionsClientProps {

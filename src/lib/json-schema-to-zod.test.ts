@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { JSONSchema7 } from "json-schema";
-import { jsonSchemaToZod, jsonSchemaStringToZod } from "./json-schema-to-zod";
+import { jsonSchemaStringToZod, jsonSchemaToZod } from "./json-schema-to-zod";
 
 // Import the tavilySearchSchema for testing
 const tavilySearchSchema: JSONSchema7 = {

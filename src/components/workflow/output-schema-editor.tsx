@@ -1,20 +1,39 @@
 "use client";
 
 import { ObjectJsonSchema7 } from "app-types/util";
+import { Button } from "ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogFooter,
-  DialogClose,
 } from "ui/dialog";
-import { Button } from "ui/button";
 import { Label } from "ui/label";
 import { Textarea } from "ui/textarea";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "ui/tabs";
+import { generateObjectAction } from "@/app/api/chat/actions";
+import { appStore } from "@/app/store";
+import { JSONSchema7 } from "json-schema";
+import { defaultObjectJsonSchema } from "lib/ai/workflow/shared.workflow";
+import { jsonSchemaToZod } from "lib/json-schema-to-zod";
+import { notify } from "lib/notify";
+import { errorToString, validateSchema } from "lib/utils";
+import {
+  CodeIcon,
+  FileTextIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+  VariableIcon,
+  WandSparklesIcon,
+} from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { safe } from "ts-safe";
 import {
   Card,
   CardContent,
@@ -22,31 +41,12 @@ import {
   CardHeader,
   CardTitle,
 } from "ui/card";
-import {
-  PlusIcon,
-  TrashIcon,
-  WandSparklesIcon,
-  CodeIcon,
-  FileTextIcon,
-  PencilIcon,
-  VariableIcon,
-} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "ui/tabs";
 import {
   EditJsonSchemaFieldPopup,
   Feild,
 } from "../edit-json-schema-field-popup";
-import { useState, useCallback, useMemo, useEffect } from "react";
-import { toast } from "sonner";
-import { generateObjectAction } from "@/app/api/chat/actions";
-import { appStore } from "@/app/store";
 import { SelectModel } from "../select-model";
-import { notify } from "lib/notify";
-import { useTranslations } from "next-intl";
-import { JSONSchema7 } from "json-schema";
-import { defaultObjectJsonSchema } from "lib/ai/workflow/shared.workflow";
-import { errorToString, validateSchema } from "lib/utils";
-import { safe } from "ts-safe";
-import { jsonSchemaToZod } from "lib/json-schema-to-zod";
 
 type SchemaEditMode = "simple" | "advanced";
 

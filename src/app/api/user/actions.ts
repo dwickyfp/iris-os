@@ -1,28 +1,28 @@
 "use server";
 
+import { auth } from "auth/server";
+import { logger } from "better-auth";
 import {
   validatedActionWithAdminPermission,
   validatedActionWithUserManagePermission,
 } from "lib/action-utils";
-import { headers } from "next/headers";
-import { auth } from "auth/server";
 import {
-  UpdateUserDetailsSchema,
-  DeleteUserSchema,
-  UpdateUserPasswordSchema,
-  UpdateUserActionState,
-  DeleteUserActionState,
-  UpdateUserPasswordActionState,
-} from "./validations";
-import { getUser, getUserAccounts, updateUserDetails } from "lib/user/server";
-import { getTranslations } from "next-intl/server";
-import { logger } from "better-auth";
-import {
-  generateImageWithOpenAI,
-  generateImageWithXAI,
   GeneratedImageResult,
   generateImageWithNanoBanana,
+  generateImageWithOpenAI,
+  generateImageWithXAI,
 } from "lib/ai/image/generate-image";
+import { getUser, getUserAccounts, updateUserDetails } from "lib/user/server";
+import { getTranslations } from "next-intl/server";
+import { headers } from "next/headers";
+import {
+  DeleteUserActionState,
+  DeleteUserSchema,
+  UpdateUserActionState,
+  UpdateUserDetailsSchema,
+  UpdateUserPasswordActionState,
+  UpdateUserPasswordSchema,
+} from "./validations";
 
 export const updateUserImageAction = validatedActionWithUserManagePermission(
   UpdateUserDetailsSchema.pick({ userId: true, image: true }),

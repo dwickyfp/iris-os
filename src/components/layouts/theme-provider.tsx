@@ -1,8 +1,8 @@
 "use client";
 
-import * as React from "react";
-import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { useThemeStyle } from "@/hooks/use-theme-style";
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+import * as React from "react";
 
 export function ThemeProvider({
   children,

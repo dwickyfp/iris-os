@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
+import { canDeleteWorkflow, canEditWorkflow } from "lib/auth/permissions";
 import { workflowRepository } from "lib/db/repository";
-import { canEditWorkflow, canDeleteWorkflow } from "lib/auth/permissions";
 
 export async function GET(
   _: Request,

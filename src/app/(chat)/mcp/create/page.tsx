@@ -2,8 +2,8 @@
 
 import MCPEditor from "@/components/mcp-editor";
 import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";

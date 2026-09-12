@@ -1,14 +1,14 @@
-import { getSession } from "auth/server";
 import {
   UIMessage,
   convertToModelMessages,
   smoothStream,
   streamText,
 } from "ai";
+import { getSession } from "auth/server";
 import { customModelProvider } from "lib/ai/models";
-import globalLogger from "logger";
 import { buildUserSystemPrompt } from "lib/ai/prompts";
 import { getUserPreferences } from "lib/user/server";
+import globalLogger from "logger";
 
 import { colorize } from "consola/utils";
 

@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { appStore } from "@/app/store";
+import { SelectModel } from "@/components/select-model";
 import { experimental_useObject } from "@ai-sdk/react";
-import { ChatModel } from "app-types/chat";
 import { AgentGenerateSchema } from "app-types/agent";
-import { handleErrorWithToast } from "ui/shared-toast";
+import { ChatModel } from "app-types/chat";
 import { CommandIcon, CornerRightUpIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -14,11 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "ui/dialog";
-import { Button } from "ui/button";
-import { Textarea } from "ui/textarea";
 import { MessageLoading } from "ui/message-loading";
-import { SelectModel } from "@/components/select-model";
-import { appStore } from "@/app/store";
+import { handleErrorWithToast } from "ui/shared-toast";
+import { Textarea } from "ui/textarea";
 
 interface GenerateAgentDialogProps {
   open: boolean;

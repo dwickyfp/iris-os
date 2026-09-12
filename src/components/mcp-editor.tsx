@@ -1,31 +1,31 @@
 "use client";
-import { useState, useMemo } from "react";
 import {
-  MCPServerConfig,
   MCPRemoteConfigZodSchema,
+  MCPServerConfig,
   MCPStdioConfigZodSchema,
 } from "app-types/mcp";
-import { Input } from "./ui/input";
-import { Button } from "./ui/button";
-import { Label } from "./ui/label";
-import { Textarea } from "./ui/textarea";
-import JsonView from "./ui/json-view";
-import { toast } from "sonner";
-import { safe } from "ts-safe";
-import { useRouter } from "next/navigation";
-import { createDebounce, fetcher, isNull, safeJSONParse } from "lib/utils";
-import { handleErrorWithToast } from "ui/shared-toast";
-import { mutate } from "swr";
-import { Loader } from "lucide-react";
 import {
   isMaybeMCPServerConfig,
   isMaybeRemoteConfig,
 } from "lib/ai/mcp/is-mcp-config";
+import { createDebounce, fetcher, isNull, safeJSONParse } from "lib/utils";
+import { Loader } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { mutate } from "swr";
+import { safe } from "ts-safe";
+import { handleErrorWithToast } from "ui/shared-toast";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import JsonView from "./ui/json-view";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
 
+import { existMcpClientByServerNameAction } from "@/app/api/mcp/actions";
+import { useTranslations } from "next-intl";
 import { Alert, AlertDescription, AlertTitle } from "ui/alert";
 import { z } from "zod";
-import { useTranslations } from "next-intl";
-import { existMcpClientByServerNameAction } from "@/app/api/mcp/actions";
 
 interface MCPEditorProps {
   initialConfig?: MCPServerConfig;

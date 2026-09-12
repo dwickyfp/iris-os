@@ -1,8 +1,8 @@
-import { z } from "zod";
 import { USER_ROLES, UserRoleNames } from "app-types/roles";
+import { z } from "zod";
 
-import { ActionState } from "lib/action-utils";
 import { BasicUserWithLastLogin } from "app-types/user";
+import { ActionState } from "lib/action-utils";
 
 export const UpdateUserRoleSchema = z.object({
   userId: z.uuid("Invalid user ID"),

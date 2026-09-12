@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
-import { mcpRepository } from "lib/db/repository";
 import { mcpClientsManager } from "lib/ai/mcp/mcp-manager";
+import { mcpRepository } from "lib/db/repository";
 import { z } from "zod";
 
 const requestSchema = z.object({

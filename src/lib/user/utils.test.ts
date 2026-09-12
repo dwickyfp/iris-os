@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
 import { USER_ROLES } from "app-types/roles";
-import { getUserAvatar, getIsUserAdmin } from "./utils";
+import { beforeEach, describe, expect, it } from "vitest";
+import { getIsUserAdmin, getUserAvatar } from "./utils";
 
 describe("User Utils", () => {
   beforeEach(() => {

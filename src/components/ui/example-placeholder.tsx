@@ -1,6 +1,6 @@
 "use client";
-import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useState } from "react";
 
 export function ExamplePlaceholder({ placeholder }: { placeholder: string[] }) {
   const [index, setIndex] = useState(0);

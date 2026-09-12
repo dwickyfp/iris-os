@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "ui/card";
-import { Button } from "ui/button";
-import { Label } from "ui/label";
-import { Shield, Lock, UserCheck, AlertTriangle, Trash2 } from "lucide-react";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { UserRoleBadges } from "./user-role-badges";
-import { UserStatusBadge } from "./user-status-badge";
-import { UserRoleSelector } from "./user-role-selection-dialog";
-import { UpdateUserPasswordDialog } from "./user-update-password-dialog";
-import { UserDeleteDialog } from "./user-delete-dialog";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { AlertTriangle, Lock, Shield, Trash2, UserCheck } from "lucide-react";
+import { useState } from "react";
+import { Button } from "ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "ui/card";
+import { Label } from "ui/label";
+import { UserDeleteDialog } from "./user-delete-dialog";
+import { UserRoleBadges } from "./user-role-badges";
+import { UserRoleSelector } from "./user-role-selection-dialog";
+import { UserStatusBadge } from "./user-status-badge";
+import { UpdateUserPasswordDialog } from "./user-update-password-dialog";
 
 interface UserAccessCardProps {
   user: BasicUserWithLastLogin;

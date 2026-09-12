@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { TEST_USERS } from "../constants/test-users";
 import { ensureSidebarOpen } from "../helpers/sidebar-helper";
 

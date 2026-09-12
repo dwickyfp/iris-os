@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import type { MCPStdioConfig, McpServerInsert } from "app-types/mcp";
+import { beforeEach, describe, expect, it } from "vitest";
 import { MemoryMCPConfigStorage } from "./memory-mcp-config-storage";
-import type { McpServerInsert, MCPStdioConfig } from "app-types/mcp";
 
 describe("MemoryMCPConfigStorage", () => {
   let storage: MemoryMCPConfigStorage;

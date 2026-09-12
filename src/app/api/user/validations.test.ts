@@ -1,12 +1,12 @@
-import { describe, it, expect } from "vitest";
-import {
-  UpdateUserDetailsSchema,
-  UpdateUserRoleSchema,
-  DeleteUserSchema,
-  UpdateUserPasswordSchema,
-  UpdateUserPasswordError,
-} from "./validations";
 import { USER_ROLES } from "app-types/roles";
+import { describe, expect, it } from "vitest";
+import {
+  DeleteUserSchema,
+  UpdateUserDetailsSchema,
+  UpdateUserPasswordError,
+  UpdateUserPasswordSchema,
+  UpdateUserRoleSchema,
+} from "./validations";
 
 describe("User Validations", () => {
   describe("UpdateUserDetailsSchema", () => {

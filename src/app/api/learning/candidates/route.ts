@@ -2,8 +2,8 @@ import { getSession } from "auth/server";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { pgDb } from "lib/db/pg/db.pg";
 import {
-  LearningCandidateTable,
   LearningCandidateEvidenceTable,
+  LearningCandidateTable,
   LearningObservationTable,
 } from "lib/db/pg/schema.pg";
 import { isV2FeatureEnabled } from "lib/feature-flags";

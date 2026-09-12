@@ -3,8 +3,8 @@ import "load-env";
 import { generateObject } from "ai";
 import { z } from "zod";
 import {
-  skip,
   readLatestSkillReport,
+  skip,
   writeSkillReport,
 } from "./skills-benchmark-shared";
 

@@ -1,5 +1,5 @@
-import path from "path";
 import * as fs from "fs";
+import path from "path";
 
 const CONFIG_TEMPLATE = `
 import { type OpenAICompatibleProvider } from "./src/lib/ai/create-openai-compatiable";

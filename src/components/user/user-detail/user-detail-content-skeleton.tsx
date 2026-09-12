@@ -1,7 +1,7 @@
-import { UserDetailFormSkeleton } from "./user-detail-form-skeleton";
-import { UserAccessCardSkeleton } from "./user-access-card-skeleton";
-import { UserStatsCardLoaderSkeleton } from "./user-stats-card-loader";
 import { Skeleton } from "ui/skeleton";
+import { UserAccessCardSkeleton } from "./user-access-card-skeleton";
+import { UserDetailFormSkeleton } from "./user-detail-form-skeleton";
+import { UserStatsCardLoaderSkeleton } from "./user-stats-card-loader";
 
 export function UserDetailContentSkeleton() {
   return (

@@ -5,19 +5,19 @@ import {
 } from "lib/ai/workflow/workflow.interface";
 import { memo, useCallback, useMemo, useRef } from "react";
 
-import { VariableSelectContent } from "./variable-select";
 import { TipTapMentionJsonContent } from "app-types/util";
 import MentionInput from "../mention-input";
+import { VariableSelectContent } from "./variable-select";
 
-import { generateUUID } from "lib/utils";
-import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
-import { VariableMentionItem } from "./variable-mention-item";
 import { useToRef } from "@/hooks/use-latest";
+import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
+import { generateUUID } from "lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "ui/dropdown-menu";
+import { VariableMentionItem } from "./variable-mention-item";
 
 interface OutputSchemaMentionInputProps {
   currentNodeId: string;

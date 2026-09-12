@@ -1,30 +1,30 @@
 import { LLMNodeData, UINode } from "lib/ai/workflow/workflow.interface";
 
-import { SelectModel } from "../../select-model";
-import { Button } from "ui/button";
 import {
   InfoIcon,
   MessageCirclePlusIcon,
   TrashIcon,
   VariableIcon,
 } from "lucide-react";
-import { Select, SelectTrigger, SelectContent, SelectItem } from "ui/select";
-import { OutputSchemaMentionInput } from "../output-schema-mention-input";
+import { Button } from "ui/button";
 import { Label } from "ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "ui/select";
+import { SelectModel } from "../../select-model";
+import { OutputSchemaMentionInput } from "../output-schema-mention-input";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { appStore } from "@/app/store";
-import { Edge, useEdges, useNodes, useReactFlow } from "@xyflow/react";
 import { useWorkflowStore } from "@/app/store/workflow.store";
+import { Edge, useEdges, useNodes, useReactFlow } from "@xyflow/react";
+import { ObjectJsonSchema7 } from "app-types/util";
+import { defaultLLMNodeOutputSchema } from "lib/ai/workflow/create-ui-node";
+import { notify } from "lib/notify";
+import { toAny } from "lib/utils";
 import { useTranslations } from "next-intl";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Separator } from "ui/separator";
 import { Switch } from "ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { OutputSchemaEditor } from "../output-schema-editor";
-import { defaultLLMNodeOutputSchema } from "lib/ai/workflow/create-ui-node";
-import { ObjectJsonSchema7 } from "app-types/util";
-import { toAny } from "lib/utils";
-import { notify } from "lib/notify";
 
 export const LLMNodeDataConfig = memo(function ({
   data,

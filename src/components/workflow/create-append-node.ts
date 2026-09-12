@@ -7,7 +7,7 @@ import {
   NodeKind,
   UINode,
 } from "lib/ai/workflow/workflow.interface";
-import { generateUniqueKey, generateUUID } from "lib/utils";
+import { generateUUID, generateUniqueKey } from "lib/utils";
 
 /**
  * Creates a new workflow node and connects it to an existing source node.

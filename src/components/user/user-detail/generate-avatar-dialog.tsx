@@ -1,6 +1,13 @@
 "use client";
 
+import { generateAvatarImageAction } from "@/app/api/user/actions";
+import { useFileUpload } from "@/hooks/use-presigned-upload";
+import { Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { toast } from "sonner";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -8,12 +15,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "ui/dialog";
-import { Button } from "ui/button";
+import { GeminiIcon } from "ui/gemini-icon";
+import { GrokIcon } from "ui/grok-icon";
 import { Input } from "ui/input";
 import { Label } from "ui/label";
-import { Loader2, Sparkles, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
-import { useFileUpload } from "@/hooks/use-presigned-upload";
+import { OpenAIIcon } from "ui/openai-icon";
 import {
   Select,
   SelectContent,
@@ -21,12 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "ui/select";
-import { generateAvatarImageAction } from "@/app/api/user/actions";
-import { OpenAIIcon } from "ui/openai-icon";
-import { GrokIcon } from "ui/grok-icon";
-import { GeminiIcon } from "ui/gemini-icon";
-import { useTranslations } from "next-intl";
-import { Avatar, AvatarImage, AvatarFallback } from "ui/avatar";
 
 interface GenerateAvatarDialogProps {
   open: boolean;

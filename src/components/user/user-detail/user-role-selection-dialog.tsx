@@ -1,24 +1,24 @@
-import { SubmitButton } from "./user-submit-button";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogCancel,
-  AlertDialogTrigger,
-} from "ui/alert-dialog";
-import { RadioGroup, RadioGroupItem } from "ui/radio-group";
-import { Label } from "ui/label";
-import { UserRoleNames, userRolesInfo } from "app-types/roles";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { useActionState, useState } from "react";
-import { toast } from "sonner";
 import { updateUserRolesAction } from "@/app/api/admin/actions";
 import { UpdateUserRoleActionState } from "@/app/api/admin/validations";
-import Form from "next/form";
-import { useTranslations } from "next-intl";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { UserRoleNames, userRolesInfo } from "app-types/roles";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { useTranslations } from "next-intl";
+import Form from "next/form";
+import { useActionState, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "ui/alert-dialog";
+import { Label } from "ui/label";
+import { RadioGroup, RadioGroupItem } from "ui/radio-group";
+import { SubmitButton } from "./user-submit-button";
 
 export function UserRoleSelector({
   children,

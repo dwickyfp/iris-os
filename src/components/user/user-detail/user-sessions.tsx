@@ -1,4 +1,6 @@
+import { formatAppDateTime } from "lib/date-time";
 import { getUserSessions } from "lib/user/server";
+import { getTranslations } from "next-intl/server";
 import {
   Card,
   CardContent,
@@ -14,8 +16,6 @@ import {
   TableHeader,
   TableRow,
 } from "ui/table";
-import { formatAppDateTime } from "lib/date-time";
-import { getTranslations } from "next-intl/server";
 
 interface UserSessionsProps {
   userId: string;

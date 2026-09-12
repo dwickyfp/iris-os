@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { performance } from "node:perf_hooks";
 import { dirname, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
   buildSkillManifestPrompt,
@@ -14,13 +14,13 @@ import type {
 import {
   BODY_SIZES,
   type BenchmarkCheck,
+  SKILL_COUNTS,
+  TOKEN_ESTIMATE_BYTES,
+  type TokenComparison,
   buildSemanticChecks,
   compareProgressiveAndEagerTokens,
   createBenchmarkSkills,
   estimateTokens,
-  SKILL_COUNTS,
-  TOKEN_ESTIMATE_BYTES,
-  type TokenComparison,
 } from "./benchmark-skills-utils";
 
 const ITERATIONS = 100;

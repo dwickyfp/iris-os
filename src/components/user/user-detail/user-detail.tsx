@@ -1,12 +1,12 @@
 "use client";
 
-import { BasicUserWithLastLogin } from "app-types/user";
-import { UserDetailFormCard } from "./user-detail-form-card";
-import { UserAccessCard } from "./user-access-card";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
-import { useSidebar } from "ui/sidebar";
-import useSWR, { mutate } from "swr";
+import { BasicUserWithLastLogin } from "app-types/user";
 import { cn, fetcher } from "lib/utils";
+import useSWR, { mutate } from "swr";
+import { useSidebar } from "ui/sidebar";
+import { UserAccessCard } from "./user-access-card";
+import { UserDetailFormCard } from "./user-detail-form-card";
 
 interface UserDetailProps {
   user: BasicUserWithLastLogin;

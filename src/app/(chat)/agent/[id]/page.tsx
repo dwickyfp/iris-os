@@ -1,6 +1,6 @@
 import EditAgent from "@/components/agent/edit-agent";
-import { agentRepository } from "lib/db/repository";
 import { getSession } from "auth/server";
+import { agentRepository } from "lib/db/repository";
 import { notFound, redirect } from "next/navigation";
 
 export default async function AgentPage({

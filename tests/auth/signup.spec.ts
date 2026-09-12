@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test.describe("User Signup", () => {
   test("should allow new user signup with email and password", async ({

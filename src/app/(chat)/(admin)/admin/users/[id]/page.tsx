@@ -1,14 +1,14 @@
-import { notFound, redirect, unauthorized } from "next/navigation";
-import { getUserAccounts, getUser } from "lib/user/server";
 import { UserDetail } from "@/components/user/user-detail/user-detail";
 import {
   UserStatsCardLoader,
   UserStatsCardLoaderSkeleton,
 } from "@/components/user/user-detail/user-stats-card-loader";
+import { getUser, getUserAccounts } from "lib/user/server";
+import { notFound, redirect, unauthorized } from "next/navigation";
 
-import { Suspense } from "react";
-import { getSession } from "auth/server";
 import { requireAdminPermission } from "auth/permissions";
+import { getSession } from "auth/server";
+import { Suspense } from "react";
 
 interface PageProps {
   params: Promise<{ id: string }>;

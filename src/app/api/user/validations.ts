@@ -1,8 +1,8 @@
-import { z } from "zod";
 import { USER_ROLES, UserRoleNames } from "app-types/roles";
+import { z } from "zod";
 
-import { ActionState } from "lib/action-utils";
 import { BasicUserWithLastLogin } from "app-types/user";
+import { ActionState } from "lib/action-utils";
 import { passwordSchema } from "lib/validations/password";
 
 export const UpdateUserRoleSchema = z.object({

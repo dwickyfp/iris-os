@@ -1,5 +1,9 @@
 "use client";
 
+import EmojiPicker, { Theme, EmojiClickData } from "emoji-picker-react";
+import { useTranslations } from "next-intl";
+import { useTheme } from "next-themes";
+import { Button } from "ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,10 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "ui/dialog";
-import { Button } from "ui/button";
-import EmojiPicker, { Theme, EmojiClickData } from "emoji-picker-react";
-import { useTheme } from "next-themes";
-import { useTranslations } from "next-intl";
 
 interface EmojiAvatarDialogProps {
   open: boolean;

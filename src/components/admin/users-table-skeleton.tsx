@@ -1,3 +1,7 @@
+import { ChevronRight, Search } from "lucide-react";
+import { Avatar, AvatarFallback } from "ui/avatar";
+import { Input } from "ui/input";
+import { Skeleton } from "ui/skeleton";
 import {
   Table,
   TableBody,
@@ -6,10 +10,6 @@ import {
   TableHeader,
   TableRow,
 } from "ui/table";
-import { Input } from "ui/input";
-import { Search, ChevronRight } from "lucide-react";
-import { Skeleton } from "ui/skeleton";
-import { Avatar, AvatarFallback } from "ui/avatar";
 
 export function UsersTableSkeleton() {
   // Generate reasonable number of skeleton rows

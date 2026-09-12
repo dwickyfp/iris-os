@@ -1,13 +1,13 @@
 "use client";
 
-import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
+import { Handle, type NodeProps, Position, useReactFlow } from "@xyflow/react";
 import { NodeKind, UINode } from "lib/ai/workflow/workflow.interface";
 import { cn } from "lib/utils";
 import { Loader2Icon, PlusIcon, TriangleAlertIcon } from "lucide-react";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import { NodeSelect } from "./node-select";
 import { NodeIcon } from "./node-icon";
+import { NodeSelect } from "./node-select";
 
 import { useUpdate } from "@/hooks/use-update";
 import {
@@ -16,15 +16,15 @@ import {
   ContextMenuTrigger,
 } from "ui/context-menu";
 
-import { OutputSchemaStack } from "./node-config/input-node-config";
-import { OutputNodeDataOutputStack } from "./node-config/output-node-config";
-import { LLMNodeDataStack } from "./node-config/llm-node-config";
-import { NodeContextMenuContent } from "./node-context-menu-content";
-import { ConditionNodeDataOutputStack } from "./node-config/condition-node-config";
-import { createAppendNode } from "./create-append-node";
-import { ToolNodeStack } from "./node-config/tool-node-config";
 import { Markdown } from "../markdown";
+import { createAppendNode } from "./create-append-node";
+import { ConditionNodeDataOutputStack } from "./node-config/condition-node-config";
 import { HttpNodeDataStack } from "./node-config/http-node-config";
+import { OutputSchemaStack } from "./node-config/input-node-config";
+import { LLMNodeDataStack } from "./node-config/llm-node-config";
+import { OutputNodeDataOutputStack } from "./node-config/output-node-config";
+import { ToolNodeStack } from "./node-config/tool-node-config";
+import { NodeContextMenuContent } from "./node-context-menu-content";
 
 type Props = NodeProps<UINode>;
 

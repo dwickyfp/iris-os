@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { detectConfigChanges } from "./mcp-config-diff";
 import type { MCPServerConfig } from "app-types/mcp";
+import { describe, expect, it } from "vitest";
+import { detectConfigChanges } from "./mcp-config-diff";
 
 describe("MCP Config Diff", () => {
   describe("detectConfigChanges", () => {

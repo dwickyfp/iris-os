@@ -2,14 +2,14 @@
 import { DefaultToolName } from "lib/ai/tools";
 import { cn } from "lib/utils";
 import {
-  TrendingUpIcon,
   ChartColumnIcon,
   ChartPieIcon,
-  GlobeIcon,
-  HardDriveUploadIcon,
   CodeIcon,
+  GlobeIcon,
   HammerIcon,
+  HardDriveUploadIcon,
   TableOfContents,
+  TrendingUpIcon,
 } from "lucide-react";
 import { useMemo } from "react";
 

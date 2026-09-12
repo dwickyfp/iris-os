@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
 import {
   ModelCapabilitiesSchema,
   ProviderInputSchema,
 } from "app-types/model-settings";
+import { describe, expect, it } from "vitest";
 
 describe("runtime model setting validation", () => {
   it("defaults model capabilities to safe enabled values", () => {

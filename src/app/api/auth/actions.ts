@@ -2,8 +2,8 @@
 
 import { auth } from "@/lib/auth/server";
 import { BasicUser, UserZodSchema } from "app-types/user";
-import { userRepository } from "lib/db/repository";
 import { ActionState } from "lib/action-utils";
+import { userRepository } from "lib/db/repository";
 import { headers } from "next/headers";
 
 export async function existsByEmailAction(email: string) {

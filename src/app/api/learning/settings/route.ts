@@ -1,5 +1,5 @@
-import { getSession } from "auth/server";
 import { LearningSettingsUpdateSchema } from "app-types/learning";
+import { getSession } from "auth/server";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import {
   getLearningSettings,

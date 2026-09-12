@@ -11,15 +11,15 @@ import {
   VariableIcon,
 } from "lucide-react";
 
-import { VariableSelect } from "../variable-select";
 import { useReactFlow } from "@xyflow/react";
+import { VariableSelect } from "../variable-select";
 
-import { Input } from "ui/input";
-import { Button } from "ui/button";
-import { cleanVariableName, generateUniqueKey } from "lib/utils";
-import { Label } from "ui/label";
 import { findJsonSchemaByPath } from "lib/ai/workflow/shared.workflow";
+import { cleanVariableName, generateUniqueKey } from "lib/utils";
 import { useTranslations } from "next-intl";
+import { Button } from "ui/button";
+import { Input } from "ui/input";
+import { Label } from "ui/label";
 
 export const OutputNodeDataConfig = memo(function ({
   data,

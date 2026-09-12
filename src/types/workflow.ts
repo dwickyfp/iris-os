@@ -1,7 +1,7 @@
 import { Tool } from "ai";
-import { ObjectJsonSchema7, Visibility } from "./util";
 import { NodeKind } from "lib/ai/workflow/workflow.interface";
 import { tag } from "lib/tag";
+import { ObjectJsonSchema7, Visibility } from "./util";
 
 export type WorkflowIcon = {
   type: "emoji";

@@ -1,23 +1,23 @@
 "use client";
 
-import { useState, useActionState } from "react";
-import { formatInAppTimeZone } from "lib/date-time";
-import { Card, CardContent } from "ui/card";
-import { Avatar, AvatarImage, AvatarFallback } from "ui/avatar";
-import { Label } from "ui/label";
-import { Input } from "ui/input";
-import { Button } from "ui/button";
-import { Badge } from "ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
-import { Edit3, Check, X, User, Mail } from "lucide-react";
-import { toast } from "sonner";
-import Form from "next/form";
 import { updateUserDetailsAction } from "@/app/api/user/actions";
 import { UpdateUserActionState } from "@/app/api/user/validations";
-import { BasicUserWithLastLogin } from "app-types/user";
-import { getUserAvatar } from "lib/user/utils";
-import { SubmitButton } from "./user-submit-button";
 import { useProfileTranslations } from "@/hooks/use-profile-translations";
+import { BasicUserWithLastLogin } from "app-types/user";
+import { formatInAppTimeZone } from "lib/date-time";
+import { getUserAvatar } from "lib/user/utils";
+import { Check, Edit3, Mail, User, X } from "lucide-react";
+import Form from "next/form";
+import { useActionState, useState } from "react";
+import { toast } from "sonner";
+import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
+import { Badge } from "ui/badge";
+import { Button } from "ui/button";
+import { Card, CardContent } from "ui/card";
+import { Input } from "ui/input";
+import { Label } from "ui/label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
+import { SubmitButton } from "./user-submit-button";
 
 interface UserInfoCardProps {
   user: BasicUserWithLastLogin;

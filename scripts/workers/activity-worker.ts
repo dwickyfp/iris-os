@@ -1,4 +1,4 @@
-import type PgBoss from "pg-boss";
+import type { ActivityEventType } from "app-types/activity";
 import {
   and,
   count,
@@ -11,7 +11,6 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import type { ActivityEventType } from "app-types/activity";
 import {
   ACTIVITY_PROCESS_QUEUE,
   ACTIVITY_SWEEP_QUEUE,
@@ -33,8 +32,9 @@ import {
   learningSuppressionKey,
   procedureSimilarity,
 } from "lib/learning/policy";
-import { generateUUID } from "lib/utils";
 import { enqueueLearningPromotion } from "lib/learning/queue";
+import { generateUUID } from "lib/utils";
+import type PgBoss from "pg-boss";
 
 const CLAIM_MS = 5 * 60 * 1_000;
 const MAX_ATTEMPTS = 8;
@@ -390,7 +390,7 @@ export async function registerActivityWorkers(boss: PgBoss) {
     ACTIVITY_PROCESS_QUEUE,
     { batchSize: 4 },
     async (jobs) => {
-      for (const job of jobs) await processEvent(job.data.eventId);
+      await Promise.all(jobs.map((job) => processEvent(job.data.eventId)));
     },
   );
   await boss.work(ACTIVITY_SWEEP_QUEUE, async () => {

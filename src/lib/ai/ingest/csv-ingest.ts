@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
-import { ChatAttachment } from "app-types/chat";
 import { isIngestSupported } from "@/lib/ai/file-support";
-import { storageKeyFromUrl } from "@/lib/file-storage/storage-utils";
 import { formatCsvPreviewText, parseCsvPreview } from "@/lib/file-ingest/csv";
+import { storageKeyFromUrl } from "@/lib/file-storage/storage-utils";
+import { ChatAttachment } from "app-types/chat";
 
 type CsvPreviewPart = {
   type: "text";

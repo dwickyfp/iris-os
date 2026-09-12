@@ -1,7 +1,7 @@
-import { Cache } from "./cache.interface";
-import { RedisCache, type RedisCacheOptions } from "./redis-cache";
-import { MemoryCache } from "./memory-cache";
 import logger from "logger";
+import { Cache } from "./cache.interface";
+import { MemoryCache } from "./memory-cache";
+import { RedisCache, type RedisCacheOptions } from "./redis-cache";
 
 export interface SafeRedisCacheOptions extends RedisCacheOptions {
   fallbackToMemory?: boolean;

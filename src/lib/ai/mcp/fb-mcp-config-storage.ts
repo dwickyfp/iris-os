@@ -1,18 +1,18 @@
-import type { MCPServerConfig } from "app-types/mcp";
 import { dirname } from "path";
+import type { MCPServerConfig } from "app-types/mcp";
+import chokidar from "chokidar";
+import type { FSWatcher } from "chokidar";
+import { colorize } from "consola/utils";
 import { mkdir, readFile, writeFile } from "fs/promises";
+import { MCP_CONFIG_PATH } from "lib/ai/mcp/config-path";
+import { McpServerTable } from "lib/db/pg/schema.pg";
+import equal from "lib/equal";
+import { createDebounce } from "lib/utils";
+import defaultLogger from "logger";
 import type {
   MCPClientsManager,
   MCPConfigStorage,
 } from "./create-mcp-clients-manager";
-import chokidar from "chokidar";
-import type { FSWatcher } from "chokidar";
-import { createDebounce } from "lib/utils";
-import equal from "lib/equal";
-import defaultLogger from "logger";
-import { MCP_CONFIG_PATH } from "lib/ai/mcp/config-path";
-import { colorize } from "consola/utils";
-import { McpServerTable } from "lib/db/pg/schema.pg";
 
 const logger = defaultLogger.withDefaults({
   message: colorize("gray", `MCP File Config Storage: `),

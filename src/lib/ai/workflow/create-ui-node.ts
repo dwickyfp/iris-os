@@ -1,7 +1,7 @@
-import { generateUUID } from "lib/utils";
-import { NodeKind, UINode } from "./workflow.interface";
-import { defaultObjectJsonSchema } from "./shared.workflow";
 import { ObjectJsonSchema7 } from "app-types/util";
+import { generateUUID } from "lib/utils";
+import { defaultObjectJsonSchema } from "./shared.workflow";
+import { NodeKind, UINode } from "./workflow.interface";
 
 export function createUINode(
   kind: NodeKind,

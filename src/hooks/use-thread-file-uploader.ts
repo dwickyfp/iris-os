@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback } from "react";
-import { appStore, UploadedFile } from "@/app/store";
+import { UploadedFile, appStore } from "@/app/store";
 import { useFileUpload } from "@/hooks/use-presigned-upload";
 import { generateUUID } from "@/lib/utils";
+import { useCallback } from "react";
 import { toast } from "sonner";
 
 export function useThreadFileUploader(threadId?: string) {

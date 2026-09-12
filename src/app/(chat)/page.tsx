@@ -1,6 +1,6 @@
 import ChatBot from "@/components/chat-bot";
-import { generateUUID } from "lib/utils";
 import { getSession } from "auth/server";
+import { generateUUID } from "lib/utils";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";

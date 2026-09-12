@@ -1,6 +1,6 @@
+import type { MCPServerConfig } from "app-types/mcp";
 import equal from "lib/equal";
 import { isMaybeMCPServerConfig } from "./is-mcp-config";
-import type { MCPServerConfig } from "app-types/mcp";
 
 // Types of changes that can occur in configuration
 export type ConfigChangeType = "add" | "remove" | "update";

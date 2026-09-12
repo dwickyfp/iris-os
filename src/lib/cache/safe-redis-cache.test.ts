@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { SafeRedisCache } from "./safe-redis-cache";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryCache } from "./memory-cache";
 import { RedisCache } from "./redis-cache";
+import { SafeRedisCache } from "./safe-redis-cache";
 
 vi.mock("./redis-cache");
 vi.mock("logger", () => ({

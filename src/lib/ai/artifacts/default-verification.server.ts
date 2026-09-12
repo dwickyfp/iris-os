@@ -7,10 +7,10 @@ import {
 } from "../runtime/artifact-verification-requirement";
 import type { NormalizedGoalRequirement } from "../runtime/goal-requirement-resolver";
 import {
-  capabilityResultVerifier,
-  toolResultVerifier,
   AllRequirements,
   VerificationEngine,
+  capabilityResultVerifier,
+  toolResultVerifier,
 } from "../runtime/verification";
 import { createArtifactVerifier } from "./verifier";
 

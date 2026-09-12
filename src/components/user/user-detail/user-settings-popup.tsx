@@ -1,7 +1,9 @@
 "use client";
 
 import { appStore } from "@/app/store";
-import { useShallow } from "zustand/shallow";
+import { X } from "lucide-react";
+import { useTranslations } from "next-intl";
+import { Button } from "ui/button";
 import {
   Drawer,
   DrawerContent,
@@ -9,9 +11,7 @@ import {
   DrawerPortal,
   DrawerTitle,
 } from "ui/drawer";
-import { Button } from "ui/button";
-import { X } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useShallow } from "zustand/shallow";
 
 export function UserSettingsPopup({
   userSettingsComponent,

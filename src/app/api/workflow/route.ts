@@ -1,6 +1,6 @@
 import { getSession } from "auth/server";
-import { workflowRepository } from "lib/db/repository";
 import { canCreateWorkflow, canEditWorkflow } from "lib/auth/permissions";
+import { workflowRepository } from "lib/db/repository";
 
 export async function GET() {
   const session = await getSession();

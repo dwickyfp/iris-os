@@ -1,9 +1,9 @@
-import { Button } from "../ui/button";
 import { SocialAuthenticationProvider } from "app-types/authentication";
-import { GoogleIcon } from "ui/google-icon";
-import { GithubIcon } from "ui/github-icon";
-import { MicrosoftIcon } from "ui/microsoft-icon";
 import { cn } from "lib/utils";
+import { GithubIcon } from "ui/github-icon";
+import { GoogleIcon } from "ui/google-icon";
+import { MicrosoftIcon } from "ui/microsoft-icon";
+import { Button } from "../ui/button";
 
 export default function SocialProviders({
   socialAuthenticationProviders,

@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from "vitest";
 import { IrisActivityEventTable } from "lib/db/pg/schema.pg";
+import { describe, expect, test, vi } from "vitest";
 import { getRunTrajectory } from "./trajectory";
 
 describe("getRunTrajectory", () => {

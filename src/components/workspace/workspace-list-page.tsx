@@ -3,6 +3,7 @@
 import { appStore } from "@/app/store";
 import { useWorkspaces } from "@/hooks/queries/use-workspaces";
 import type { Workspace } from "app-types/workspace";
+import { workspaceSlugFromName } from "lib/workspace/slug";
 import { Archive, ArrowUpRight, Pencil, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -20,7 +21,6 @@ import {
 import { Input } from "ui/input";
 import { Label } from "ui/label";
 import { Textarea } from "ui/textarea";
-import { workspaceSlugFromName } from "lib/workspace/slug";
 
 function WorkspaceEditor({
   workspace,

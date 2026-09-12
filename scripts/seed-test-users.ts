@@ -18,17 +18,17 @@ if (process.env.CI) {
   config();
 }
 
-import { auth } from "auth/auth-instance";
 import { USER_ROLES } from "app-types/roles";
+import { auth } from "auth/auth-instance";
 import { sql } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
 import {
-  UserTable,
   ChatMessageTable,
   ChatThreadTable,
+  UserTable,
 } from "lib/db/pg/schema.pg";
-import { like, eq } from "drizzle-orm";
+import { Pool } from "pg";
 
 // Create database connection with Pool
 const pool = new Pool({

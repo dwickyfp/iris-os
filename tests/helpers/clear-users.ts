@@ -1,16 +1,16 @@
 import { pgDb } from "../../src/lib/db/pg/db.pg";
 import {
-  UserTable,
-  SessionTable,
   AccountTable,
-  VerificationTable,
-  ChatThreadTable,
-  ChatMessageTable,
   AgentTable,
-  WorkflowTable,
-  McpServerTable,
-  ArchiveTable,
   ArchiveItemTable,
+  ArchiveTable,
+  ChatMessageTable,
+  ChatThreadTable,
+  McpServerTable,
+  SessionTable,
+  UserTable,
+  VerificationTable,
+  WorkflowTable,
 } from "../../src/lib/db/pg/schema.pg";
 
 /**

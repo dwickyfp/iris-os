@@ -1,10 +1,10 @@
 import { ObjectJsonSchema7 } from "app-types/util";
-import { NodeKind, WorkflowNodeData } from "../workflow.interface";
+import { JSONSchema7 } from "json-schema";
 import {
   defaultObjectJsonSchema,
   findJsonSchemaByPath,
 } from "../shared.workflow";
-import { JSONSchema7 } from "json-schema";
+import { NodeKind, WorkflowNodeData } from "../workflow.interface";
 
 export function extractNodeDependencySchema({
   targetId,

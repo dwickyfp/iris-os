@@ -1,6 +1,6 @@
-import type { MCPConfigStorage } from "./create-mcp-clients-manager";
 import { mcpRepository } from "lib/db/repository";
 import defaultLogger from "logger";
+import type { MCPConfigStorage } from "./create-mcp-clients-manager";
 
 import { colorize } from "consola/utils";
 

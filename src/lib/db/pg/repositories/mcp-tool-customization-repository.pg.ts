@@ -1,7 +1,7 @@
+import type { McpToolCustomizationRepository } from "@/types/mcp";
+import { and, eq } from "drizzle-orm";
 import { pgDb as db } from "../db.pg";
 import { McpServerTable, McpToolCustomizationTable } from "../schema.pg";
-import { and, eq } from "drizzle-orm";
-import type { McpToolCustomizationRepository } from "@/types/mcp";
 
 export const pgMcpMcpToolCustomizationRepository: McpToolCustomizationRepository =
   {

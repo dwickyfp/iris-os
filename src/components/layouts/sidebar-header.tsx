@@ -1,5 +1,8 @@
 "use client";
 
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Shortcuts, isShortcutEvent } from "lib/keyboard-shortcuts";
+import { PanelLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -10,9 +13,6 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "ui/sidebar";
-import { PanelLeft } from "lucide-react";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { isShortcutEvent, Shortcuts } from "lib/keyboard-shortcuts";
 
 interface SidebarHeaderSharedProps {
   title: string | React.ReactNode;

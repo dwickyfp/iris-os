@@ -1,8 +1,8 @@
 import { Node } from "@xyflow/react";
 import { ChatModel } from "app-types/chat";
 import { ObjectJsonSchema7, TipTapMentionJsonContent } from "app-types/util";
-import { ConditionBranches } from "./condition";
 import { JSONSchema7 } from "json-schema";
+import { ConditionBranches } from "./condition";
 
 /**
  * Enum defining all available node types in the workflow system.

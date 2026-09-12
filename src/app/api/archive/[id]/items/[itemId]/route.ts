@@ -1,5 +1,5 @@
-import { archiveRepository } from "lib/db/repository";
 import { getSession } from "auth/server";
+import { archiveRepository } from "lib/db/repository";
 
 export async function DELETE(
   _request: Request,

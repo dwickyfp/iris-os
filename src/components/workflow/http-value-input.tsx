@@ -2,19 +2,19 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TrashIcon, VariableIcon } from "lucide-react";
+import { useReactFlow } from "@xyflow/react";
+import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
 import {
   HttpValue,
   OutputSchemaSourceKey,
 } from "lib/ai/workflow/workflow.interface";
-import { VariableSelect } from "./variable-select";
-import { useReactFlow } from "@xyflow/react";
 import { UINode } from "lib/ai/workflow/workflow.interface";
+import { cn, exclude } from "lib/utils";
+import { TrashIcon, VariableIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Tooltip, TooltipContent, TooltipTrigger } from "ui/tooltip";
 import { VariableMentionItem } from "./variable-mention-item";
-import { findAvailableSchemaBySource } from "lib/ai/workflow/shared.workflow";
-import { useTranslations } from "next-intl";
-import { cn, exclude } from "lib/utils";
+import { VariableSelect } from "./variable-select";
 
 interface HttpValueInputProps {
   value: HttpValue | undefined;

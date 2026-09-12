@@ -1,12 +1,12 @@
 "use server";
 
+import { getModelCatalog } from "@/lib/ai/models";
 import { BasicUserWithLastLogin, UserPreferences } from "app-types/user";
 import { auth, getSession } from "auth/server";
 import { Session } from "better-auth";
 import { userRepository } from "lib/db/repository";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { getModelCatalog } from "@/lib/ai/models";
 
 // Helper function to get model provider from model name
 const getModelProvider = async (modelName: string): Promise<string> => {

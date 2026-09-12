@@ -1,6 +1,6 @@
+import { PERMISSION_TYPES } from "app-types/permissions";
 import { createAccessControl } from "better-auth/plugins/access";
 import { defaultStatements } from "better-auth/plugins/admin/access";
-import { PERMISSION_TYPES } from "app-types/permissions";
 
 // Combine Better Auth's default statements with our app-specific permissions
 const permissions = {
