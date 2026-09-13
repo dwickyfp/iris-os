@@ -1,5 +1,6 @@
 import { AgentsList } from "@/components/agent/agents-list";
 import { getSession } from "auth/server";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 import { agentRepository } from "lib/db/repository";
 import { notFound } from "next/navigation";
 
@@ -34,6 +35,7 @@ export default async function AgentsPage() {
       initialSharedAgents={sharedAgents}
       userId={session.user.id}
       userRole={session.user.role}
+      remoteAgentsEnabled={isV2FeatureEnabled("remoteAgents")}
     />
   );
 }

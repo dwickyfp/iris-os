@@ -121,6 +121,8 @@
     "Tool": {
       "webSearching": "웹에서 찾아보는 중...",
       "searchedTheWeb": "참고한 웹 사이트",
+      "webSearchError": "웹 검색에 실패했습니다",
+      "webSearchStored": "전체 검색 결과가 보관되었습니다 — 열어서 보기",
       "toolModeDescription": "도구 사용 방식을 선택하세요:\n• 자동: AI가 도구 사용 여부를 자동으로 결정\n• 수동: 도구 사용 전 권한 요청\n• 사용 안함: 모든 도구 비활성화",
       "toolsSetupDescription": "chatbot이 사용할 수 있는 도구를 선택하세요.\n선택된 도구를 스스로 판단하여 사용하게 됩니다.\n\n@mention을 하여 직접 특정 도구 사용을 강제 할 수 도 있습니다.",
       "selectToolMode": "도구 사용 모드",
@@ -285,8 +287,7 @@
     "showLessChats": "간략히 보기",
     "reportAnIssue": "도움 받기",
     "joinCommunity": "커뮤니티 가입",
-    "userSettings": "사용자 설정",
-    "remoteAgents": "원격 연결"
+    "userSettings": "사용자 설정"
   },
   "Archive": {
     "title": "아카이브",
@@ -314,6 +315,10 @@
   },
   "Agent": {
     "title": "에이전트",
+    "newAgent": "에이전트 만들기",
+    "createBuiltinAgent": "내장 에이전트",
+    "createRemoteAgent": "원격 에이전트",
+    "remoteAgentsSection": "원격 에이전트",
     "generatingAgent": "에이전트 생성 중...",
     "agentNameAndIconLabel": "에이전트에게 이름과 아이콘을 붙여주세요.",
     "agentDescriptionLabel": "이 에이전트의 용도에 대한 짧은 설명을 추가해주세요.",

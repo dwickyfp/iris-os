@@ -19,12 +19,20 @@ import { BackgroundPaths } from "ui/background-paths";
 import { Button } from "ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "ui/card";
 import { handleErrorWithToast } from "ui/shared-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "ui/dropdown-menu";
+import { RemoteAgentsSection } from "@/components/remote-agent/remote-agents-section";
 
 interface AgentsListProps {
   initialMyAgents: AgentSummary[];
   initialSharedAgents: AgentSummary[];
   userId: string;
   userRole?: string | null;
+  remoteAgentsEnabled?: boolean;
 }
 
 export function AgentsList({
@@ -32,6 +40,7 @@ export function AgentsList({
   initialSharedAgents,
   userId,
   userRole,
+  remoteAgentsEnabled = false,
 }: AgentsListProps) {
   const t = useTranslations();
   const mutateAgents = useMutateAgents();
@@ -41,6 +50,7 @@ export function AgentsList({
   const [visibilityChangeLoading, setVisibilityChangeLoading] = useState<
     string | null
   >(null);
+  const [remoteFormOpen, setRemoteFormOpen] = useState(false);
 
   const { data: allAgents } = useSWR(
     "/api/agent?filters=mine,shared",
@@ -120,12 +130,27 @@ export function AgentsList({
           {t("Layout.agents")}
         </h1>
         {canCreate && (
-          <Link href="/agent/new">
-            <Button variant="ghost" data-testid="create-agent-button">
-              <Plus />
-              {t("Agent.newAgent")}
-            </Button>
-          </Link>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" data-testid="create-agent-button">
+                <Plus />
+                {t("Agent.newAgent")}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <Link href="/agent/new">{t("Agent.createBuiltinAgent")}</Link>
+              </DropdownMenuItem>
+              {remoteAgentsEnabled && (
+                <DropdownMenuItem
+                  onClick={() => setRemoteFormOpen(true)}
+                  data-testid="create-remote-agent-item"
+                >
+                  {t("Agent.createRemoteAgent")}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
@@ -222,6 +247,13 @@ export function AgentsList({
           )}
         </div>
       </div>
+
+      {remoteAgentsEnabled && (
+        <RemoteAgentsSection
+          createOpen={remoteFormOpen}
+          onCreateOpenChange={setRemoteFormOpen}
+        />
+      )}
     </div>
   );
 }

@@ -6,6 +6,11 @@ export type V2FeatureFlags = {
   remoteAgents: boolean;
   /** Subagent spawning in chat. Enabled unless explicitly disabled. */
   subagents: boolean;
+  /**
+   * Scoped virtual filesystem tool for agents (workspace_fs). Enabled unless
+   * explicitly disabled. File operations only — no code execution.
+   */
+  workspaceFs: boolean;
 };
 
 export function getV2FeatureFlags(
@@ -23,6 +28,7 @@ export function getV2FeatureFlags(
     delegation: enabled(env.IRIS_DELEGATION_V2),
     remoteAgents: enabled(env.IRIS_REMOTE_AGENTS_A2A),
     subagents: !disabled(env.IRIS_SUBAGENTS_V2),
+    workspaceFs: !disabled(env.IRIS_WORKSPACE_FS_V2),
   };
 }
 

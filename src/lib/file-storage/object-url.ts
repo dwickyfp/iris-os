@@ -27,8 +27,7 @@ export function deriveStorageKeyFromUrl(
       const basePrefix = base.pathname.replace(/\/+$/, "");
       if (
         target.host === base.host &&
-        (targetPath === basePrefix ||
-          targetPath.startsWith(`${basePrefix}/`))
+        (targetPath === basePrefix || targetPath.startsWith(`${basePrefix}/`))
       ) {
         return decodeKeyFromPath(targetPath.slice(basePrefix.length));
       }
@@ -83,6 +82,8 @@ export function guessObjectContentType(
 ): string {
   if (storedContentType) return storedContentType;
   const extension = pathname.match(/\.(\w+)$/)?.[1]?.toLowerCase();
-  return (extension && EXTENSION_CONTENT_TYPES[extension]) ||
-    "application/octet-stream";
+  return (
+    (extension && EXTENSION_CONTENT_TYPES[extension]) ||
+    "application/octet-stream"
+  );
 }

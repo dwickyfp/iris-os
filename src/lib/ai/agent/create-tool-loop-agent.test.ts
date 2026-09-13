@@ -1,6 +1,10 @@
 import { tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
-import { DefaultToolName, ImageToolName, SpawnSubagentToolName } from "lib/ai/tools";
+import {
+  DefaultToolName,
+  ImageToolName,
+  SpawnSubagentToolName,
+} from "lib/ai/tools";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { BudgetGuard } from "../runtime/budget";
@@ -128,7 +132,8 @@ describe("getAgentToolTimeouts", () => {
     await expect(agent.generate({ prompt: "hi" })).resolves.toBeDefined();
   });
 
-  it("uses automatic reasoning for the implicit base agent", () => {    expect(getToolLoopAgentReasoningMode({ type: "base" })).toBe("auto");
+  it("uses automatic reasoning for the implicit base agent", () => {
+    expect(getToolLoopAgentReasoningMode({ type: "base" })).toBe("auto");
     expect(
       getToolLoopAgentReasoningMode({
         type: "custom",

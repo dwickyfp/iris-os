@@ -217,14 +217,20 @@ export function createToolLoopAgent({
   const reasoningMode = getToolLoopAgentReasoningMode(profile);
   const agentTimeouts = configuredAgentTimeouts();
   // A subagent runs entirely inside one parent tool call, so the parent's
-  // step/total timeouts must outlive the subagent's own budget.
+  // step/total timeouts must outlive the subagent's own budget — including
+  // two sequential subagent invocations inside a single step. The chunk
+  // timeout is effectively disabled for these chats: the subagent's 10s
+  // keepalive heartbeat feeds it during tool execution, but first-token
+  // latency after a subagent report can legitimately exceed any small gap,
+  // and the hard stepMs cap already bounds hung runs.
   const hasSubagentTool = SpawnSubagentToolName in tools;
   const stepMs = hasSubagentTool
-    ? Math.max(agentTimeouts.stepMs, subagentToolTimeoutMs() + 30_000)
+    ? Math.max(agentTimeouts.stepMs, 2 * subagentToolTimeoutMs() + 60_000)
     : agentTimeouts.stepMs;
   const timeoutConfig = {
     ...agentTimeouts,
     stepMs,
+    ...(hasSubagentTool ? { chunkMs: 300_000 } : {}),
     totalMs: Math.max(agentTimeouts.totalMs, stepMs + 30_000),
     tools: getAgentToolTimeouts(tools),
   };
@@ -326,6 +332,90 @@ export function createToolLoopAgent({
       if (typeof (candidate as any).execute !== "function")
         return [name, candidate];
       const original = candidate as any;
+      // Streaming tools (async generator executes) must hand the SDK the
+      // generator itself so preliminary yields reach the UI. Awaiting them
+      // through the capability scheduler collapses the iterable into its
+      // resolved value, so guard them with policy + budget around the
+      // iteration instead (no scheduler concurrency slot).
+      const isGeneratorExecute =
+        (original.execute as any)[Symbol.toStringTag] ===
+          "AsyncGeneratorFunction" ||
+        original.execute.constructor?.name === "AsyncGeneratorFunction";
+      if (isGeneratorExecute) {
+        const rawExecute = original.execute as (
+          args: unknown,
+          options: any,
+        ) => AsyncGenerator;
+        const guarded = async function* (args: unknown, options: any) {
+          const toolCallId = options?.toolCallId ?? options?.callId ?? name;
+          const startedAt = Date.now();
+          budget?.beforeTool();
+          await durableBudget?.charge(`tool:${toolCallId}`, "tool_calls", 1);
+          await onRuntimeEvent?.("tool.started", {
+            toolCallId,
+            toolName: name,
+          });
+          try {
+            const approval = approvalToolCalls.get(toolCallId);
+            if (approval) {
+              await onRuntimeEvent?.("tool.approved", {
+                toolCallId,
+                toolName: name,
+              });
+              approvalToolCalls.delete(toolCallId);
+            }
+            const decision =
+              policyDecisions.get(toolCallId) ??
+              evaluateToolCallPolicy({
+                toolName: name,
+                args,
+                runtimeContext,
+                resolvedPolicy,
+              });
+            if (decision.result === "deny") {
+              await emitToolTerminal("tool.failed", toolCallId, {
+                toolCallId,
+                toolName: name,
+                errorCode: "POLICY_DENIED",
+                completedAt: new Date().toISOString(),
+              });
+              throw new Error("POLICY_DENIED");
+            }
+            const inner = rawExecute(args, {
+              ...options,
+              abortSignal: options?.abortSignal,
+            });
+            let step = await inner.next();
+            while (!step.done) {
+              yield step.value;
+              step = await inner.next();
+            }
+            await emitToolTerminal("tool.completed", toolCallId, {
+              toolCallId,
+              toolName: name,
+              durationMs: Math.max(0, Date.now() - startedAt),
+              completedAt: new Date().toISOString(),
+            });
+            return step.value;
+          } catch (error) {
+            await emitToolTerminal(
+              options?.abortSignal?.aborted ? "tool.cancelled" : "tool.failed",
+              toolCallId,
+              {
+                toolCallId,
+                toolName: name,
+                message: error instanceof Error ? error.message : String(error),
+                completedAt: new Date().toISOString(),
+              },
+            );
+            throw error;
+          } finally {
+            budget?.afterTool();
+            policyDecisions.delete(toolCallId);
+          }
+        };
+        return [name, { ...original, execute: guarded }];
+      }
       return [
         name,
         {

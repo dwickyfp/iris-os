@@ -18,7 +18,6 @@ import { getIsUserAdmin } from "lib/user/utils";
 import {
   BookOpenIcon,
   BrainIcon,
-  CableIcon,
   FolderOpenIcon,
   FolderSearchIcon,
   PlusIcon,
@@ -37,10 +36,8 @@ import { AppSidebarAdmin } from "./app-sidebar-menu-admin";
 
 export function AppSidebarMenus({
   user,
-  remoteAgentsEnabled = false,
 }: {
   user?: BasicUser;
-  remoteAgentsEnabled?: boolean;
 }) {
   const router = useRouter();
   const t = useTranslations("");
@@ -86,18 +83,6 @@ export function AppSidebarMenus({
             </SidebarMenuItem>
           </Tooltip>
         </SidebarMenu>
-        {remoteAgentsEnabled && (
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <Link href="/remote-agents" onClick={() => setOpenMobile(false)}>
-                <SidebarMenuButton className="font-semibold">
-                  <CableIcon className="size-4" />
-                  {t("Layout.remoteAgents")}
-                </SidebarMenuButton>
-              </Link>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        )}
         <SidebarMenu>
           <Tooltip>
             <SidebarMenuItem>

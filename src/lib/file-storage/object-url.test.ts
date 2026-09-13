@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  deriveStorageKeyFromUrl,
-  guessObjectContentType,
-} from "./object-url";
+import { deriveStorageKeyFromUrl, guessObjectContentType } from "./object-url";
 import type { FileStorageProfile } from "./storage-profile";
 
 const pathStyleProfile: FileStorageProfile = {

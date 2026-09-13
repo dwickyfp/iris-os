@@ -37,7 +37,6 @@ export default async function ChatLayout({
         <AppSidebar
           user={session.user}
           workspacesEnabled={isV2FeatureEnabled("workspaces")}
-          remoteAgentsEnabled={isV2FeatureEnabled("remoteAgents")}
         />
         <main className="relative flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <AppHeader />

@@ -120,6 +120,8 @@
     "Tool": {
       "webSearching": "Buscando en la web...",
       "searchedTheWeb": "Buscado en la web",
+      "webSearchError": "Error en la búsqueda web",
+      "webSearchStored": "Los resultados completos fueron archivados — abre para verlos",
       "toolModeDescription": "Elije cómo se usan las herramientas:\n• Auto: La IA decide cuándo usar herramientas\n• Manual: Pide permiso antes de usar herramientas\n• Ninguno: Desactiva todas las herramientas",
       "toolsSetupDescription": "Selecciona las herramientas que el chatbot puede usar.\nEl chatbot utilizará las herramientas seleccionadas según su propio juicio.\n\nTambién puedes forzar el uso de herramientas específicas a través de @mention.",
       "selectToolMode": "Seleccionar modo de herramientas",
@@ -270,8 +272,7 @@
     "reportAnIssue": "Reportar un problema",
     "joinCommunity": "Unirse a la Comunidad",
     "workflow": "Flujo de Trabajo",
-    "userSettings": "Configuración de Usuario",
-    "remoteAgents": "Conexiones remotas"
+    "userSettings": "Configuración de Usuario"
   },
   "Archive": {
     "title": "Archivo",
@@ -299,6 +300,10 @@
   },
   "Agent": {
     "title": "Agente",
+    "newAgent": "Crear Agente",
+    "createBuiltinAgent": "Agente integrado",
+    "createRemoteAgent": "Agente remoto",
+    "remoteAgentsSection": "Agentes remotos",
     "generatingAgent": "Generando Agente...",
     "agentNameAndIconLabel": "Dale a tu agente un nombre y un icono.",
     "agentDescriptionLabel": "Añade una breve descripción de lo que hace este agente.",

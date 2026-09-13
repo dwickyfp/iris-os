@@ -41,7 +41,13 @@ function slugifyFilename(title: string) {
 
 export type SpawnSubagentToolDependencies = {
   model: LanguageModel;
-  runtimeContext: AgentRuntimeContext;
+  /**
+   * Optional. When omitted, the runtime context (userId/runId used for
+   * artifact ownership) is read from the tool execute options context that
+   * the ToolLoopAgent provides at call time. This allows registering the tool
+   * before run preparation so it is included in the policy authority.
+   */
+  runtimeContext?: AgentRuntimeContext;
   artifacts: {
     create: (input: {
       content: string;
@@ -59,6 +65,10 @@ export type SpawnSubagentToolDependencies = {
   parentTools: Record<string, Tool>;
   timeoutMs?: number;
   maxSteps?: number;
+  /** Heartbeat interval that keeps the parent's chunk timeout fed. */
+  keepaliveMs?: number;
+  /** Minimum gap between preliminary progress yields. */
+  throttleMs?: number;
 };
 
 /**
@@ -76,6 +86,8 @@ export function createSpawnSubagentTool({
   parentTools,
   timeoutMs = subagentToolTimeoutMs(),
   maxSteps = 12,
+  keepaliveMs = 10_000,
+  throttleMs = 750,
 }: SpawnSubagentToolDependencies) {
   return tool({
     description:
@@ -83,6 +95,8 @@ export function createSpawnSubagentTool({
     inputSchema: subagentInputSchema,
     execute: async function* execute({ subagent, title, task }, options) {
       const abortSignal = options.abortSignal;
+      const ctx: AgentRuntimeContext | undefined =
+        runtimeContext ?? (options.context as AgentRuntimeContext | undefined);
       const startedAt = Date.now();
       const spec = SUBAGENT_SPECS[subagent];
       const child = new ToolLoopAgent({
@@ -94,15 +108,63 @@ export function createSpawnSubagentTool({
       });
       const result = await child.stream({ prompt: task, abortSignal });
 
-      // Every yielded value except the last is a preliminary result: an
-      // ever-growing UIMessage of the subagent's work so far.
-      let finalMessage: UIMessage | undefined;
-      for await (const message of readUIMessageStream({
+      // Stream the subagent's accumulated UIMessage as preliminary results.
+      // While the subagent is silent (model latency, its own tool calls) the
+      // parent's chunk timeout (15s) would kill the whole run, so re-yield
+      // the last progress as a keepalive heartbeat on a shorter interval.
+      const iterator = readUIMessageStream({
         stream: toUIMessageStream({ stream: result.stream }),
-      })) {
-        finalMessage = message;
-        yield message;
+      })[Symbol.asyncIterator]();
+      let lastMessage: UIMessage | undefined;
+      let pending: Promise<IteratorResult<UIMessage>> | undefined;
+      let lastYieldedAt = 0;
+      while (true) {
+        if (!pending) pending = iterator.next();
+        const step = await new Promise<
+          | { chunk: IteratorResult<UIMessage> }
+          | { timeout: true }
+          | { error: unknown }
+        >((resolve) => {
+          const timer = setTimeout(
+            () => resolve({ timeout: true }),
+            keepaliveMs,
+          );
+          pending!.then(
+            (chunk) => {
+              clearTimeout(timer);
+              resolve({ chunk });
+            },
+            (error) => {
+              clearTimeout(timer);
+              resolve({ error });
+            },
+          );
+        });
+        if ("error" in step) throw step.error;
+        const now = Date.now();
+        if ("timeout" in step) {
+          // Heartbeat: re-emit the last progress (or an empty message before
+          // the subagent's first chunk) so the parent's chunk timeout never
+          // fires while the subagent is still working.
+          lastYieldedAt = now;
+          yield lastMessage ?? {
+            id: `subagent-heartbeat-${options.toolCallId ?? startedAt}`,
+            role: "assistant",
+            parts: [],
+          };
+          continue;
+        }
+        pending = undefined;
+        if (step.chunk.done) break;
+        lastMessage = step.chunk.value;
+        // Throttle preliminary updates: with two parallel subagents the raw
+        // chunk rate would flood the parent stream and cost CPU in the UI.
+        if (now - lastYieldedAt >= throttleMs) {
+          lastYieldedAt = now;
+          yield lastMessage;
+        }
       }
+      const finalMessage = lastMessage;
 
       const report = finalMessage
         ? extractSubagentProgressText(finalMessage)
@@ -113,22 +175,28 @@ export function createSpawnSubagentTool({
       const durationMs = Date.now() - startedAt;
 
       let artifact: SpawnSubagentOutput["artifact"] = null;
-      try {
-        const reference = await artifacts.create({
-          content: report,
-          filename: slugifyFilename(title),
-          mediaType: "text/markdown",
-          userId: runtimeContext.userId,
-          runId: runtimeContext.runId,
-        });
-        artifact = {
-          artifactId: reference.artifactId,
-          filename: reference.filename,
-          mediaType: reference.mediaType,
-          size: reference.size,
-        };
-      } catch (error) {
-        console.error("spawn_subagent artifact storage failed", error);
+      if (ctx?.userId && ctx?.runId) {
+        try {
+          const reference = await artifacts.create({
+            content: report,
+            filename: slugifyFilename(title),
+            mediaType: "text/markdown",
+            userId: ctx.userId,
+            runId: ctx.runId,
+          });
+          artifact = {
+            artifactId: reference.artifactId,
+            filename: reference.filename,
+            mediaType: reference.mediaType,
+            size: reference.size,
+          };
+        } catch (error) {
+          console.error("spawn_subagent artifact storage failed", error);
+        }
+      } else {
+        console.error(
+          "spawn_subagent skipped artifact storage: no runtime context",
+        );
       }
 
       const output: SpawnSubagentOutput = {
@@ -141,7 +209,9 @@ export function createSpawnSubagentTool({
         steps,
         durationMs,
       };
-      return output;
+      // AI SDK semantics for generator executes: the LAST yield is the final
+      // tool output; a generator return value is discarded by executeTool.
+      yield output;
     },
     toModelOutput: ({
       output,

@@ -46,8 +46,6 @@ import {
 import { createGoalVerificationRequirement } from "lib/ai/artifacts/default-verification.server";
 import { enqueueMemoryReview } from "lib/ai/memory/queue";
 import { buildMemoryContext, indexChatMessage } from "lib/ai/memory/service";
-import { RECALL_MEMORY_TOOL_NAME } from "lib/ai/tools/background/names";
-import { createRecallMemoryTool } from "lib/ai/tools/memory/recall-memory.server";
 import type { HarnessStreamResult } from "lib/ai/runtime";
 import { isBudgetExhausted } from "lib/ai/runtime/budget";
 import { resolveChatToolChoice } from "lib/ai/runtime/capabilities/normalize";
@@ -61,7 +59,11 @@ import type { RunPreparationSnapshot } from "lib/ai/runtime/run-preparer";
 import { irisHarness } from "lib/ai/runtime/server";
 import { createProductionRunAdapter } from "lib/ai/runtime/server-run-adapters";
 import { buildSkillManifestPrompt } from "lib/ai/skill";
-import { ImageToolName, SpawnSubagentToolName } from "lib/ai/tools";
+import {
+  ImageToolName,
+  SpawnSubagentToolName,
+  WorkspaceFsToolName,
+} from "lib/ai/tools";
 import {
   MANAGE_AUTOMATION_TOOL_NAME,
   createManageAutomationTool,
@@ -70,8 +72,11 @@ import {
   MANAGE_LEARNING_TOOL_NAME,
   createManageLearningTool,
 } from "lib/ai/tools/background/manage-learning";
+import { RECALL_MEMORY_TOOL_NAME } from "lib/ai/tools/background/names";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
+import { createRecallMemoryTool } from "lib/ai/tools/memory/recall-memory.server";
 import { createServerSpawnSubagentTool } from "lib/ai/tools/subagent/spawn-subagent.server";
+import { createWorkspaceFsTool } from "lib/ai/tools/workspace-fs/workspace-fs.server";
 import { isV2FeatureEnabled } from "lib/feature-flags";
 import { serverFileStorage } from "lib/file-storage";
 import { isChatCorrection } from "lib/learning/policy";
@@ -581,6 +586,21 @@ export async function POST(request: Request) {
             taskId: task?.id,
           },
         );
+        // Must be registered before run preparation so the policy snapshot
+        // includes spawn_subagent in its capability authority; the runtime
+        // context (userId/runId) is read from tool execute options instead of
+        // being closed over here.
+        if (isToolCallAllowed && isV2FeatureEnabled("subagents")) {
+          vercelAITooles[SpawnSubagentToolName] = createServerSpawnSubagentTool(
+            {
+              model,
+              parentTools: vercelAITooles,
+            },
+          );
+        }
+        if (isToolCallAllowed && isV2FeatureEnabled("workspaceFs")) {
+          vercelAITooles[WorkspaceFsToolName] = createWorkspaceFsTool();
+        }
         metadata.toolCount = Object.keys(vercelAITooles).length;
         const allowedMcpTools = Object.values(allowedMcpServers ?? {})
           .map((t) => t.tools)
@@ -685,16 +705,6 @@ export async function POST(request: Request) {
         const resolvedPolicy = preparedRun.policy!;
         checkpointResolvedPolicy = resolvedPolicy;
         const runtimeContext = preparedRun.runtimeContext!;
-        if (isToolCallAllowed && isV2FeatureEnabled("subagents")) {
-          vercelAITooles[SpawnSubagentToolName] = createServerSpawnSubagentTool(
-            {
-              model,
-              runtimeContext,
-              parentTools: vercelAITooles,
-            },
-          );
-          metadata.toolCount = Object.keys(vercelAITooles).length;
-        }
         harnessStream = await irisHarness.stream({
           agent: {
             profile: agent ? { type: "custom", agent } : { type: "base" },
@@ -707,7 +717,13 @@ export async function POST(request: Request) {
           execution: {
             messages: modelMessages,
             runtimeContext,
-            toolsContext: runtimeContext,
+            // AI SDK resolves each tool's execute options.context as
+            // toolsContext[toolName], so tools that read the agent runtime
+            // context from options must be keyed by name here.
+            toolsContext: {
+              [SpawnSubagentToolName]: runtimeContext,
+              [WorkspaceFsToolName]: runtimeContext,
+            },
             abortSignal: request.signal,
             experimental_transform: smoothStream({ chunking: "word" }),
           } as any,

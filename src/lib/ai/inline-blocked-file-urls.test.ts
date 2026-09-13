@@ -49,7 +49,9 @@ describe("inlineBlockedFileUrls", () => {
       ),
     );
 
-    const [result] = await inlineBlockedFileUrls([messageWithFileUrl(minioUrl)]);
+    const [result] = await inlineBlockedFileUrls([
+      messageWithFileUrl(minioUrl),
+    ]);
     const filePart = result.parts[0] as any;
     expect(filePart.url).toBe("data:image/png;base64,cG5nYnl0ZXM=");
     // Other parts are untouched
@@ -66,9 +68,13 @@ describe("inlineBlockedFileUrls", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const [result] = await inlineBlockedFileUrls([messageWithFileUrl(minioUrl)]);
+    const [result] = await inlineBlockedFileUrls([
+      messageWithFileUrl(minioUrl),
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(minioUrl);
-    expect((result.parts[0] as any).url).toBe("data:image/png;base64,ZmFsbGJhY2s=");
+    expect((result.parts[0] as any).url).toBe(
+      "data:image/png;base64,ZmFsbGJhY2s=",
+    );
 
     vi.unstubAllGlobals();
   });

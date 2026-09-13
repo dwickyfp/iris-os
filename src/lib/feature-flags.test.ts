@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getV2FeatureFlags } from "./feature-flags";
 
 describe("getV2FeatureFlags", () => {
-  it("defaults every V2 subsystem off", () => {
+  it("defaults every opt-in V2 subsystem off", () => {
     expect(getV2FeatureFlags({})).toEqual({
       workspaces: false,
       learning: false,
@@ -10,6 +10,7 @@ describe("getV2FeatureFlags", () => {
       delegation: false,
       remoteAgents: false,
       subagents: true,
+      workspaceFs: true,
     });
   });
 
@@ -29,6 +30,7 @@ describe("getV2FeatureFlags", () => {
       delegation: false,
       remoteAgents: true,
       subagents: true,
+      workspaceFs: true,
     });
   });
 
@@ -43,5 +45,20 @@ describe("getV2FeatureFlags", () => {
     expect(getV2FeatureFlags({ IRIS_SUBAGENTS_V2: "anything" }).subagents).toBe(
       true,
     );
+  });
+
+  it("keeps workspaceFs on unless explicitly disabled", () => {
+    expect(
+      getV2FeatureFlags({ IRIS_WORKSPACE_FS_V2: "false" }).workspaceFs,
+    ).toBe(false);
+    expect(getV2FeatureFlags({ IRIS_WORKSPACE_FS_V2: "0" }).workspaceFs).toBe(
+      false,
+    );
+    expect(
+      getV2FeatureFlags({ IRIS_WORKSPACE_FS_V2: "true" }).workspaceFs,
+    ).toBe(true);
+    expect(
+      getV2FeatureFlags({ IRIS_WORKSPACE_FS_V2: "anything" }).workspaceFs,
+    ).toBe(true);
   });
 });

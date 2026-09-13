@@ -8,7 +8,9 @@ let defaultMessages: any = undefined;
 export default getRequestConfig(async () => {
   const locale = await getLocaleAction();
 
-  if (!defaultMessages) {
+  // Cache only in production so edited messages hot-reload in dev instead of
+  // pinning the process to a stale snapshot (MISSING_MESSAGE for new keys).
+  if (!defaultMessages || process.env.NODE_ENV !== "production") {
     defaultMessages = (await import(`../../messages/en.json`)).default;
   }
 

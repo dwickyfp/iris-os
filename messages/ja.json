@@ -120,6 +120,8 @@
     "Tool": {
       "webSearching": "ウェブを検索中...",
       "searchedTheWeb": "ウェブを検索しました",
+      "webSearchError": "ウェブ検索に失敗しました",
+      "webSearchStored": "検索結果全体をアーカイブしました — 開いて表示",
       "toolModeDescription": "ツールの使用方法を選択:\n• 自動: AIがツールの使用を自動で決定\n• 手動: ツール使用前に許可を求める\n• なし: すべてのツールを無効化",
       "toolsSetupDescription": "チャットボットが使用できるツールを選択してください。\nチャットボットは選択されたツールを自分の判断で使用します。\n\n@mention を使って特定のツールの使用を強制することもできます。",
       "selectToolMode": "ツールモードを選択",
@@ -270,8 +272,7 @@
     "reportAnIssue": "問題を報告",
     "joinCommunity": "コミュニティに参加",
     "workflow": "ワークフロー",
-    "userSettings": "ユーザー設定",
-    "remoteAgents": "リモート接続"
+    "userSettings": "ユーザー設定"
   },
   "Archive": {
     "title": "アーカイブ",
@@ -299,6 +300,10 @@
   },
   "Agent": {
     "title": "エージェント",
+    "newAgent": "エージェントを作成",
+    "createBuiltinAgent": "組み込みエージェント",
+    "createRemoteAgent": "リモートエージェント",
+    "remoteAgentsSection": "リモートエージェント",
     "generatingAgent": "エージェント生成中...",
     "agentNameAndIconLabel": "エージェントに名前とアイコンを付けてください。",
     "agentDescriptionLabel": "このエージェントの用途についての簡単な説明を追加してください。",

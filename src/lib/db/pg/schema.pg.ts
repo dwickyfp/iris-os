@@ -416,6 +416,52 @@ export const UploadedFileTable = pgTable(
   ],
 );
 
+export const WorkspaceFileTable = pgTable(
+  "workspace_file",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    scopeKey: varchar("scope_key", { length: 120 }).notNull(),
+    workspaceId: uuid("workspace_id").references(() => WorkspaceTable.id, {
+      onDelete: "cascade",
+    }),
+    taskId: uuid("task_id").references(() => TaskTable.id, {
+      onDelete: "cascade",
+    }),
+    path: text("path").notNull(),
+    filename: varchar("filename", { length: 240 }).notNull(),
+    mediaType: varchar("media_type", { length: 160 }).notNull(),
+    content: text("content").notNull(),
+    size: integer("size").notNull(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at")
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    unique("workspace_file_scope_path_unique").on(
+      table.userId,
+      table.scopeKey,
+      table.path,
+    ),
+    index("workspace_file_scope_prefix_idx").on(
+      table.userId,
+      table.scopeKey,
+      table.path,
+    ),
+    index("workspace_file_user_updated_idx").on(table.userId, table.updatedAt),
+    check("workspace_file_size_check", sql`${table.size} >= 0`),
+    check("workspace_file_version_check", sql`${table.version} >= 1`),
+    check("workspace_file_scope_key_check", sql`${table.scopeKey} <> ''`),
+  ],
+);
+
 export const ArtifactTable = pgTable(
   "artifact",
   {

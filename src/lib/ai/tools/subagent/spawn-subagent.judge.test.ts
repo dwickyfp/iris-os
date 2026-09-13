@@ -21,7 +21,8 @@ import { z } from "zod";
  * rubric (grounding, structure, summary quality) and checks the exact facts.
  */
 
-const RUN = process.env.IRIS_RUN_LLM_JUDGE === "1" && process.env.OPENAI_API_KEY;
+const RUN =
+  process.env.IRIS_RUN_LLM_JUDGE === "1" && process.env.OPENAI_API_KEY;
 
 const STUB_SOURCES = [
   {
@@ -86,8 +87,14 @@ async function runSpawnTool(model: LanguageModel) {
     { toolCallId: "judge-call-1", messages: [] },
   );
   let result = await generator.next();
-  while (!result.done) result = await generator.next();
-  return { final: result.value, artifacts };
+  // AI SDK semantics: the last yield is the final tool output.
+  let last: unknown;
+  while (!result.done) {
+    last = result.value;
+    result = await generator.next();
+  }
+  const final = last as { status: string; report: string; artifact: unknown };
+  return { final, artifacts };
 }
 
 describe.runIf(RUN)("spawn_subagent LLM-as-judge eval", () => {

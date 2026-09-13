@@ -59,9 +59,9 @@ test.describe("Harness operational UX", () => {
       return route.abort();
     });
 
-    await page.goto("/remote-agents");
+    await page.goto("/agents");
     await expect(
-      page.getByRole("heading", { name: "Remote connections" }),
+      page.getByRole("heading", { name: "Remote agents" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Add connection" }).click();
     await page.getByLabel("Name").fill("Research partner");

@@ -240,7 +240,11 @@
     "Tool": {
       "webSearching": "Searching the Web...",
       "searchedTheWeb": "Searched the Web",
+      "webSearchError": "Web search failed",
+      "webSearchStored": "Full search results were archived — open to view",
       "subagentWorking": "Subagent is working...",
+      "subagentElapsed": "Working for {time}",
+      "subagentStepCount": "{count, plural, =1 {1 step} other {# steps}}",
       "subagentCompleted": "Subagent completed",
       "subagentFailed": "Subagent failed",
       "subagentDefaultTitle": "Subagent task",
@@ -422,8 +426,7 @@
     "showLessChats": "Show less",
     "reportAnIssue": "Report an issue",
     "joinCommunity": "Join Community",
-    "userSettings": "User Settings",
-    "remoteAgents": "Remote connections"
+    "userSettings": "User Settings"
   },
   "Archive": {
     "title": "Archive",
@@ -452,6 +455,9 @@
   "Agent": {
     "title": "Agent",
     "newAgent": "Create Agent",
+    "createBuiltinAgent": "Built-in agent",
+    "createRemoteAgent": "Remote agent",
+    "remoteAgentsSection": "Remote agents",
     "generatingAgent": "Generating Agent...",
     "agentNameAndIconLabel": "Give your agent a name and icon.",
     "agentDescriptionLabel": "Add a brief description of what this agent does.",

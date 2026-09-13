@@ -56,6 +56,22 @@ skills, visual workflows, voice, file storage, and persistent user memory.
   `subagents` feature flag (default on, `IRIS_SUBAGENTS_V2=false|0` to
   disable). Clicking the chat card opens a right-side artifact panel driven by
   `appStore.subagentArtifactPanels`.
+- Agents have a scoped virtual filesystem via the `workspace_fs` tool
+  (`src/lib/ai/tools/workspace-fs/`, service in `src/lib/ai/workspace-fs/`):
+  read/write/edit/list/move/delete/search/import_artifact over UTF-8 text
+  files stored inline in the `workspace_file` table (migration 0075). The
+  tool API is the security boundary — no code execution, no host fs access;
+  paths are jailed per (userId, scopeKey) with task > workspace > global
+  precedence, bounded by WORKSPACE_FS_LIMITS, and rows carry optimistic
+  `version`s. Gated by the `workspaceFs` feature flag (default on,
+  `IRIS_WORKSPACE_FS_V2=false|0` to disable); runtime context is read from
+  tool execute options context, not closed over. Large/binary content stays
+  with the artifact subsystem; `import_artifact` bridges text artifacts in.
+- AI SDK v7 resolves tool execute `options.context` as
+  `toolsContext[toolName]`. The chat route passes a per-tool
+  `toolsContext` map (`spawn_subagent`, `workspace_fs`); tools that read
+  `options.context` must be keyed there or they receive `undefined` and must
+  fail closed.
 
 ## Stable constraints
 

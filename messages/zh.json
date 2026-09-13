@@ -121,6 +121,8 @@
     "Tool": {
       "webSearching": "正在搜索网络...",
       "searchedTheWeb": "搜索网络",
+      "webSearchError": "网络搜索失败",
+      "webSearchStored": "完整搜索结果已归档 — 点击查看",
       "toolModeDescription": "选择工具使用方式:\n• 自动: AI 自动决定何时使用工具\n• 手动: 使用工具前询问许可\n• 无: 禁用所有工具",
       "toolsSetupDescription": "选择聊天机器人可以使用的工具。\n聊天机器人将根据自己的判断使用选定的工具。\n\n您也可以通过 @mention 强制使用特定工具。",
       "selectToolMode": "选择工具模式",
@@ -271,8 +273,7 @@
     "reportAnIssue": "报告问题",
     "joinCommunity": "加入社区",
     "workflow": "工作流",
-    "userSettings": "用户设置",
-    "remoteAgents": "远程连接"
+    "userSettings": "用户设置"
   },
   "Archive": {
     "title": "归档",
@@ -300,6 +301,9 @@
   },
   "Agent": {
     "title": "智能体",
+    "createBuiltinAgent": "内置 Agent",
+    "createRemoteAgent": "远程 Agent",
+    "remoteAgentsSection": "远程 Agent",
     "newAgent": "新智能体",
     "generatingAgent": "正在生成智能体...",
     "agentNameAndIconLabel": "为您的智能体设置名称和图标。",

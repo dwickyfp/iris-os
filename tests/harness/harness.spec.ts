@@ -9,9 +9,9 @@ test.describe("Harness browser acceptance", () => {
     await page.route("**/api/remote-agents**", (route) =>
       route.fulfill({ json: [] }),
     );
-    await page.goto("/remote-agents");
+    await page.goto("/agents");
     await expect(
-      page.getByRole("heading", { name: "Remote connections" }),
+      page.getByRole("heading", { name: "Remote agents" }),
     ).toBeVisible();
     await expect(page.getByText("No remote connections")).toBeVisible();
   });
@@ -39,13 +39,13 @@ test.describe("Harness browser acceptance", () => {
     await page.route("**/api/remote-agents**", (route) =>
       route.fulfill({ json: [] }),
     );
-    await page.goto("/remote-agents");
+    await page.goto("/agents");
     await expect(
-      page.getByRole("heading", { name: "Remote connections" }),
+      page.getByRole("heading", { name: "Remote agents" }),
     ).toBeVisible();
 
     const results = await new AxeBuilder({ page })
-      .include("main.mx-auto")
+      .include('[data-testid="remote-agents-section"]')
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
       .analyze();
     expect(results.violations).toEqual([]);

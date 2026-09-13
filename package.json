@@ -13,6 +13,7 @@
     "start": "next start",
     "build:local": "cross-env NO_HTTPS='1' next build",
     "benchmark:skills": "tsx scripts/benchmark-skills.ts",
+    "benchmark:workspace-fs": "tsx scripts/benchmark-workspace-fs.ts",
     "conformance:a2a": "node --conditions=react-server --import tsx scripts/a2a-conformance.ts",
     "benchmark:a2a": "tsx scripts/a2a-disposable-benchmark.ts",
     "eval:capability-routing": "tsx scripts/eval-capability-routing.ts",

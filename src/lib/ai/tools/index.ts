@@ -24,3 +24,5 @@ export const SequentialThinkingToolName = "sequential-thinking";
 export const ImageToolName = "image-manager";
 
 export const SpawnSubagentToolName = "spawn_subagent";
+
+export const WorkspaceFsToolName = "workspace_fs";

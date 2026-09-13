@@ -107,6 +107,143 @@ export function extractSubagentProgressText(message: UIMessage): string {
   return lastText && "text" in lastText ? lastText.text : "";
 }
 
+export type SubagentActivity = {
+  /** Completed + in-flight subagent steps. */
+  steps: number;
+  /** Tool names the subagent has invoked so far, in order. */
+  tools: string[];
+  /** Latest assistant text produced by the subagent. */
+  text: string;
+};
+
+/** Summarize what a subagent is doing from its streamed UIMessage. */
+export function extractSubagentActivity(message: UIMessage): SubagentActivity {
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  const tools: string[] = [];
+  let steps = 0;
+  for (const part of parts) {
+    if (part.type === "step-start") {
+      steps += 1;
+      continue;
+    }
+    if (typeof part.type === "string" && part.type.startsWith("tool-")) {
+      const name = (part as { toolName?: string }).toolName;
+      if (name) tools.push(name);
+    }
+  }
+  return { steps, tools, text: extractSubagentProgressText(message) };
+}
+
+export type SubagentTimelineItem =
+  | { kind: "tool"; name: string; done: boolean }
+  | { kind: "text"; text: string }
+  | { kind: "reasoning" };
+
+/**
+ * Ordered trace of what the subagent has done so far, built from the
+ * accumulated UIMessage streamed as preliminary tool output.
+ */
+export function extractSubagentTimeline(message: UIMessage): {
+  steps: number;
+  items: SubagentTimelineItem[];
+  text: string;
+} {
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  const items: SubagentTimelineItem[] = [];
+  let steps = 0;
+  let text = "";
+  for (const part of parts) {
+    if (part.type === "step-start") {
+      steps += 1;
+      continue;
+    }
+    if (typeof part.type === "string" && part.type.startsWith("tool-")) {
+      const typed = part as { toolName?: string; state?: string };
+      if (typed.toolName) {
+        items.push({
+          kind: "tool",
+          name: typed.toolName,
+          done:
+            typed.state === "output-available" ||
+            typed.state === "output-error",
+        });
+      }
+      continue;
+    }
+    if (part.type === "reasoning") continue;
+    if (part.type === "text") {
+      text = part.text;
+      items.push({ kind: "text", text: part.text });
+    }
+  }
+  return { steps, items, text };
+}
+
+/**
+ * Client-side wall-clock start times per spawn_subagent tool call. The card
+ * records it on first render so the artifact panel can show elapsed time even
+ * before the subagent finishes.
+ */
+export const subagentStartTimes = new Map<string, number>();
+
+export function recordSubagentStart(toolCallId: string) {
+  if (!subagentStartTimes.has(toolCallId)) {
+    subagentStartTimes.set(toolCallId, Date.now());
+  }
+  return subagentStartTimes.get(toolCallId)!;
+}
+
+export type SubagentPanelDescriptor = {
+  toolCallId: string;
+  subagent: SubagentType;
+  title: string;
+  task: string;
+};
+
+/**
+ * Normalizes the persisted panel descriptor. Older releases stored a bare
+ * toolCallId string here; anything unrecognized becomes undefined so a stale
+ * value can never silently suppress the panel.
+ */
+export function normalizeSubagentPanel(
+  value: unknown,
+): SubagentPanelDescriptor | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<SubagentPanelDescriptor>;
+  if (typeof candidate.toolCallId !== "string" || !candidate.toolCallId) {
+    return undefined;
+  }
+  return {
+    toolCallId: candidate.toolCallId,
+    subagent:
+      candidate.subagent && candidate.subagent in SUBAGENT_SPECS
+        ? candidate.subagent
+        : "general",
+    title: typeof candidate.title === "string" ? candidate.title : "",
+    task: typeof candidate.task === "string" ? candidate.task : "",
+  };
+}
+
+/**
+ * In-memory report cache keyed by tool call id. Reports are deliberately kept
+ * out of the persisted store (large Markdown would risk the localStorage
+ * quota and could drop unrelated state on write).
+ */
+export const subagentReports = new Map<string, SpawnSubagentOutput>();
+
+export function rememberSubagentReport(
+  toolCallId: string,
+  output: SpawnSubagentOutput,
+) {
+  subagentReports.set(toolCallId, output);
+}
+
+export function subagentReport(
+  toolCallId: string | undefined,
+): SpawnSubagentOutput | undefined {
+  return toolCallId ? subagentReports.get(toolCallId) : undefined;
+}
+
 /**
  * Tools a subagent may use: the intersection of the parent's tools with a
  * read-only allowlist (subagents cannot use approval flows, so nothing

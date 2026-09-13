@@ -9,11 +9,12 @@ import { toAny, truncateString } from "lib/utils";
 import {
   AlertTriangleIcon,
   CheckIcon,
+  ExternalLinkIcon,
   LoaderIcon,
   SearchIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "ui/avatar";
 import { Skeleton } from "ui/skeleton";
 import { TextShimmer } from "ui/text-shimmer";
@@ -23,13 +24,99 @@ interface WebSearchToolInvocationProps {
   part: ToolUIPart;
 }
 
+type StoredResultSurface = {
+  mode: string;
+  artifact?: { artifactId: string };
+  downloadUrl?: string;
+};
+
+// Large tool results are stored as artifacts by the result-surface projector
+// before reaching the UI, so the original Exa payload must be re-fetched.
+function isStoredResultSurface(
+  output: unknown,
+): output is StoredResultSurface & { artifact: { artifactId: string } } {
+  return Boolean(
+    output &&
+      typeof output === "object" &&
+      typeof (output as StoredResultSurface).mode === "string" &&
+      typeof (output as StoredResultSurface).artifact?.artifactId === "string",
+  );
+}
+
+function useArtifactSearchResults(parts: ToolUIPart[]) {
+  const artifactIds = useMemo(
+    () =>
+      parts.flatMap((part) => {
+        const output: unknown = part.output;
+        if (
+          !part.state.startsWith("output") ||
+          part.errorText ||
+          !isStoredResultSurface(output)
+        )
+          return [];
+        return [output.artifact.artifactId];
+      }),
+    [parts],
+  );
+  const artifactKey = artifactIds.join("|");
+  const [resultsByArtifact, setResultsByArtifact] = useState<
+    Record<string, ExaSearchResponse | null>
+  >({});
+
+  useEffect(() => {
+    setResultsByArtifact({});
+    if (!artifactKey) return;
+    let cancelled = false;
+    for (const artifactId of artifactKey.split("|")) {
+      fetch(`/api/artifacts/${artifactId}`)
+        .then((res) =>
+          res.ok ? res.json() : Promise.reject(new Error(String(res.status))),
+        )
+        .then((data: ExaSearchResponse) => {
+          if (!cancelled)
+            setResultsByArtifact((prev) => ({ ...prev, [artifactId]: data }));
+        })
+        .catch(() => {
+          if (!cancelled)
+            setResultsByArtifact((prev) => ({ ...prev, [artifactId]: null }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactKey]);
+
+  return resultsByArtifact;
+}
+
+function resolvePartSearchResult(
+  part: ToolUIPart,
+  resultsByArtifact: Record<string, ExaSearchResponse | null>,
+) {
+  if (!part.state.startsWith("output") || part.errorText) return null;
+  const output: unknown = part.output;
+  if (isStoredResultSurface(output)) {
+    return resultsByArtifact[output.artifact.artifactId] ?? null;
+  }
+  return (part.output as ExaSearchResponse) ?? null;
+}
+
 function PureWebSearchToolInvocation({ part }: WebSearchToolInvocationProps) {
   const t = useTranslations();
+  const resultsByArtifact = useArtifactSearchResults([part]);
 
-  const result = useMemo(() => {
-    if (!part.state.startsWith("output")) return null;
-    return part.output as ExaSearchResponse;
-  }, [part.state]);
+  const surface = useMemo(() => {
+    if (!part.state.startsWith("output") || part.errorText) return null;
+    return isStoredResultSurface(part.output) ? part.output : null;
+  }, [part.state, part.output, part.errorText]);
+  const surfaceResult = surface
+    ? resultsByArtifact[surface.artifact?.artifactId ?? ""]
+    : undefined;
+  // undefined = still fetching; null = fetch failed (fall back to artifact link)
+  const result = surface
+    ? (surfaceResult ?? null)
+    : resolvePartSearchResult(part, resultsByArtifact);
+  const isLoadingArtifact = Boolean(surface) && surfaceResult === undefined;
   const [errorSrc, setErrorSrc] = useState<string[]>([]);
 
   const query = useMemo(() => {
@@ -50,7 +137,7 @@ function PureWebSearchToolInvocation({ part }: WebSearchToolInvocationProps) {
     );
   }, [result?.results, errorSrc]);
 
-  if (!part.state.startsWith("output"))
+  if (!part.state.startsWith("output") || isLoadingArtifact)
     return (
       <div className="flex flex-col gap-3 min-w-[300px] w-full fade-300">
         <div className="flex items-center text-muted-foreground gap-2 text-sm">
@@ -183,6 +270,19 @@ function PureWebSearchToolInvocation({ part }: WebSearchToolInvocationProps) {
                   <AlertTriangleIcon className="size-3.5" />
                   {t("Chat.Tool.webSearchError")}
                 </p>
+              ) : !result && surface ? (
+                <a
+                  href={
+                    surface.downloadUrl ??
+                    `/api/artifacts/${surface.artifact?.artifactId}`
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-xs text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <ExternalLinkIcon className="size-3.5 shrink-0" />
+                  {t("Chat.Tool.webSearchStored")}
+                </a>
               ) : (
                 (result as ExaSearchResponse)?.results?.map((result, i) => {
                   return (
@@ -249,10 +349,18 @@ export const WebSearchToolInvocation = memo(
 export function WebSearchGroupPart({ parts }: { parts: ToolUIPart[] }) {
   const t = useTranslations();
   const [errorSrc, setErrorSrc] = useState<string[]>([]);
+  const resultsByArtifact = useArtifactSearchResults(parts);
 
   const allCompleted = useMemo(
-    () => parts.every((p) => p.state.startsWith("output")),
-    [parts],
+    () =>
+      parts.every((p) => {
+        if (!p.state.startsWith("output") || p.errorText) return false;
+        const output: unknown = p.output;
+        if (isStoredResultSurface(output))
+          return output.artifact.artifactId in resultsByArtifact;
+        return true;
+      }),
+    [parts, resultsByArtifact],
   );
 
   const partStatuses = useMemo(() => {
@@ -260,10 +368,10 @@ export function WebSearchGroupPart({ parts }: { parts: ToolUIPart[] }) {
       const query = (part.input as { query?: string })?.query;
       const isPending = !part.state.startsWith("output");
       const hasError = Boolean(part.errorText);
-      const result = isPending ? null : (part.output as ExaSearchResponse);
+      const result = resolvePartSearchResult(part, resultsByArtifact);
       return { query, isPending, hasError, result };
     });
-  }, [parts]);
+  }, [parts, resultsByArtifact]);
 
   const flatResults = useMemo(() => {
     return partStatuses

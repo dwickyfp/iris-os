@@ -1,12 +1,15 @@
 import { tool } from "ai";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import { SpawnSubagentToolName } from "lib/ai/tools";
+import { evaluateToolCallPolicy } from "lib/ai/agent/create-tool-loop-agent";
+import { policyEngine } from "lib/ai/runtime/policy-engine";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { subagentToolTimeoutMs } from "./spawn-subagent";
 import { createSpawnSubagentTool } from "./spawn-subagent";
 import {
   SUBAGENT_TOOL_ALLOWLIST,
+  extractSubagentActivity,
   extractSubagentProgressText,
   isSpawnSubagentOutput,
   selectSubagentTools,
@@ -102,14 +105,16 @@ function makeTool({
   model,
   artifacts = artifactService(),
   parentTools = {},
+  runtimeContext: injectedContext,
 }: {
   model: MockLanguageModelV3;
   artifacts?: ReturnType<typeof artifactService>;
   parentTools?: Record<string, any>;
+  runtimeContext?: AgentRuntimeContext;
 }) {
   return createSpawnSubagentTool({
     model,
-    runtimeContext: runtimeContext(),
+    ...(injectedContext ? { runtimeContext: injectedContext } : {}),
     artifacts,
     parentTools,
   });
@@ -121,18 +126,26 @@ const INPUT = {
   task: "research iris-os",
 } as const;
 
-async function runToolExecute(instance: any, abortSignal?: AbortSignal) {
+async function runToolExecute(
+  instance: any,
+  abortSignal?: AbortSignal,
+  context: unknown = runtimeContext(),
+) {
   const outputs: unknown[] = [];
   const generator = (instance.execute as any)(
     { ...INPUT },
-    { toolCallId: "call-1", messages: [], abortSignal },
+    { toolCallId: "call-1", messages: [], abortSignal, context },
   );
   let result = await generator.next();
   while (!result.done) {
     outputs.push(result.value);
     result = await generator.next();
   }
-  return { preliminary: outputs, final: result.value };
+  // AI SDK semantics: the last yield is the final tool output.
+  return {
+    preliminary: outputs.slice(0, -1),
+    final: outputs.at(-1),
+  };
 }
 
 describe("spawn_subagent tool", () => {
@@ -193,6 +206,37 @@ describe("spawn_subagent tool", () => {
       report: "report body",
       artifact: null,
     });
+  });
+
+  it("reads artifact ownership from the execute context when not injected", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: [textStreamResult("context report")],
+    });
+    const artifacts = artifactService();
+    const instance = makeTool({ model, artifacts });
+
+    const { final } = await runToolExecute(instance);
+
+    expect(artifacts.create).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-1", runId: "run-1" }),
+    );
+    expect(final).toMatchObject({
+      status: "completed",
+      artifact: { artifactId: "art-1" },
+    });
+  });
+
+  it("skips artifact storage when no runtime context is available", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: [textStreamResult("no context")],
+    });
+    const artifacts = artifactService();
+    const instance = makeTool({ model, artifacts });
+
+    const { final } = await runToolExecute(instance, undefined, {});
+
+    expect(artifacts.create).not.toHaveBeenCalled();
+    expect(final).toMatchObject({ status: "completed", artifact: null });
   });
 
   it("executes allowlisted parent tools inside the subagent", async () => {
@@ -260,6 +304,47 @@ describe("spawn_subagent tool", () => {
     expect(modelOutput.value).toContain("the report");
   });
 
+  it("yields keepalive heartbeats while the subagent is silent", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: [
+        {
+          stream: simulateReadableStream({
+            initialDelayInMs: 120,
+            chunkDelayInMs: 1,
+            chunks: [
+              { type: "stream-start", warnings: [] },
+              { type: "text-start", id: "t1" },
+              { type: "text-delta", id: "t1", delta: "late report" },
+              { type: "text-end", id: "t1" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+                usage,
+              },
+            ] as any,
+          }),
+        },
+      ],
+    });
+    const instance = createSpawnSubagentTool({
+      model,
+      runtimeContext: runtimeContext(),
+      artifacts: artifactService(),
+      parentTools: {},
+      keepaliveMs: 20,
+    });
+
+    const { preliminary, final } = await runToolExecute(instance);
+
+    // The heartbeat keeps the parent's 15s chunk timeout fed before the
+    // subagent's first real chunk arrives.
+    expect(preliminary.length).toBeGreaterThanOrEqual(1);
+    for (const output of preliminary) {
+      expect((output as { parts?: unknown[] }).parts).toBeInstanceOf(Array);
+    }
+    expect(final).toMatchObject({ status: "completed", report: "late report" });
+  });
+
   it("extracts progress text and propagates abort to the subagent", async () => {
     const message = {
       id: "m1",
@@ -270,7 +355,9 @@ describe("spawn_subagent tool", () => {
       ],
     } as any;
     expect(extractSubagentProgressText(message)).toBe("partial findings");
-    expect(extractSubagentProgressText({ id: "m2", parts: [] } as any)).toBe("");
+    expect(extractSubagentProgressText({ id: "m2", parts: [] } as any)).toBe(
+      "",
+    );
 
     const model = new MockLanguageModelV3({
       doStream: [textStreamResult("the report")],
@@ -309,6 +396,172 @@ describe("selectSubagentTools", () => {
 
   it("returns an empty toolset when the parent has no allowlisted tools", () => {
     expect(selectSubagentTools({ http: {} as any })).toEqual({});
+  });
+});
+
+describe("subagent policy authority", () => {
+  const ctx = runtimeContext();
+  const policyInput = {
+    toolName: SpawnSubagentToolName,
+    args: { ...INPUT },
+    runtimeContext: ctx,
+  };
+
+  it("admits spawn_subagent when it is registered before preparation", () => {
+    const resolvedPolicy = policyEngine.resolveSnapshot(
+      ["webSearch", SpawnSubagentToolName],
+      "never",
+      [],
+    );
+    const decision = evaluateToolCallPolicy({
+      ...policyInput,
+      resolvedPolicy,
+    });
+    expect(decision.result).toBe("allow");
+  });
+
+  it("denies spawn_subagent when it is missing from the prepared toolset", () => {
+    const resolvedPolicy = policyEngine.resolveSnapshot(
+      ["webSearch"],
+      "never",
+      [],
+    );
+    const decision = evaluateToolCallPolicy({
+      ...policyInput,
+      resolvedPolicy,
+    });
+    expect(decision.result).toBe("deny");
+    expect(decision.reasons).toContain("capability_outside_authority");
+  });
+});
+
+describe("extractSubagentActivity", () => {
+  it("counts steps and tool invocations from a streamed UIMessage", () => {
+    const message = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        { type: "step-start" },
+        {
+          type: "tool-webSearch",
+          state: "output-available",
+          toolName: "webSearch",
+        },
+        { type: "step-start" },
+        { type: "text", text: "partial findings" },
+      ],
+    } as any;
+    expect(extractSubagentActivity(message)).toEqual({
+      steps: 2,
+      tools: ["webSearch"],
+      text: "partial findings",
+    });
+  });
+});
+
+describe("preliminary streaming through the guarded agent loop", () => {
+  it("propagates generator yields as preliminary outputs through capability guarding", async () => {
+    const { createToolLoopAgent } = await import(
+      "lib/ai/agent/create-tool-loop-agent"
+    );
+    const model = new MockLanguageModelV3({
+      doStream: toolCallThenTextStream("gen", {}, "done"),
+    } as any);
+    const agent = createToolLoopAgent({
+      profile: { type: "base" },
+      model,
+      instructions: "test",
+      tools: {
+        gen: tool({
+          inputSchema: z.object({}),
+          execute: async function* () {
+            yield { stage: 1 };
+            yield { stage: 2 };
+            yield { status: "completed" };
+          },
+        }) as any,
+      },
+      runtimeContext: runtimeContext(),
+    });
+
+    const result = await (agent as any).stream({ prompt: "go" });
+    const preliminaryOutputs: unknown[] = [];
+    const finalOutputs: unknown[] = [];
+    for await (const part of result.fullStream) {
+      if ((part as any).type === "tool-result") {
+        if ((part as any).preliminary) preliminaryOutputs.push(part.output);
+        else finalOutputs.push(part.output);
+      }
+    }
+
+    // executeTool marks every yield (including the last) as preliminary, then
+    // repeats the last yield as the final output.
+    expect(preliminaryOutputs).toEqual([
+      { stage: 1 },
+      { stage: 2 },
+      { status: "completed" },
+    ]);
+    expect(finalOutputs).toEqual([{ status: "completed" }]);
+  });
+
+  it("delivers preliminary progress and the structured final output through the UI message stream", async () => {
+    const { createToolLoopAgent } = await import(
+      "lib/ai/agent/create-tool-loop-agent"
+    );
+    const { readUIMessageStream } = await import("ai");
+    const model = new MockLanguageModelV3({
+      doStream: toolCallThenTextStream("gen", {}, "done"),
+    } as any);
+    const agent = createToolLoopAgent({
+      profile: { type: "base" },
+      model,
+      instructions: "test",
+      tools: {
+        gen: tool({
+          inputSchema: z.object({}),
+          execute: async function* () {
+            yield { parts: [{ type: "text", text: "working" }] };
+            yield {
+              status: "completed",
+              report: "the report",
+              artifact: { artifactId: "a1" },
+            };
+          },
+        }) as any,
+      },
+      runtimeContext: runtimeContext(),
+    });
+
+    const result = await (agent as any).stream({ prompt: "go" });
+    result.consumeStream();
+    const messages: any[] = [];
+    for await (const message of readUIMessageStream({
+      // toUIMessageStream() already emits UI message stream chunks.
+      stream: result.toUIMessageStream(),
+    })) {
+      messages.push(message);
+    }
+
+    const toolPartOf = (message: any) =>
+      message.parts.find((part: any) => part.type === "tool-gen");
+    expect(messages.length).toBeGreaterThan(1);
+
+    const firstWithOutput = messages
+      .map(toolPartOf)
+      .find((part: any) => part?.state === "output-available");
+    expect(firstWithOutput.preliminary).toBe(true);
+    expect(firstWithOutput.output).toEqual({
+      parts: [{ type: "text", text: "working" }],
+    });
+
+    const last = toolPartOf(messages.at(-1)!);
+    expect(last.state).toBe("output-available");
+    expect(last.preliminary).toBeUndefined();
+    expect(last.output).toEqual({
+      status: "completed",
+      report: "the report",
+      artifact: { artifactId: "a1" },
+    });
   });
 });
 

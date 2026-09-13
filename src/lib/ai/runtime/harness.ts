@@ -352,6 +352,10 @@ export class IrisHarness {
         parentRunId: run.spec.parentRunId ?? identity.parentRunId,
         workspaceId: run.spec.workspaceId ?? identity.workspaceId,
         taskId: run.spec.taskId ?? identity.taskId,
+        // The run's absolute deadline must match the resolved budget: defaulting
+        // to 300s would kill runs the budget explicitly allows to run longer
+        // (e.g. chats that may spawn subagents).
+        timeoutMs: run.spec.timeoutMs ?? orchestration.budget?.maxDurationMs,
         context: {
           ...run.spec.context,
           requestId: identity.requestId,
@@ -410,8 +414,13 @@ export class IrisHarness {
     let stopped = false;
     let state: "active" | "cancelled" | "timed_out" | "lease_lost" = "active";
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The next tick is scheduled BEFORE awaiting the current heartbeat: a
+    // single slow heartbeat (busy DB pool, long-running tool) must never
+    // starve the renewal loop, otherwise the 30s lease expires mid-run and
+    // long subagent work dies with LEASE_LOST.
     const schedule = () => {
       timer = setTimeout(async () => {
+        if (!stopped) schedule();
         try {
           const heartbeatState = await this.runs?.heartbeat(
             runId,
@@ -421,13 +430,12 @@ export class IrisHarness {
           if (heartbeatState && heartbeatState !== "active") {
             state = heartbeatState;
             stopped = true;
+            if (timer) clearTimeout(timer);
             controller?.abort(stoppedError(heartbeatState));
-            return;
           }
         } catch {
           // A transient heartbeat error is retried while the current lease lives.
         }
-        if (!stopped) schedule();
       }, FOREGROUND_HEARTBEAT_MS);
       timer.unref?.();
     };

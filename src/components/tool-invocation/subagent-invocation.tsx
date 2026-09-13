@@ -1,7 +1,7 @@
 "use client";
 
 import { appStore } from "@/app/store";
-import { ToolUIPart } from "ai";
+import { ToolUIPart, UIMessage } from "ai";
 import {
   FileTextIcon,
   LoaderIcon,
@@ -11,15 +11,18 @@ import {
   SparklesIcon,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { Badge } from "ui/badge";
 import { TextShimmer } from "ui/text-shimmer";
 import { cn, truncateString } from "lib/utils";
 import {
   SUBAGENT_SPECS,
+  type SubagentActivity,
   type SubagentType,
-  extractSubagentProgressText,
+  extractSubagentActivity,
   isSpawnSubagentOutput,
+  recordSubagentStart,
+  rememberSubagentReport,
 } from "lib/ai/tools/subagent/definitions";
 
 const SUBAGENT_ICONS: Record<SubagentType, typeof SearchIcon> = {
@@ -27,6 +30,15 @@ const SUBAGENT_ICONS: Record<SubagentType, typeof SearchIcon> = {
   audit: ShieldCheckIcon,
   general: SparklesIcon,
 };
+
+export function isSubagentUIMessage(output: unknown): output is UIMessage {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "parts" in output &&
+    Array.isArray((output as { parts?: unknown }).parts)
+  );
+}
 
 interface SubagentInvocationProps {
   part: ToolUIPart;
@@ -48,24 +60,52 @@ function PureSubagentInvocation({ part, threadId }: SubagentInvocationProps) {
   const spec = SUBAGENT_SPECS[subagentType];
   const Icon = SUBAGENT_ICONS[subagentType];
 
-  const isRunning = state === "input-streaming" || state === "input-available";
-  const output = state === "output-available" ? part.output : undefined;
-  const result = isSpawnSubagentOutput(output) ? output : undefined;
-  // While streaming, output is the accumulated UIMessage of the subagent so far.
-  const progressText =
-    !result && output && typeof output === "object" && "parts" in output
-      ? extractSubagentProgressText(output as never)
-      : "";
+  useEffect(() => {
+    recordSubagentStart(part.toolCallId);
+  }, [part.toolCallId]);
+
+  // The subagent streams its accumulated UIMessage as preliminary tool
+  // outputs before the final structured result; don't rely on the
+  // preliminary flag alone — classify by output shape.
+  const hasOutput = state === "output-available";
+  const result =
+    hasOutput && isSpawnSubagentOutput(part.output) ? part.output : undefined;
+  const live =
+    hasOutput && !result && isSubagentUIMessage(part.output)
+      ? part.output
+      : undefined;
+  const isRunning =
+    state === "input-streaming" || state === "input-available" || !!live;
+  const activity: SubagentActivity | undefined = live
+    ? extractSubagentActivity(live)
+    : undefined;
+
+  // Cache the finished report in memory: the panel reads it as a fallback if
+  // the message part is temporarily unresolvable, without persisting large
+  // Markdown into localStorage.
+  useEffect(() => {
+    if (result) rememberSubagentReport(part.toolCallId, result);
+  }, [result, part.toolCallId]);
 
   const openPanel = useCallback(() => {
     if (!threadId) return;
+    const current = appStore.getState().subagentArtifactPanels[threadId];
     appStore.getState().mutate((prev) => ({
       subagentArtifactPanels: {
         ...prev.subagentArtifactPanels,
-        [threadId]: part.toolCallId,
+        // Toggle: clicking the same card while its panel is open closes it.
+        [threadId]:
+          current?.toolCallId === part.toolCallId
+            ? undefined
+            : {
+                toolCallId: part.toolCallId,
+                subagent: subagentType,
+                title: input.title || t("Chat.Tool.subagentDefaultTitle"),
+                task: input.task ?? "",
+              },
       },
     }));
-  }, [threadId, part.toolCallId]);
+  }, [threadId, part.toolCallId, subagentType, input.title, input.task, t]);
 
   const statusLabel = useMemo(() => {
     if (isRunning) return t("Chat.Tool.subagentWorking");
@@ -73,7 +113,9 @@ function PureSubagentInvocation({ part, threadId }: SubagentInvocationProps) {
     return t("Chat.Tool.subagentCompleted");
   }, [isRunning, state, t]);
 
-  const canOpen = Boolean(threadId) && state === "output-available";
+  // Clickable as soon as there is anything to show: live progress while the
+  // subagent runs, the report artifact once it completes.
+  const canOpen = Boolean(threadId) && (hasOutput || isRunning);
 
   return (
     <div
@@ -115,9 +157,24 @@ function PureSubagentInvocation({ part, threadId }: SubagentInvocationProps) {
       {isRunning ? (
         <div className="flex flex-col gap-1">
           <TextShimmer>{statusLabel}</TextShimmer>
-          {progressText && (
+          {activity && (activity.steps > 0 || activity.tools.length > 0) && (
+            <p className="text-xs text-muted-foreground">
+              {activity.steps > 0 && (
+                <span>
+                  {t("Chat.Tool.subagentStepCount", { count: activity.steps })}
+                </span>
+              )}
+              {activity.tools.length > 0 && (
+                <span>
+                  {activity.steps > 0 ? " · " : ""}
+                  {truncateString([...new Set(activity.tools)].join(", "), 40)}
+                </span>
+              )}
+            </p>
+          )}
+          {activity?.text && (
             <p className="text-xs text-muted-foreground line-clamp-3 whitespace-pre-wrap">
-              {truncateString(progressText, 240)}
+              {truncateString(activity.text, 240)}
             </p>
           )}
         </div>

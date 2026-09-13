@@ -15,10 +15,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "ui/badge";
 import { Button } from "ui/button";
+import { Card } from "ui/card";
 import {
   Dialog,
   DialogContent,
@@ -61,15 +62,36 @@ const emptyForm: FormState = {
   headerName: "X-API-Key",
 };
 
-export function RemoteAgentConnections() {
+interface RemoteAgentsSectionProps {
+  /** Whether the "new connection" dialog was opened from outside the section. */
+  createOpen: boolean;
+  onCreateOpenChange: (open: boolean) => void;
+}
+
+export function RemoteAgentsSection({
+  createOpen,
+  onCreateOpenChange,
+}: RemoteAgentsSectionProps) {
   const t = useTranslations("RemoteAgents");
+  const tAgent = useTranslations("Agent");
   const { data = [], error, isLoading, mutate } = useRemoteAgents();
-  const [editing, setEditing] = useState<PublicRemoteAgent | null>();
+  // undefined = closed, null = creating, agent = editing
+  const [editing, setEditing] = useState<PublicRemoteAgent | null | undefined>(
+    undefined,
+  );
   const [deleting, setDeleting] = useState<PublicRemoteAgent | null>();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [busy, setBusy] = useState<string>();
 
+  useEffect(() => {
+    if (createOpen) {
+      setEditing(undefined);
+      setForm(emptyForm);
+    }
+  }, [createOpen]);
+
   function openForm(agent?: PublicRemoteAgent) {
+    onCreateOpenChange(false);
     setEditing(agent ?? null);
     setForm(
       agent
@@ -83,6 +105,11 @@ export function RemoteAgentConnections() {
           }
         : emptyForm,
     );
+  }
+
+  function closeForm() {
+    setEditing(undefined);
+    onCreateOpenChange(false);
   }
 
   async function save() {
@@ -122,7 +149,7 @@ export function RemoteAgentConnections() {
         return;
       }
       const wasEditing = Boolean(editing);
-      setEditing(undefined);
+      closeForm();
       await mutate();
       toast.success(t(wasEditing ? "updated" : "created"));
     } catch {
@@ -161,24 +188,26 @@ export function RemoteAgentConnections() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-6 p-6 md:p-10">
-      <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            {t("eyebrow")}
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold">{t("title")}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            {t("description")}
-          </p>
-        </div>
-        <Button onClick={() => openForm()}>
-          <Plus /> {t("add")}
+    <section
+      className="flex flex-col gap-4 mt-8"
+      data-testid="remote-agents-section"
+    >
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold">
+          {tAgent("remoteAgentsSection")}
+        </h2>
+        <div className="flex-1 h-px bg-border" />
+        <Button variant="ghost" size="sm" onClick={() => openForm()}>
+          <Plus />
+          {t("add")}
         </Button>
-      </header>
+      </div>
 
       {error && <p className="text-sm text-destructive">{t("loadFailed")}</p>}
-      <section aria-busy={isLoading} className="grid gap-4 md:grid-cols-2">
+      <div
+        aria-busy={isLoading}
+        className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+      >
         {isLoading && (
           <div className="col-span-full flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> {t("loading")}
@@ -194,14 +223,14 @@ export function RemoteAgentConnections() {
           </div>
         )}
         {data.map((agent) => (
-          <article key={agent.id} className="rounded-xl border p-5">
+          <Card key={agent.id} className="p-5">
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-primary/10 p-2 text-primary">
                 <Cable className="size-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h2 className="truncate font-semibold">{agent.name}</h2>
+                  <h3 className="truncate font-semibold">{agent.name}</h3>
                   <Badge
                     variant={
                       agent.status === "active" ? "secondary" : "outline"
@@ -260,13 +289,13 @@ export function RemoteAgentConnections() {
                 {t(agent.agentCard ? "rediscover" : "discover")}
               </Button>
             </div>
-          </article>
+          </Card>
         ))}
-      </section>
+      </div>
 
       <Dialog
-        open={editing !== undefined}
-        onOpenChange={(open) => !open && setEditing(undefined)}
+        open={createOpen || editing !== undefined}
+        onOpenChange={(open) => !open && closeForm()}
       >
         <DialogContent>
           <DialogHeader>
@@ -360,7 +389,7 @@ export function RemoteAgentConnections() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditing(undefined)}>
+            <Button variant="ghost" onClick={closeForm}>
               {t("cancel")}
             </Button>
             <Button
@@ -399,7 +428,7 @@ export function RemoteAgentConnections() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </main>
+    </section>
   );
 }
 

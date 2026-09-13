@@ -1,17 +1,29 @@
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
+import { subagentToolTimeoutMs } from "lib/ai/tools/subagent/spawn-subagent";
+import { isV2FeatureEnabled } from "lib/feature-flags";
 import { pgDb } from "lib/db/pg/db.pg";
 import { AgentRunTable, RootRunBudgetTable } from "lib/db/pg/schema.pg";
 import type { RunBudget } from "./budget";
 import { narrowServerBudget } from "./budget-resolution";
 import type { RunPreparationInput } from "./run-preparer";
 
+/**
+ * A subagent runs inside a single parent tool call, so the chat run's wall
+ * clock must outlive the default 90s when subagent spawning is enabled
+ * (room for two sequential subagent runs plus the parent's own steps).
+ */
+const chatMaxDurationMs = () =>
+  isV2FeatureEnabled("subagents")
+    ? 90_000 + 2 * subagentToolTimeoutMs()
+    : 90_000;
+
 const defaults = {
   chat: {
     maxSteps: 10,
     maxTokens: 50_000,
-    maxDurationMs: 90_000,
+    maxDurationMs: chatMaxDurationMs(),
     maxToolCalls: 32,
     maxDelegations: 8,
     maxDepth: 3,

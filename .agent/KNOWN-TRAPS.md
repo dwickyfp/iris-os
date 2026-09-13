@@ -157,3 +157,138 @@ biome writes; if forced, re-check `typeof import(` occurrences afterwards.
   (input, options)`) and read `options.abortSignal` inside.
 - **Evidence:** Bisected 2026-09-12 while building `spawn_subagent`; unedited
   options param type-checks, destructured param fails.
+
+## Tools registered after run preparation are denied by policy authority
+
+- **Symptom:** A tool bound to the chat agent right before `harness.stream`
+  fails with `POLICY_DENIED` seconds after the model calls it, failing the
+  entire run (agent_run error_code STREAM_ERROR), even though the model could
+  see and invoke the tool.
+- **Cause:** `resolvePolicy` builds `authority.capabilityIds` from
+  `Object.keys(capabilities.tools)` captured at `preparationAdapter.prepare`
+  time; policy evaluation is fail-closed, so a tool absent from that snapshot
+  is denied at approval. `recall_memory` only escapes this because it is
+  appended before prepare.
+- **Safe response:** Register new chat tools before
+  `preparationAdapter.prepare` (next to `recall_memory` in
+  `src/app/api/chat/route.ts`). If the tool needs the runtime context, read it
+  from tool execute `options.context` (ToolLoopAgent runtimeContext) instead
+  of closing over `preparedRun.runtimeContext`.
+- **Evidence:** 2026-09-12 live failure of `spawn_subagent`
+  (agent_run `POLICY_DENIED`, reason `capability_outside_authority`); fixed by
+  pre-prepare registration + execute-context context, verified by policy
+  authority unit tests.
+
+## 2026-09-12 — Physical table names differ from Drizzle export names
+
+- TaskTable is `pgTable("iris_task", ...)` but exported as `TaskTable`.
+  Hand-written SQL migrations must reference the physical name `iris_task`
+  (and `workspace`), not the export name. Migration `0075_workspace_file.sql`
+  initially used `"task"` and broke every integration suite with
+  `relation "public.task" does not exist`.
+- When hand-verifying migrations with `docker exec ... psql -f -`, the `-i`
+  flag is required or stdin is not connected and psql exits 0 having run
+  nothing — false green.
+- `biome format --write` adds a trailing comma inside multi-line
+  `typeof import("...")` type expressions (`typeof import("x",)`), which is a
+  TypeScript syntax error. Repo convention is the
+  `Awaited<ReturnType<typeof loadModule>>` pattern instead.
+
+## AI SDK generator tools: the return value is discarded; last yield is final
+
+- **Symptom:** A tool written as `async function* () { yield a; yield b;
+  return final; }` produces tool output `b` (or `{}`), never `final`.
+- **Cause:** `executeTool` (provider-utils) iterates generator yields with
+  `for await`, emitting each as a preliminary output, then emits
+  `{type: "final", output: lastYield}` — the generator's return value is
+  never read.
+- **Safe response:** Yield the final structured output as the LAST yield
+  instead of returning it.
+- **Evidence:** Found 2026-09-12 while wiring `spawn_subagent` streaming; the
+  guarded-loop integration test showed the final output equal to the last
+  yield.
+
+## Capability-guarded tool wrapper collapses streaming (generator) tools
+
+- **Symptom:** A generator tool wrapped by the guarded execute in
+  `createToolLoopAgent` emits NO preliminary outputs and its tool part output
+  serializes as `{}` — the UI shows only a spinner.
+- **Cause:** The guarded wrapper is an `async function` that awaits
+  `invokeCapability` and returns the generator object; the SDK's `executeTool`
+  sees a Promise (not an async iterable), awaits it, and treats the generator
+  object itself as the final output.
+- **Safe response:** Keep the wrapper's streaming fast path: detect generator
+  executes (`Symbol.toStringTag`/constructor name `AsyncGeneratorFunction`)
+  and route them through an `async function*` guard that forwards yields and
+  preserves return values while applying policy/budget/events, bypassing the
+  capability scheduler (documented in `create-tool-loop-agent.ts`).
+- **Evidence:** 2026-09-12 live failure ("subagent panel only loading") plus a
+  fullStream integration test (`preliminary streaming through the guarded
+  agent loop`) that fails without the fast path.
+
+## 2026-09-12 — AI SDK v7 toolsContext is a per-tool map, not a shared object
+
+- The AI SDK resolves every tool's execute `options.context` as
+  `toolsContext[toolName]` (`getOwn(toolsContext, toolName)`). Passing
+  `toolsContext: runtimeContext` (the shared object) yields `undefined`
+  context for every tool. The chat route now sends
+  `toolsContext: { [toolName]: runtimeContext }` for the tools that read it
+  (`spawn_subagent`, `workspace_fs`). New tools that read
+  `options.context` must be added to that map in `route.ts`, or their
+  context-dependent behavior will silently fail closed.
+- Any tool that reads `options.context` must fail closed with a structured
+  `{ ok: false, error }` result when the context is missing — this is what
+  surfaced the bug during harness-level integration testing.
+
+## 2026-09-12 — Paired `call_00_`/`call_01_` tool parts are parallel model calls, not double execution
+
+- **Symptom:** A chat reply shows the first tool (webSearch, recall_memory,
+  spawn_subagent) invoked "twice". The tool call IDs are `call_00_*` and
+  `call_01_*`, and both start within milliseconds of each other.
+- **Cause:** The model emitted two parallel tool calls in one step; the
+  provider indexes them `call_00`/`call_01`. Arguments differ (different
+  queries), and each ID executes exactly once — verify via
+  `iris_activity_event` (`tool.started`/`tool.completed` per toolCallId).
+  There is no client resend: `sendAutomaticallyWhen` helpers only fire when the
+  last step's tool parts all end `output-available`/`output-error` without a
+  trailing text step.
+- **Safe response:** Don't "fix" the loop. To force sequential single calls,
+  disable parallel tool calls via provider options on the bound model.
+- Related UI bug fixed the same day: `Chat.Tool.webSearchError` was referenced
+  by `web-search.tsx` but missing from every `messages/*.json`, rendering
+  next-intl `MISSING_MESSAGE` console errors whenever `part.errorText` was set.
+
+## 2026-09-12 — Result-surface projection hides tool results from tool-invocation UI
+
+- `projectCapabilityResultSurface` (wired into the chat driver since
+  5dfc01f) replaces any tool output above the inline threshold (~8KB JSON)
+  with `{ mode, artifact, downloadUrl, ownership, trust, provenance,
+  summary|preview }` and stores the full payload as an artifact. UI
+  components that cast `part.output` to the raw tool schema (e.g.
+  `web-search.tsx` expecting `ExaSearchResponse.results`) silently render
+  nothing — cards look stuck on their loading skeleton.
+- **Safe response:** detect the stored surface (`mode` + `artifact.artifactId`)
+  and fetch `/api/artifacts/{artifactId}` client-side (owner-scoped, returns
+  the original JSON). Implemented in `web-search.tsx` via
+  `useArtifactSearchResults`; reuse that hook for other tool cards as the
+  projection covers every capability result.
+
+## 2026-09-12 — Nested native toUIMessageStream masks real errors as "An error occurred."
+
+- **Symptom:** The chat UI shows the generic `Chat Error / An error occurred.`
+  and the user message is not saved, with no way to tell what actually failed.
+- **Cause:** `POST /api/chat` merges the native harness stream with
+  `result.toUIMessageStream({ messageMetadata })` and does not pass `onError`.
+  The AI SDK's `toUIMessageStream` defaults to `onError = () => "An error
+  occurred."` (see `node_modules/ai/dist/index.js`), so a failure inside the
+  model/tool stream is reported with that exact generic string. The route's own
+  `onError` on the outer `createUIMessageStream` only covers errors thrown by
+  `execute`, not errors surfacing from the nested native stream. The string
+  "An error occurred." appears nowhere in this repo, so seeing it in the UI
+  means the nested stream's default fired.
+- **Safe response:** when debugging a chat failure reported as "An error
+  occurred.", read the server log and the `agent_run`/`iris_activity_event`
+  `chat.failed` payload (`errorCode` + `message`) rather than the UI text.
+  Passing an explicit `onError` to the nested `toUIMessageStream` would surface
+  the real message, but leaks server error detail to the client — decide
+  deliberately before doing so.

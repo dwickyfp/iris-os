@@ -16,11 +16,9 @@ import { AppSidebarUser } from "./app-sidebar-user";
 export function AppSidebar({
   user,
   workspacesEnabled = false,
-  remoteAgentsEnabled = false,
 }: {
   user?: BasicUser;
   workspacesEnabled?: boolean;
-  remoteAgentsEnabled?: boolean;
 }) {
   const userRole = user?.role;
   const router = useRouter();
@@ -56,10 +54,7 @@ export function AppSidebar({
       <SidebarContent className="mt-2 overflow-hidden relative">
         <div className="flex flex-col overflow-y-auto">
           {workspacesEnabled && <WorkspaceSwitcher />}
-          <AppSidebarMenus
-            user={user}
-            remoteAgentsEnabled={remoteAgentsEnabled}
-          />
+          <AppSidebarMenus user={user} />
           <AppSidebarAgents userRole={userRole} />
           <AppSidebarThreads />
         </div>

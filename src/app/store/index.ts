@@ -11,6 +11,10 @@ import { AllowedMCPServer, MCPServerInfo } from "app-types/mcp";
 import { WorkflowSummary } from "app-types/workflow";
 import { OPENAI_VOICE } from "lib/ai/speech/open-ai/use-voice-chat.openai";
 import { AppDefaultToolkit } from "lib/ai/tools";
+import {
+  type SubagentPanelDescriptor,
+  normalizeSubagentPanel,
+} from "lib/ai/tools/subagent/definitions";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
@@ -61,11 +65,13 @@ export interface AppState {
     [threadId: string]: string | undefined;
   };
   /**
-   * Open subagent artifact panel per thread. Presence of a threadId key means
-   * the panel is open for that thread; the value is the `spawn_subagent` tool
-   * call id whose artifact is displayed. Ephemeral (not persisted).
+   * Open subagent artifact panel per thread. A threadId key means the panel is
+   * open for that thread. Only small metadata is persisted; the report itself
+   * lives in the chat message part / in-memory cache.
    */
-  subagentArtifactPanels: { [threadId: string]: string | undefined };
+  subagentArtifactPanels: {
+    [threadId: string]: SubagentPanelDescriptor | undefined;
+  };
   toolPresets: {
     allowedMcpServers?: Record<string, AllowedMCPServer>;
     allowedAppDefaultToolkit?: AppDefaultToolkit[];
@@ -153,6 +159,20 @@ export const appStore = create<AppState & AppDispatch>()(
     }),
     {
       name: "mc-app-store-v2.0.1",
+      // Persisted panel values from earlier releases (bare toolCallId strings,
+      // or oversized report payloads) must never silently break the panel.
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<AppState>) };
+        const panels = (persisted as Partial<AppState> | undefined)
+          ?.subagentArtifactPanels;
+        merged.subagentArtifactPanels = Object.fromEntries(
+          Object.entries(panels ?? {}).map(([threadId, value]) => [
+            threadId,
+            normalizeSubagentPanel(value),
+          ]),
+        );
+        return merged;
+      },
       partialize: (state) => ({
         chatModel: state.chatModel || initialState.chatModel,
         toolChoice: state.toolChoice || initialState.toolChoice,
@@ -161,6 +181,7 @@ export const appStore = create<AppState & AppDispatch>()(
         threadMentions: state.threadMentions,
         threadPrimaryAgents: state.threadPrimaryAgents,
         threadCapabilityModes: state.threadCapabilityModes,
+        subagentArtifactPanels: state.subagentArtifactPanels,
         pendingThreadMention: state.pendingThreadMention,
         pendingPrimaryAgent: state.pendingPrimaryAgent,
         allowedMcpServers:

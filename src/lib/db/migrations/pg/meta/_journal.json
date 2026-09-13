@@ -505,6 +505,13 @@
       "when": 1789182382375,
       "tag": "0074_skill_public_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1789195071884,
+      "tag": "0075_workspace_file",
+      "breakpoints": true
     }
   ]
 }

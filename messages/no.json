@@ -240,6 +240,8 @@
     "Tool": {
       "webSearching": "Søker på nettet...",
       "searchedTheWeb": "Søkte på nettet",
+      "webSearchError": "Søk på nettet feilet",
+      "webSearchStored": "Fullstendige søkeresultater ble arkivert — åpne for å se",
       "toolsSetupDescription": "Velg verktøy som chatboten kan bruke.\nChatboten vil bruke valgte verktøy basert på egen vurdering.\n\nDu kan også tvinge bruk av spesifikke verktøy gjennom @nevning.",
       "selectToolMode": "Velg en verktøymodus",
       "autoToolModeDescription": "Bestemmer når verktøy skal brukes uten å spørre deg",
@@ -413,8 +415,7 @@
     "showLessChats": "Vis færre",
     "reportAnIssue": "Rapporter et problem",
     "joinCommunity": "Bli med i fellesskapet",
-    "userSettings": "Brukerinnstillinger",
-    "remoteAgents": "Eksterne tilkoblinger"
+    "userSettings": "Brukerinnstillinger"
   },
   "Archive": {
     "title": "Arkiv",
@@ -442,6 +443,9 @@
   },
   "Agent": {
     "title": "Agent",
+    "createBuiltinAgent": "Innebygd agent",
+    "createRemoteAgent": "Ekstern agent",
+    "remoteAgentsSection": "Eksterne agenter",
     "newAgent": "Opprett agent",
     "generatingAgent": "Genererer agent...",
     "agentNameAndIconLabel": "Gi agenten din et navn og ikon.",
